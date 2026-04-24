@@ -42,15 +42,14 @@ services:
     build:
       context: ./backend/configuration_service
     environment:
-      OPHYD_SERVICE_OPENAPI_EXPORT_PATH: /app/openapi/configuration_service.openapi.json
-      # Start with an empty registry; seed_registry sidecar populates it via CRUD
-      # (matches the TST-deployment pattern — see memory/project_deployment_tst.md).
-      CONFIG_LOAD_STRATEGY: mock
-      # Default db_path is /var/lib/bluesky which isn't writable by the non-root
-      # container user. /tmp is always writable; DB resets on `docker compose down`
-      # and the seed_registry sidecar repopulates it on next `up`, so persistence
-      # doesn't matter for the demo.
-      CONFIG_DB_PATH: /tmp/config_service.db
+      OPHYD_SERVICE_OPENAPI_EXPORT_PATH: "/app/openapi/configuration_service.openapi.json"
+      # `empty` starts with zero devices and accepts CRUD population — exactly
+      # what the seed_registry sidecar does. `mock` would inject sample
+      # devices (det1/sample_x/cam1) we don't want alongside our seeded PVs.
+      CONFIG_LOAD_STRATEGY: "empty"
+      # Default db_path is /var/lib/bluesky, not writable by the non-root
+      # container user. /tmp always is.
+      CONFIG_DB_PATH: "/tmp/config_service.db"
     volumes:
       - ./shared-schema:/app/openapi
     ports:

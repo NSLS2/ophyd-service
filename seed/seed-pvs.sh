@@ -40,7 +40,10 @@ for pv in $PVS; do
     case "$status" in
         2*) echo "  seeded: $pv ($status)" ;;
         409) echo "  already: $pv" ;;
-        *)   echo "  FAIL: $pv -> $status: $(cat /tmp/resp)" ;;
+        # Exit non-zero so direct_control_service (depends_on
+        # service_completed_successfully) doesn't start against a
+        # half-seeded registry and silently 404 every request.
+        *)   echo "  FAIL: $pv -> $status: $(cat /tmp/resp)"; exit 1 ;;
     esac
 done
 

@@ -15,5 +15,5 @@ USER ioc
 EXPOSE 5064/tcp 5064/udp 5065/udp
 
 # mini_beamline prefix `mini:`. Exposes motor-like PVs (`mini:dot:mtrx`, `mini:dot:mtry`,
-# `mini:ph1:mtr`, etc.) plus detectors and shutter. Used by the frontend demo pages.
+# `mini:ph1:mtr`, etc.), detectors, and a shutter.
 CMD ["python", "-m", "caproto.ioc_examples.mini_beamline", "--list-pvs", "--interfaces", "0.0.0.0"]
