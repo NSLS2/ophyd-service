@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Bring up the full pod
         working-directory: integration/pods/full
@@ -65,9 +65,9 @@ jobs:
         run: ./integration/exercise/direct_control.sh
 
       - name: Exercise direct_control WebSocket
-        env:
-          # Ticking PV that exists in `full` (random_walk IOC).
-          PV_NAME: random_walk:x
+        # Default PV (mini:current) is in the happi seed and ticks on every
+        # pod. Don't use random_walk:x here — it's CRUD-added by the next
+        # step (registry_roundtrip), so it's not in the registry yet.
         run: |
           python -m pip install --upgrade pip
           pip install --no-input websockets
