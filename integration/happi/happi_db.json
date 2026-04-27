@@ -21,6 +21,28 @@
     "name": "pinhole",
     "prefix": "mini:ph"
   },
+  "edge": {
+    "_id": "edge",
+    "active": true,
+    "documentation": "Compound detector at mini:edge — components: det, exp.",
+    "args": ["{{prefix}}"],
+    "kwargs": {"name": "{{name}}"},
+    "type": "OphydItem",
+    "device_class": "localdevs.Det",
+    "name": "edge",
+    "prefix": "mini:edge"
+  },
+  "slit": {
+    "_id": "slit",
+    "active": true,
+    "documentation": "Compound detector at mini:slit — components: det, exp.",
+    "args": ["{{prefix}}"],
+    "kwargs": {"name": "{{name}}"},
+    "type": "OphydItem",
+    "device_class": "localdevs.Det",
+    "name": "slit",
+    "prefix": "mini:slit"
+  },
   "motor_spotx": {
     "_id": "motor_spotx",
     "active": true,
@@ -54,6 +76,28 @@
     "name": "motor_ph",
     "prefix": "mini:ph:mtr"
   },
+  "motor_edge": {
+    "_id": "motor_edge",
+    "active": true,
+    "documentation": null,
+    "args": ["{{prefix}}"],
+    "kwargs": {"name": "{{name}}"},
+    "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal",
+    "name": "motor_edge",
+    "prefix": "mini:edge:mtr"
+  },
+  "motor_slit": {
+    "_id": "motor_slit",
+    "active": true,
+    "documentation": null,
+    "args": ["{{prefix}}"],
+    "kwargs": {"name": "{{name}}"},
+    "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal",
+    "name": "motor_slit",
+    "prefix": "mini:slit:mtr"
+  },
   "beam_current": {
     "_id": "beam_current",
     "active": true,
@@ -65,92 +109,184 @@
     "name": "beam_current",
     "prefix": "mini:current"
   },
-  "spot_det": {
-    "_id": "spot_det",
+  "thermo": {
+    "_id": "thermo",
     "active": true,
-    "documentation": "Leaf PV of compound `spot`. Explicit entry so registry.pvs covers it.",
+    "documentation": "Eurotherm-shape temperature controller (caproto.ioc_examples.thermo_sim).",
     "args": ["{{prefix}}"],
     "kwargs": {"name": "{{name}}"},
     "type": "OphydItem",
-    "device_class": "ophyd.signal.EpicsSignal",
-    "name": "spot_det",
-    "prefix": "mini:dot:det"
+    "device_class": "localdevs.Thermo",
+    "name": "thermo",
+    "prefix": "thermo:"
+  },
+  "random_walk": {
+    "_id": "random_walk",
+    "active": true,
+    "documentation": "caproto.ioc_examples.random_walk default-prefix instance.",
+    "args": ["{{prefix}}"],
+    "kwargs": {"name": "{{name}}"},
+    "type": "OphydItem",
+    "device_class": "localdevs.RandomWalk",
+    "name": "random_walk",
+    "prefix": "random_walk:"
+  },
+  "random_walk_h": {
+    "_id": "random_walk_h",
+    "active": true,
+    "documentation": "Horizontal random walk instance.",
+    "args": ["{{prefix}}"],
+    "kwargs": {"name": "{{name}}"},
+    "type": "OphydItem",
+    "device_class": "localdevs.RandomWalk",
+    "name": "random_walk_h",
+    "prefix": "random_walk:horiz-"
+  },
+  "random_walk_v": {
+    "_id": "random_walk_v",
+    "active": true,
+    "documentation": "Vertical random walk instance.",
+    "args": ["{{prefix}}"],
+    "kwargs": {"name": "{{name}}"},
+    "type": "OphydItem",
+    "device_class": "localdevs.RandomWalk",
+    "name": "random_walk_v",
+    "prefix": "random_walk:vert-"
+  },
+
+  "spot_det": {
+    "_id": "spot_det", "active": true, "documentation": "Leaf PV of compound `spot`.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "spot_det", "prefix": "mini:dot:det"
   },
   "spot_img_sum": {
-    "_id": "spot_img_sum",
-    "active": true,
-    "documentation": "Leaf PV of compound `spot`.",
-    "args": ["{{prefix}}"],
-    "kwargs": {"name": "{{name}}"},
-    "type": "OphydItem",
-    "device_class": "ophyd.signal.EpicsSignal",
-    "name": "spot_img_sum",
-    "prefix": "mini:dot:img_sum"
+    "_id": "spot_img_sum", "active": true, "documentation": "Leaf PV of compound `spot`.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "spot_img_sum", "prefix": "mini:dot:img_sum"
   },
   "spot_exp": {
-    "_id": "spot_exp",
-    "active": true,
-    "documentation": "Leaf PV of compound `spot`.",
-    "args": ["{{prefix}}"],
-    "kwargs": {"name": "{{name}}"},
-    "type": "OphydItem",
-    "device_class": "ophyd.signal.EpicsSignal",
-    "name": "spot_exp",
-    "prefix": "mini:dot:exp"
+    "_id": "spot_exp", "active": true, "documentation": "Leaf PV of compound `spot`.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "spot_exp", "prefix": "mini:dot:exp"
   },
   "spot_shutter_open": {
-    "_id": "spot_shutter_open",
-    "active": true,
-    "documentation": "Leaf PV of compound `spot`.",
-    "args": ["{{prefix}}"],
-    "kwargs": {"name": "{{name}}"},
-    "type": "OphydItem",
-    "device_class": "ophyd.signal.EpicsSignal",
-    "name": "spot_shutter_open",
-    "prefix": "mini:dot:shutter_open"
+    "_id": "spot_shutter_open", "active": true, "documentation": "Leaf PV of compound `spot`.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "spot_shutter_open", "prefix": "mini:dot:shutter_open"
   },
   "pinhole_det": {
-    "_id": "pinhole_det",
-    "active": true,
-    "documentation": "Leaf PV of compound `pinhole`.",
-    "args": ["{{prefix}}"],
-    "kwargs": {"name": "{{name}}"},
-    "type": "OphydItem",
-    "device_class": "ophyd.signal.EpicsSignal",
-    "name": "pinhole_det",
-    "prefix": "mini:ph:det"
+    "_id": "pinhole_det", "active": true, "documentation": "Leaf PV of compound `pinhole`.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "pinhole_det", "prefix": "mini:ph:det"
   },
   "pinhole_exp": {
-    "_id": "pinhole_exp",
-    "active": true,
-    "documentation": "Leaf PV of compound `pinhole`.",
-    "args": ["{{prefix}}"],
-    "kwargs": {"name": "{{name}}"},
-    "type": "OphydItem",
-    "device_class": "ophyd.signal.EpicsSignal",
-    "name": "pinhole_exp",
-    "prefix": "mini:ph:exp"
+    "_id": "pinhole_exp", "active": true, "documentation": "Leaf PV of compound `pinhole`.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "pinhole_exp", "prefix": "mini:ph:exp"
   },
   "motor_ph_vel": {
-    "_id": "motor_ph_vel",
-    "active": true,
-    "documentation": "Velocity setpoint for motor_ph.",
-    "args": ["{{prefix}}"],
-    "kwargs": {"name": "{{name}}"},
-    "type": "OphydItem",
-    "device_class": "ophyd.signal.EpicsSignal",
-    "name": "motor_ph_vel",
-    "prefix": "mini:ph:vel"
+    "_id": "motor_ph_vel", "active": true, "documentation": "Velocity setpoint for motor_ph.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "motor_ph_vel", "prefix": "mini:ph:vel"
   },
   "motor_ph_tick_rate": {
-    "_id": "motor_ph_tick_rate",
-    "active": true,
-    "documentation": "Tick rate for motor_ph.",
-    "args": ["{{prefix}}"],
-    "kwargs": {"name": "{{name}}"},
-    "type": "OphydItem",
-    "device_class": "ophyd.signal.EpicsSignal",
-    "name": "motor_ph_tick_rate",
-    "prefix": "mini:ph:mtr_tick_rate"
+    "_id": "motor_ph_tick_rate", "active": true, "documentation": "Tick rate for motor_ph.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "motor_ph_tick_rate", "prefix": "mini:ph:mtr_tick_rate"
+  },
+  "edge_det": {
+    "_id": "edge_det", "active": true, "documentation": "Leaf PV of compound `edge`.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "edge_det", "prefix": "mini:edge:det"
+  },
+  "edge_exp": {
+    "_id": "edge_exp", "active": true, "documentation": "Leaf PV of compound `edge`.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "edge_exp", "prefix": "mini:edge:exp"
+  },
+  "motor_edge_vel": {
+    "_id": "motor_edge_vel", "active": true, "documentation": "Velocity setpoint for motor_edge.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "motor_edge_vel", "prefix": "mini:edge:vel"
+  },
+  "motor_edge_tick_rate": {
+    "_id": "motor_edge_tick_rate", "active": true, "documentation": "Tick rate for motor_edge.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "motor_edge_tick_rate", "prefix": "mini:edge:mtr_tick_rate"
+  },
+  "slit_det": {
+    "_id": "slit_det", "active": true, "documentation": "Leaf PV of compound `slit`.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "slit_det", "prefix": "mini:slit:det"
+  },
+  "slit_exp": {
+    "_id": "slit_exp", "active": true, "documentation": "Leaf PV of compound `slit`.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "slit_exp", "prefix": "mini:slit:exp"
+  },
+  "motor_slit_vel": {
+    "_id": "motor_slit_vel", "active": true, "documentation": "Velocity setpoint for motor_slit.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "motor_slit_vel", "prefix": "mini:slit:vel"
+  },
+  "motor_slit_tick_rate": {
+    "_id": "motor_slit_tick_rate", "active": true, "documentation": "Tick rate for motor_slit.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "motor_slit_tick_rate", "prefix": "mini:slit:mtr_tick_rate"
+  },
+  "thermo_I": {
+    "_id": "thermo_I", "active": true, "documentation": "Leaf PV of compound `thermo` — readback.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "thermo_I", "prefix": "thermo:I"
+  },
+  "thermo_SP": {
+    "_id": "thermo_SP", "active": true, "documentation": "Leaf PV of compound `thermo` — setpoint.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "thermo_SP", "prefix": "thermo:SP"
+  },
+  "thermo_K": {
+    "_id": "thermo_K", "active": true, "documentation": "Leaf PV of compound `thermo`.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "thermo_K", "prefix": "thermo:K"
+  },
+  "thermo_omega": {
+    "_id": "thermo_omega", "active": true, "documentation": "Leaf PV of compound `thermo`.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "thermo_omega", "prefix": "thermo:omega"
+  },
+  "thermo_Tvar": {
+    "_id": "thermo_Tvar", "active": true, "documentation": "Leaf PV of compound `thermo`.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "thermo_Tvar", "prefix": "thermo:Tvar"
+  },
+  "random_walk_dt": {
+    "_id": "random_walk_dt", "active": true, "documentation": "Step time for random_walk.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "random_walk_dt", "prefix": "random_walk:dt"
+  },
+  "random_walk_x": {
+    "_id": "random_walk_x", "active": true, "documentation": "Walk position for random_walk.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "random_walk_x", "prefix": "random_walk:x"
+  },
+  "random_walk_h_dt": {
+    "_id": "random_walk_h_dt", "active": true, "documentation": "Step time for random_walk_h.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "random_walk_h_dt", "prefix": "random_walk:horiz-dt"
+  },
+  "random_walk_h_x": {
+    "_id": "random_walk_h_x", "active": true, "documentation": "Walk position for random_walk_h.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "random_walk_h_x", "prefix": "random_walk:horiz-x"
+  },
+  "random_walk_v_dt": {
+    "_id": "random_walk_v_dt", "active": true, "documentation": "Step time for random_walk_v.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "random_walk_v_dt", "prefix": "random_walk:vert-dt"
+  },
+  "random_walk_v_x": {
+    "_id": "random_walk_v_x", "active": true, "documentation": "Walk position for random_walk_v.",
+    "args": ["{{prefix}}"], "kwargs": {"name": "{{name}}"}, "type": "OphydItem",
+    "device_class": "ophyd.signal.EpicsSignal", "name": "random_walk_v_x", "prefix": "random_walk:vert-x"
   }
 }

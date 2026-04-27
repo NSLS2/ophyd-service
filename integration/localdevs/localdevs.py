@@ -2,19 +2,21 @@
 Small ophyd wrapper classes for the simulated IOCs in the pod.
 
 Cannibalized from bluesky-pods' localdevs.py (which had itself removed its
-dependency on the `nslsii` package). Kept minimal: only the classes our
-happi_db.json references. Add more when Phase 2/3 IOCs join the pod.
+dependency on the `nslsii` package). Kept minimal — only classes any pod's
+happi_db.json references. Add more when new IOCs join the pod.
 
 Used by:
 - configuration_service: inert — HappiProfileLoader does pure JSON parsing,
   never imports this file. But it's worth shipping here so other in-pod
   consumers can reach it.
-- bluesky RunEngine / queueserver (Phase 4): imports and instantiates these
+- bluesky RunEngine / queueserver (future): imports and instantiates these
   classes from the happi database. Mount this directory into whichever
   container needs to construct the devices.
 """
 
-from ophyd import Device, Component as Cpt
+import threading
+
+from ophyd import Component as Cpt, Device, DeviceStatus, Signal
 from ophyd.signal import EpicsSignal, EpicsSignalRO
 
 
@@ -34,3 +36,93 @@ class Spot(Device):
 
     def trigger(self):
         return self.img.trigger()
+
+
+class RandomWalk(Device):
+    """`caproto.ioc_examples.random_walk` shape: a stepping-time + walk PV."""
+    dt = Cpt(EpicsSignal, "dt", kind="config")
+    x = Cpt(EpicsSignal, "x", kind="hinted")
+
+
+class SetInProgress(RuntimeError):
+    """Raised when a Eurotherm `set` lands while another set is already in flight."""
+
+
+class Eurotherm(Device):
+    """
+    Temperature controller wrapper that returns `done` only once the readback
+    has stayed within `tolerance` of the setpoint for `equilibrium_time` seconds.
+
+    Adapted from bluesky-pods/localdevs.py — itself adapted from nslsii to
+    drop the nslsii dependency.
+    """
+
+    equilibrium_time = Cpt(Signal, value=5, kind="config")
+    timeout = Cpt(Signal, value=500, kind="config")
+    tolerance = Cpt(Signal, value=1, kind="config")
+
+    setpoint = Cpt(EpicsSignal, "T-SP", kind="normal")
+    readback = Cpt(EpicsSignal, "T-RB", kind="hinted")
+
+    def __init__(self, pv_prefix, **kwargs):
+        super().__init__(pv_prefix, **kwargs)
+        self._set_lock = threading.Lock()
+        self._cb_timer = None
+        self._cid = None
+
+    def set(self, value):
+        if not self._set_lock.acquire(blocking=False):
+            raise SetInProgress(
+                f"attempting to set {self.name} while a set is in progress"
+            )
+
+        set_value = value
+        status = DeviceStatus(self)
+        initial_timestamp = None
+
+        equilibrium_time = self.equilibrium_time.get()
+        tolerance = self.tolerance.get()
+
+        def timer_cleanup():
+            print(f"Set of {self.name} timed out after {self.timeout.get()} s")
+            self._set_lock.release()
+            self.readback.clear_sub(status_indicator)
+            status._finished(success=False)
+
+        self._cb_timer = threading.Timer(self.timeout.get(), timer_cleanup)
+
+        def status_indicator(value, timestamp, **kwargs):
+            if not self._cb_timer.is_alive():
+                self._cb_timer.start()
+
+            nonlocal initial_timestamp
+            if abs(value - set_value) < tolerance:
+                if initial_timestamp:
+                    if (timestamp - initial_timestamp) > equilibrium_time:
+                        status._finished()
+                        self._cb_timer.cancel()
+                        self._set_lock.release()
+                        self.readback.clear_sub(status_indicator)
+                else:
+                    initial_timestamp = timestamp
+            else:
+                initial_timestamp = None
+
+        self.setpoint.put(set_value)
+        self._cid = self.readback.subscribe(status_indicator)
+        return status
+
+    def stop(self, success=False):
+        self._set_lock.release()
+        self._cb_timer.cancel()
+        self.readback.unsubscribe(self._cid)
+        self.set(self.readback.get())
+
+
+class Thermo(Eurotherm):
+    """`caproto.ioc_examples.thermo_sim` shape — overrides PV names."""
+    readback = Cpt(EpicsSignal, "I", kind="hinted")
+    setpoint = Cpt(EpicsSignal, "SP", kind="normal")
+    K = Cpt(EpicsSignal, "K", kind="config")
+    omega = Cpt(EpicsSignal, "omega", kind="config")
+    Tvar = Cpt(EpicsSignal, "Tvar", kind="config")

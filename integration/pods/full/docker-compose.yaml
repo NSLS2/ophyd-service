@@ -1,0 +1,112 @@
+# Full integration pod for ophyd-service.
+#
+# Sibling to integration/pods/minimal/. Adds extra caproto IOCs so the
+# happi-loaded device registry has more shapes to exercise:
+#
+#   ioc                — caproto.ioc_examples.mini_beamline (mini:*)
+#   ioc_random_walk    — caproto.ioc_examples.random_walk (random_walk:*)
+#   ioc_random_walk_h  — caproto.ioc_examples.random_walk (random_walk:horiz-*)
+#   ioc_random_walk_v  — caproto.ioc_examples.random_walk (random_walk:vert-*)
+#   ioc_thermo         — caproto.ioc_examples.thermo_sim (thermo:*)
+#   configuration_service / direct_control_service — same images as minimal
+#
+# Devices the registry knows about: spot, pinhole, edge, slit, thermo,
+# random_walk[_h|_v], plus motor scalars and compound leaves. See
+# integration/happi/happi_db.json (41 entries total).
+#
+# All five IOCs build from the same image at integration/ioc/Dockerfile;
+# different `command:` overrides choose which caproto module + prefix runs.
+#
+# Usage:
+#   docker compose up --build
+#   docker compose down
+#   docker compose logs ioc_random_walk
+
+x-ioc-base: &ioc-base
+  build:
+    context: ../../ioc
+
+services:
+  ioc:
+    <<: *ioc-base
+    command: ["python", "-m", "caproto.ioc_examples.mini_beamline", "--list-pvs", "--interfaces", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f caproto.ioc_examples.mini_beamline > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  ioc_random_walk:
+    <<: *ioc-base
+    command: ["python", "-m", "caproto.ioc_examples.random_walk", "--list-pvs", "--interfaces", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f caproto.ioc_examples.random_walk > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  ioc_random_walk_h:
+    <<: *ioc-base
+    command: ["python", "-m", "caproto.ioc_examples.random_walk", "--list-pvs", "--interfaces", "0.0.0.0", "--prefix", "random_walk:horiz-"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'random_walk.*horiz-' > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  ioc_random_walk_v:
+    <<: *ioc-base
+    command: ["python", "-m", "caproto.ioc_examples.random_walk", "--list-pvs", "--interfaces", "0.0.0.0", "--prefix", "random_walk:vert-"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'random_walk.*vert-' > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  ioc_thermo:
+    <<: *ioc-base
+    command: ["python", "-m", "caproto.ioc_examples.thermo_sim", "--list-pvs", "--interfaces", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f caproto.ioc_examples.thermo_sim > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  configuration_service:
+    build:
+      context: ../../../backend/configuration_service
+    environment:
+      CONFIG_LOAD_STRATEGY: "happi"
+      CONFIG_PROFILE_PATH: "/profile"
+      CONFIG_DB_PATH: "/tmp/config_service.db"
+    volumes:
+      - ../../happi:/profile:ro
+    ports:
+      - "8004:8004"
+
+  direct_control_service:
+    build:
+      context: ../../../backend/direct_control_service
+    environment:
+      DIRECT_CONTROL_CONFIGURATION_SERVICE_URL: http://configuration_service:8004
+      DIRECT_CONTROL_COORDINATION_CHECK_ENABLED: "false"
+      # pyepics: list every IOC service so CA search reaches them all on the
+      # compose network. Disable broadcast — explicit list keeps stray
+      # search requests from leaving the docker net.
+      EPICS_CA_ADDR_LIST: "ioc ioc_random_walk ioc_random_walk_h ioc_random_walk_v ioc_thermo"
+      EPICS_CA_AUTO_ADDR_LIST: "NO"
+    ports:
+      - "8003:8003"
+    depends_on:
+      configuration_service:
+        condition: service_healthy
+      ioc:
+        condition: service_healthy
+      ioc_random_walk:
+        condition: service_healthy
+      ioc_random_walk_h:
+        condition: service_healthy
+      ioc_random_walk_v:
+        condition: service_healthy
+      ioc_thermo:
+        condition: service_healthy

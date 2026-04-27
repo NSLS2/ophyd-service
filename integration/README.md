@@ -1,85 +1,95 @@
-# ophyd-service integration pods
+# ophyd-service integration environments
 
-Self-contained docker-compose test environments for exercising `configuration_service`, `direct_control_service`, and (eventually) the merged `bluesky-queueserver` against simulated IOCs. The pods are **reproducible by anyone with docker** — no facility accounts, no VPN, no hand-deployed systemd units.
+Self-contained docker-compose test/demo environments for exercising `configuration_service`, `direct_control_service`, and (eventually) the merged `bluesky-queueserver` against simulated IOCs. Reproducible by anyone with docker — no facility accounts, no VPN, no hand-deployed systemd units.
 
-These pods replace `xf31id1-tst-qs1` as the project's primary test/demo target.
+These pods are the project's primary test target.
 
-## Two compose surfaces
+## Layout
+
+```
+integration/
+├── ioc/                       # caproto Dockerfile (mini_beamline by default)
+├── happi/happi_db.json        # canonical device DB, used by every compose surface
+├── localdevs/localdevs.py     # vanilla-ophyd shim (Spot, Det, RandomWalk, Thermo, …)
+├── pods/
+│   ├── minimal/docker-compose.yaml   # 1 IOC + 2 backends
+│   └── full/docker-compose.yaml      # 5 IOCs + 2 backends
+└── exercise/
+    ├── configuration_service.sh      # bash + curl + jq
+    ├── direct_control.sh             # bash + curl + jq (HTTP only)
+    └── direct_control_ws.py          # python + websockets (closes the WS gap)
+```
+
+## Two compose surfaces under `ophyd-service/`
 
 | Surface | Use case |
 |---|---|
-| `ophyd-service/docker-compose.yml` (repo root) | **Inner loop.** Backend-only: IOC + 2 backends + curl seeder. Fast iteration when editing a single backend. |
-| `ophyd-service/pods/<pod-name>/` (here) | **Integration.** Full-stack environments with realistic simulated beamlines and the full data/control pipeline. |
+| `ophyd-service/docker-compose.yml` (repo root) | **Inner loop.** 1 IOC + 2 backends, happi-seeded. Fast iteration on a single backend. |
+| `ophyd-service/integration/pods/<pod-name>/` | **Integration / demo.** Larger, realistic environments. Pick the pod that matches what you're testing. |
 
-Pick by the blast radius of the change. Editing just `direct_control_service`? Inner loop. Touching contracts across services, or doing a demo? Pod.
+Both surfaces mount the same `integration/happi/happi_db.json` as the device registry source. Devices that have no live IOC in the chosen surface are still listed (the registry is a *catalog*); reads against them will fail at the CA layer.
 
-## Current pods
+## Pods
 
-### `minimal/`
+### `pods/minimal/`
 
-Smallest shape that exercises the happi-seeded registry end-to-end. Three services:
-
-- **`ioc`** — reuses `ophyd-service/ioc/` (caproto `mini_beamline`). Same image as the inner loop.
-- **`configuration_service`** — loads devices from `pods/shared/happi/happi_db.json` via `CONFIG_LOAD_STRATEGY=happi`. No curl sidecar.
-- **`direct_control_service`** — coordination check off, CA search limited to the pod network.
-
-Run:
+Smallest shape that exercises the happi-seeded registry end-to-end. Three services: `ioc` (caproto `mini_beamline`), `configuration_service`, `direct_control_service`. Coordination check off, CA search limited to the pod network.
 
 ```sh
-cd pods/minimal
+cd integration/pods/minimal
 docker compose up --build
 ```
 
-Tear down with `docker compose down`. The config-service SQLite DB lives at `/tmp/config_service.db` inside the container and is recreated every `up` — happi reseeds on startup.
+### `pods/full/`
 
-## Shared assets (`shared/`)
-
-### `shared/happi/happi_db.json`
-
-The pod's device database, ported from `bluesky/bluesky-pods`' `bluesky_config/happi/test_db.json` and trimmed to just the PVs our `caproto.ioc_examples.mini_beamline` IOC exposes.
-
-**Key design choice — compound devices:** Real beamlines use compound device classes (`Spot`, `Det` here — AreaDetector, motor records, etc. in practice). The happi loader does pure JSON parsing; it doesn't enumerate sub-PVs of a compound device into `registry.pvs`. That's a problem for `direct_control_service`, which validates PVs at the leaf level (e.g. `mini:dot:img_sum`).
-
-**Phase 1 solution — option (a):** for every leaf PV of a compound device, add an explicit `ophyd.signal.EpicsSignal` happi entry alongside the compound entry. The compound entry stays for device identity (`spot`, `pinhole1`); the leaf entries make the leaves discoverable. See the `spot_*` and `pinhole1_*` entries for the pattern.
-
-**Source of truth for PV prefixes:** the running IOC's startup log (use `docker compose logs ioc | grep -A50 "PVs available"`). `caproto.ioc_examples.mini_beamline` publishes what it publishes — treat that as canonical and adjust `happi_db.json` to match, not the other way around. The repo-level `seed/seed-pvs.sh` (used by the backend-only inner-loop compose) registers `mini:ph1:*` PVs that don't exist on the IOC; it's only been satisfying the gate, not actual CA lookups. That's a known bug tracked in the tech debt ledger.
-
-### `shared/localdevs/localdevs.py`
-
-Minimal ophyd wrapper module (`Spot`, `Det`) referenced by the compound happi entries. **Not mounted into any container yet** — `HappiProfileLoader` does pure JSON parsing and never imports it. Shipped here now for Phase 3/4:
-
-- When queueserver joins the pod and starts instantiating devices from happi, mount this directory into that container's PYTHONPATH.
-- Already vanilla ophyd — no `nslsii` dependency. Keep it that way (see the `feedback_community_not_nsls` memory).
-
-## Smoke tests
-
-After `docker compose up --build`, from another terminal:
+Five IOCs + the two backends. Adds `random_walk` ×3 (different prefixes) and `thermo_sim` to the mini_beamline base. Lets you exercise the registry against a more realistic device mix and run the WebSocket exerciser against a live, ticking PV.
 
 ```sh
-# config-service reachable, loaded devices from happi?
-curl -s http://localhost:8004/health
-curl -s http://localhost:8004/api/v1/devices | jq 'keys'
-
-# direct-control can read a scalar PV (happi-registered as a leaf EpicsSignal)?
-curl -s http://localhost:8003/api/v1/pv/mini:dot:mtrx/value
-
-# direct-control can read a compound sub-PV?
-# This exercises option (a) — spot_img_sum was added as a leaf entry
-# alongside the compound `spot` device.
-curl -s http://localhost:8003/api/v1/pv/mini:dot:img_sum/value
+cd integration/pods/full
+docker compose up --build
 ```
 
-Both PV reads should succeed. If the compound-leaf read 404s but the scalar succeeds, the happi leaf-entry pattern isn't reaching `registry.pvs` — investigate before claiming option (a) works.
+All five IOCs build from the same `integration/ioc/Dockerfile`; per-service `command:` overrides choose the caproto module + prefix. Health is gated on every IOC reaching `service_healthy`.
+
+## Shared assets
+
+### `happi/happi_db.json`
+
+Canonical device DB. Currently 41 entries: 8 compound devices (`spot`, `pinhole`, `edge`, `slit`, `thermo`, `random_walk[_h|_v]`) and 33 leaf scalars. Ported from `bluesky/bluesky-pods`' `test_db.json`, modified to match what our IOCs actually publish.
+
+**Compound devices and the leaf-entry pattern (option (a)):** real beamlines use compound device classes; the happi loader does pure JSON parsing and does **not** enumerate a compound device's sub-PVs into `registry.pvs`. `direct_control_service` validates at the leaf level (`mini:dot:img_sum`, not `mini:dot`). Solution: alongside each compound entry, add explicit `ophyd.signal.EpicsSignal` entries for the leaf PVs. See `spot` + `spot_*` for the pattern.
+
+**Source of truth for PV prefixes:** the running IOC's `--list-pvs` log (`docker compose logs ioc | grep -A50 "PVs available"`). caproto modules publish what they publish; adjust `happi_db.json` to match, not the other way around.
+
+### `localdevs/localdevs.py`
+
+Minimal vanilla-ophyd shim. Defines `Det`, `Spot`, `RandomWalk`, `Eurotherm`, `Thermo` — all the compound classes referenced by `happi_db.json`. **Not mounted into any container yet** (the loader doesn't import it). Shipped here for the future queueserver pod, where actual device instantiation happens.
+
+Vanilla ophyd only — no `nslsii` dependency, even though `Eurotherm` originated there. The bluesky-pods upstream extracted it specifically to drop that dep; we keep it that way (see the `feedback_community_not_nsls` memory).
+
+## Endpoint exercisers (`exercise/`)
+
+These walk every public endpoint family on each backend as a first-time user would, exit non-zero on any assertion miss, and are CI-ready. They replace the old `seed/seed-pvs.sh` curl sidecar — instead of pre-populating test data, they *verify* the service from a fresh happi-seeded state.
+
+```sh
+# pod must be up first
+./integration/exercise/configuration_service.sh         # ~30 endpoint checks
+./integration/exercise/direct_control.sh                # HTTP-only walk
+uv run --with websockets integration/exercise/direct_control_ws.py
+# (or `pip install websockets` and run directly)
+```
+
+Override targets via env vars: `CONFIG_URL`, `DIRECT_URL`, `DIRECT_WS_URL`. Override the WS exerciser's PV with `PV_NAME` (defaults to `random_walk:x`, which ticks frequently when the full pod is up).
 
 ## Extension roadmap
 
-**Phase 2 — `pods/full/`:** add sibling IOCs for `random_walk` (×3), `thermo_sim`, `simple`. Expand `shared/happi/happi_db.json` with matching entries and grow `shared/localdevs/localdevs.py` to include `RandomWalk`, `Thermo`, `Simple`.
+**Phase 3 — data pipeline:** add `tiled`, `mongo` (databroker), `redis`, `kafka`. Lets us test the document-streaming path end-to-end.
 
-**Phase 3 — data pipeline:** add `tiled`, `mongo` (databroker), `redis`, `kafka`. Lets us test the document streaming path.
+**Phase 4 — queueserver/httpserver:** once the `merge/httpserver` branch lands, add a container built from `sligara7/bluesky-queueserver`. Mount `integration/localdevs/` into its PYTHONPATH so happi-defined compound devices instantiate.
 
-**Phase 4 — queueserver/httpserver:** once the `merge/httpserver` branch lands, add a container building from `sligara7/bluesky-queueserver`. Mount `shared/localdevs/` into its PYTHONPATH so happi-defined compound devices instantiate.
+**Other gaps:** MADSIM (AreaDetector simulator) — bluesky-pods references `simcam1` but doesn't ship the IOC. Add when we have one.
 
-## Why not just fork bluesky-pods?
+## Why not fork bluesky-pods?
 
 `bluesky/bluesky-pods` is the reference for this kind of pod shape and we cannibalize it freely — but we don't track it upstream. Reasons:
 
@@ -87,4 +97,4 @@ Both PV reads should succeed. If the compound-leaf read 404s but the scalar succ
 - We want to avoid inheriting NSLS-II-specific choices wholesale.
 - The pod evolves in lockstep with our service code; keeping it in the same repo keeps the coupling visible.
 
-If you want to see what bluesky-pods offers, clone `https://github.com/bluesky/bluesky-pods` separately — it's a useful reference, especially for the data-pipeline pieces when we build Phase 3.
+Clone `https://github.com/bluesky/bluesky-pods` separately if you want the full reference — useful especially for the data-pipeline pieces when we build Phase 3.
