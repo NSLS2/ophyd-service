@@ -84,7 +84,9 @@ The dev pod's registry has 44 devices (41 from base happi + 3 motor records: `mo
 
 ### `happi/happi_db.json`
 
-Canonical device DB. Currently 41 entries: 8 compound devices (`spot`, `pinhole`, `edge`, `slit`, `thermo`, `random_walk[_h|_v]`) and 33 leaf scalars. Ported from `bluesky/bluesky-pods`' `test_db.json`, modified to match what our IOCs actually publish.
+Canonical device DB. **Single-IOC seed: only `caproto.ioc_examples.mini_beamline`'s devices** (26 entries — `spot` / `pinhole` / `edge` / `slit` compounds, motor scalars, beam_current, plus leaf-PV entries for compound device sub-fields).
+
+This intentionally mirrors how a real beamline boots: start with one known-good IOC's profile, then **extend the registry at runtime via CRUD** as additional IOCs / detectors come online. The other IOCs we run (random walks, thermo_sim, fake_motor_record) are added via `POST /api/v1/devices` rather than baked into the happi seed. See `exercise/registry_roundtrip.sh` for the canonical extend-then-export pattern.
 
 **Compound devices and the leaf-entry pattern (option (a)):** real beamlines use compound device classes; the happi loader does pure JSON parsing and does **not** enumerate a compound device's sub-PVs into `registry.pvs`. `direct_control_service` validates at the leaf level (`mini:dot:img_sum`, not `mini:dot`). Solution: alongside each compound entry, add explicit `ophyd.signal.EpicsSignal` entries for the leaf PVs. See `spot` + `spot_*` for the pattern.
 
@@ -105,10 +107,23 @@ These walk every public endpoint family on each backend as a first-time user wou
 ./integration/exercise/configuration_service.sh         # ~30 endpoint checks
 ./integration/exercise/direct_control.sh                # HTTP-only walk
 uv run --with websockets integration/exercise/direct_control_ws.py
-# (or `pip install websockets` and run directly)
+./integration/exercise/registry_roundtrip.sh            # full lifecycle round-trip
 ```
 
-Override targets via env vars: `CONFIG_URL`, `DIRECT_URL`, `DIRECT_WS_URL`. Override the WS exerciser's PV with `PV_NAME` (defaults to `random_walk:x`, which ticks frequently when the full pod is up).
+Override targets via env vars: `CONFIG_URL`, `DIRECT_URL`, `DIRECT_WS_URL`. Override the WS exerciser's PV with `PV_NAME` (defaults to `mini:current`, which ticks on every pod).
+
+**`registry_roundtrip.sh` is the most complete real-beamline simulation.** It validates the full lifecycle:
+
+1. **Snapshot** the happi-seeded initial state (mini_beamline only).
+2. **CRUD-extend**: register devices for every other IOC (motor records, random walks, thermo) via `POST /api/v1/devices` — the same path a beamline would use as new detectors come online.
+3. **Verify** the additions landed and are retrievable.
+4. **Direct-control monitors a CRUD-added PV**: HTTP read + WS subscribe→update→unsubscribe round-trip. Closes the loop on "registry knows about it → CA connects → WS streams updates" for runtime-added devices.
+5. **Export** via `/api/v1/registry/export`.
+6. **Validate** every exported entry has the required happi shape (`_id`, `name`, `device_class`, `args`, `kwargs`, `type`, `active`).
+7. **Re-import**: spawn a fresh `configuration_service` container against the exported file. Confirm device count and names match exactly. The export is therefore a valid happi profile that survives a full restart.
+8. **Cleanup** removes the CRUD-added devices and tears down the side container.
+
+The exerciser is pod-agnostic — it works against `minimal/`, `full/`, or `dev/` (step 4 will skip cleanly if no IOC is running for any CRUD-added PV; the rest of the test still runs). For full coverage including step 4's WS round-trip, use the `full/` pod.
 
 ## Extension roadmap
 

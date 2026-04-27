@@ -34,7 +34,7 @@ or  uv run --with websockets integration/exercise/direct_control_ws.py
 Usage:
     ./direct_control_ws.py
     DIRECT_WS_URL=ws://remote:8003/api/v1/pv-socket ./direct_control_ws.py
-    PV_NAME=random_walk:x ./direct_control_ws.py    # override default
+    PV_NAME=random_walk:x ./direct_control_ws.py    # override (full pod only)
 
 Exit 0 on full pass; non-zero on any failure.
 """
@@ -58,7 +58,7 @@ except ImportError:
 
 
 WS_URL = os.environ.get("DIRECT_WS_URL", "ws://localhost:8003/api/v1/pv-socket")
-PV_NAME = os.environ.get("PV_NAME", "random_walk:x")  # ticks frequently
+PV_NAME = os.environ.get("PV_NAME", "mini:current")  # ticks frequently in mini_beamline (always present)
 SUBSCRIBE_TIMEOUT = float(os.environ.get("SUBSCRIBE_TIMEOUT", "5"))
 UPDATE_TIMEOUT = float(os.environ.get("UPDATE_TIMEOUT", "8"))
 
