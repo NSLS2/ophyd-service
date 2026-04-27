@@ -1,0 +1,93 @@
+# End-to-end integration test for the ophyd-service backends.
+#
+# Brings up the `full` pod (5 caproto IOCs + configuration_service +
+# direct_control_service) and runs every exerciser under
+# integration/exercise/ against it. Each exerciser exits non-zero on any
+# assertion miss, so the workflow fails fast on contract drift.
+#
+# Triggers:
+#   - every PR (catches breakage before merge)
+#   - every push to main (catches drift between merge and main HEAD)
+#   - manual via workflow_dispatch
+#
+# Why `full` and not `minimal`/`dev`:
+#   - `full` exercises everything `minimal` does plus 4 more IOCs
+#     (random_walk ×3, thermo_sim) — strictly more coverage.
+#   - `dev` only adds a frontend container, which is the frontend team's
+#     CI scope, not ours.
+#
+# Runtime: ~5 min per run (build ~3min + wait ~30s + exercisers ~30s + teardown).
+# Free for public repos.
+
+name: integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  full-pod:
+    name: full pod end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bring up the full pod
+        working-directory: integration/pods/full
+        run: docker compose up --build -d
+
+      - name: Wait for backends to be healthy
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8004/health >/dev/null \
+               && curl -sf http://localhost:8003/health >/dev/null; then
+              echo "both backends healthy after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "backends did not become healthy within 120s" >&2
+          exit 1
+
+      - name: Exercise configuration_service
+        run: ./integration/exercise/configuration_service.sh
+
+      - name: Exercise direct_control HTTP surface
+        run: ./integration/exercise/direct_control.sh
+
+      - name: Exercise direct_control WebSocket
+        env:
+          # Ticking PV that exists in `full` (random_walk IOC).
+          PV_NAME: random_walk:x
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-input websockets
+          python integration/exercise/direct_control_ws.py
+
+      - name: Exercise registry round-trip (CRUD-extend → export → re-import)
+        run: ./integration/exercise/registry_roundtrip.sh
+
+      - name: Dump container logs on failure
+        if: failure()
+        working-directory: integration/pods/full
+        run: |
+          echo "::group::compose ps"
+          docker compose ps
+          echo "::endgroup::"
+          echo "::group::compose logs"
+          docker compose logs --tail=200
+          echo "::endgroup::"
+
+      - name: Tear down the pod
+        if: always()
+        working-directory: integration/pods/full
+        run: docker compose down --volumes
