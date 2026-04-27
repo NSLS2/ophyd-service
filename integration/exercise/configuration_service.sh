@@ -97,6 +97,21 @@ status=$(req GET "${CONFIG_URL}/api/v1/devices/beam_current/instantiation")
 expect_status 200 "$status" "/api/v1/devices/beam_current/instantiation"
 pass "/api/v1/devices/beam_current/instantiation"
 
+# components of a compound device (returns the sub-component tree)
+status=$(req GET "${CONFIG_URL}/api/v1/devices/spot/components")
+expect_status 200 "$status" "/api/v1/devices/spot/components"
+pass "/api/v1/devices/spot/components"
+
+# device-level status (lock state, availability)
+status=$(req GET "${CONFIG_URL}/api/v1/devices/beam_current/status")
+expect_status 200 "$status" "/api/v1/devices/beam_current/status"
+pass "/api/v1/devices/beam_current/status"
+
+# single-component lookup via dotted path
+status=$(req GET "${CONFIG_URL}/api/v1/devices/spot.roi/component")
+expect_status 200 "$status" "/api/v1/devices/spot.roi/component"
+pass "/api/v1/devices/spot.roi/component"
+
 # summary views
 for path in devices-info devices/classes devices/types devices/instantiation; do
     status=$(req GET "${CONFIG_URL}/api/v1/${path}")
