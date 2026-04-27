@@ -17,7 +17,8 @@ integration/
 └── exercise/
     ├── configuration_service.sh      # bash + curl + jq
     ├── direct_control.sh             # bash + curl + jq (HTTP only)
-    └── direct_control_ws.py          # python + websockets (closes the WS gap)
+    ├── direct_control_ws.py          # python + websockets (pv-socket + device-socket)
+    └── registry_roundtrip.sh         # full lifecycle: seed → CRUD → export → re-import
 ```
 
 ## Two compose surfaces under `ophyd-service/`

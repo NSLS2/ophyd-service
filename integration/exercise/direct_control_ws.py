@@ -1,31 +1,38 @@
 #!/usr/bin/env python3
 """
-Exercise the direct_control_service WebSocket surface.
+Exercise the direct_control_service WebSocket surface — both routes.
 
 Companion to direct_control.sh, which deliberately skipped WebSockets
-because bash + curl can't speak WS cleanly. This script does what curl
-can't: connect to the PV-monitoring socket, subscribe to a live PV,
-receive at least one update, unsubscribe, and close cleanly.
+(bash + curl can't speak WS cleanly). This script covers the full WS
+surface direct_control exposes:
 
-Endpoint and protocol (from
-backend/direct_control_service/src/direct_control/monitoring/websocket_manager.py):
+  /api/v1/pv-socket      — PV-level subscriptions (finch's ophydSocketPVPath)
+  /api/v1/device-socket  — device-level subscriptions (finch's ophydSocketDevicePath)
 
-  ws://<host>:8003/api/v1/pv-socket
+Both flows: connect → ping/pong → subscribe → first update → unsubscribe
+→ close. If either fails, the script exits non-zero.
 
-  Client → Server  (JSON):
-      {"action": "subscribe",   "pv_names": ["..."]}
-      {"action": "unsubscribe", "pv_names": ["..."]}
-      {"action": "ping"}
+Endpoint protocols (from
+backend/direct_control_service/src/direct_control/monitoring/):
 
-  Server → Client (JSON):
-      Events use the {"type": ..., "timestamp": ..., ...} envelope:
-          {"type": "subscribed",   "pv_names": [...], ...}
-          {"type": "unsubscribed", "pv_names": [...], ...}
-          {"type": "pong", ...}
-          {"type": "heartbeat", ...}      ← server-initiated, ignore
-          {"type": "error", "message": "...", ...}
-      PV updates use a separate envelope:
-          {"event_type": "pv_update", "pv_name": "...", "value": ..., ...}
+  pv-socket
+    Client → Server:  {"action": "subscribe",   "pv_names": ["..."]}
+                      {"action": "unsubscribe", "pv_names": ["..."]}
+                      {"action": "ping"}
+    Server → Client:  {"type": "subscribed",   "pv_names": [...], ...}
+                      {"type": "unsubscribed", "pv_names": [...], ...}
+                      {"type": "pong" | "heartbeat" | "error", ...}
+                      {"event_type": "pv_update", "pv_name": "...", ...}
+
+  device-socket
+    Client → Server:  {"action": "subscribe",   "device": "<name>"}
+                      {"action": "unsubscribe", "device": "<name>"}
+                      {"action": "ping"}
+    Server → Client:  {"type": "subscribed",   "device": "<name>", ...}
+                      {"type": "unsubscribed", "device": "<name>", ...}
+                      {"type": "pong" | "error", ...}
+                      {"event_type": "device_update", "device", "signal",
+                       "value", ...}     (one frame per sub-PV change)
 
 Dependency:
     pip install websockets   (>=12)
@@ -33,8 +40,8 @@ or  uv run --with websockets integration/exercise/direct_control_ws.py
 
 Usage:
     ./direct_control_ws.py
-    DIRECT_WS_URL=ws://remote:8003/api/v1/pv-socket ./direct_control_ws.py
-    PV_NAME=random_walk:x ./direct_control_ws.py    # override (full pod only)
+    DIRECT_HOST=remote:8003 ./direct_control_ws.py
+    PV_NAME=random_walk:x DEVICE_NAME=spot ./direct_control_ws.py
 
 Exit 0 on full pass; non-zero on any failure.
 """
@@ -57,13 +64,15 @@ except ImportError:
     sys.exit(2)
 
 
-WS_URL = os.environ.get("DIRECT_WS_URL", "ws://localhost:8003/api/v1/pv-socket")
-PV_NAME = os.environ.get("PV_NAME", "mini:current")  # ticks frequently in mini_beamline (always present)
+DIRECT_HOST = os.environ.get("DIRECT_HOST", "localhost:8003")
+PV_WS_URL = os.environ.get("DIRECT_WS_URL", f"ws://{DIRECT_HOST}/api/v1/pv-socket")
+DEVICE_WS_URL = os.environ.get("DEVICE_WS_URL", f"ws://{DIRECT_HOST}/api/v1/device-socket")
+PV_NAME = os.environ.get("PV_NAME", "mini:current")        # ticks frequently, in every pod
+DEVICE_NAME = os.environ.get("DEVICE_NAME", "beam_current")  # single-PV device backed by mini:current
 SUBSCRIBE_TIMEOUT = float(os.environ.get("SUBSCRIBE_TIMEOUT", "5"))
 UPDATE_TIMEOUT = float(os.environ.get("UPDATE_TIMEOUT", "8"))
 
 
-# ANSI colors when stdout is a tty
 if sys.stdout.isatty():
     G, R, Y, B, X = "\033[32m", "\033[31m", "\033[33m", "\033[1m", "\033[0m"
 else:
@@ -83,12 +92,7 @@ def fail(msg: str) -> NoReturn:
     sys.exit(1)
 
 
-async def recv_until(
-    ws: Any,
-    predicate,
-    timeout: float,
-    description: str,
-) -> dict:
+async def recv_until(ws: Any, predicate, timeout: float, description: str) -> dict:
     """Receive frames until `predicate(msg)` returns truthy, ignoring others."""
     deadline = asyncio.get_event_loop().time() + timeout
     while True:
@@ -112,70 +116,103 @@ def is_event(msg: dict, type_: str) -> bool:
     return msg.get("type") == type_
 
 
-def is_pv_update(msg: dict, pv_name: str) -> bool:
-    return msg.get("event_type") == "pv_update" and msg.get("pv_name") == pv_name
+def is_pv_update(msg: dict, pv_name: str | None = None) -> bool:
+    if msg.get("event_type") != "pv_update":
+        return False
+    return pv_name is None or msg.get("pv_name") == pv_name
+
+
+def is_device_update(msg: dict, device: str | None = None) -> bool:
+    if msg.get("event_type") != "device_update":
+        return False
+    return device is None or msg.get("device") == device
+
+
+async def exercise_pv_socket() -> None:
+    print(f"\n{B}─── pv-socket ───{X}  url={PV_WS_URL}  pv={PV_NAME}")
+
+    step("Connect")
+    async with websockets.connect(PV_WS_URL) as ws:
+        ok(f"connected to {PV_WS_URL}")
+
+        step("Ping → pong")
+        await ws.send(json.dumps({"action": "ping"}))
+        await recv_until(ws, lambda m: is_event(m, "pong"),
+                         SUBSCRIBE_TIMEOUT, "pong")
+        ok("pong received")
+
+        step(f"Subscribe to {PV_NAME}")
+        await ws.send(json.dumps({"action": "subscribe", "pv_names": [PV_NAME]}))
+        ack = await recv_until(ws, lambda m: is_event(m, "subscribed"),
+                               SUBSCRIBE_TIMEOUT, "subscribed ack")
+        if PV_NAME not in ack.get("pv_names", []):
+            fail(f"subscribed ack missing {PV_NAME!r}: {ack}")
+        ok(f"subscribed ack pv_names={ack.get('pv_names')}")
+
+        step(f"Receive at least one pv_update for {PV_NAME}")
+        update = await recv_until(ws, lambda m: is_pv_update(m, PV_NAME),
+                                  UPDATE_TIMEOUT, f"pv_update for {PV_NAME}")
+        for required in ("value", "timestamp", "connected"):
+            if required not in update:
+                fail(f"pv_update missing field {required!r}: {update}")
+        ok(f"update received  value={update['value']!r}  connected={update['connected']}")
+
+        step(f"Unsubscribe from {PV_NAME}")
+        await ws.send(json.dumps({"action": "unsubscribe", "pv_names": [PV_NAME]}))
+        await recv_until(ws, lambda m: is_event(m, "unsubscribed"),
+                         SUBSCRIBE_TIMEOUT, "unsubscribed ack")
+        ok("unsubscribed ack received")
+
+        step("Close")
+    ok("pv-socket closed cleanly")
+
+
+async def exercise_device_socket() -> None:
+    print(f"\n{B}─── device-socket ───{X}  url={DEVICE_WS_URL}  device={DEVICE_NAME}")
+
+    step("Connect")
+    async with websockets.connect(DEVICE_WS_URL) as ws:
+        ok(f"connected to {DEVICE_WS_URL}")
+
+        step("Ping → pong")
+        await ws.send(json.dumps({"action": "ping"}))
+        await recv_until(ws, lambda m: is_event(m, "pong"),
+                         SUBSCRIBE_TIMEOUT, "pong")
+        ok("pong received")
+
+        step(f"Subscribe to device {DEVICE_NAME}")
+        await ws.send(json.dumps({"action": "subscribe", "device": DEVICE_NAME}))
+        ack = await recv_until(ws, lambda m: is_event(m, "subscribed"),
+                               SUBSCRIBE_TIMEOUT, "subscribed ack")
+        if ack.get("device") != DEVICE_NAME:
+            fail(f"subscribed ack device mismatch: {ack}")
+        ok(f"subscribed ack device={ack['device']}")
+
+        # device-socket emits {event_type: "device_update", device, signal, value, ...}
+        # — one frame per sub-PV change. _send_current_values fires immediately on
+        # subscribe with the current value of every component.
+        step(f"Receive at least one device_update for {DEVICE_NAME}")
+        update = await recv_until(ws, lambda m: is_device_update(m, DEVICE_NAME),
+                                  UPDATE_TIMEOUT, f"device_update for {DEVICE_NAME}")
+        for required in ("signal", "value", "timestamp", "connected"):
+            if required not in update:
+                fail(f"device_update missing field {required!r}: {update}")
+        ok(f"update received  signal={update['signal']!r}  value={update['value']!r}")
+
+        step(f"Unsubscribe from device {DEVICE_NAME}")
+        await ws.send(json.dumps({"action": "unsubscribe", "device": DEVICE_NAME}))
+        await recv_until(ws, lambda m: is_event(m, "unsubscribed"),
+                         SUBSCRIBE_TIMEOUT, "unsubscribed ack")
+        ok("unsubscribed ack received")
+
+        step("Close")
+    ok("device-socket closed cleanly")
 
 
 async def run() -> None:
-    print(f"{B}direct_control WS exerciser{X}  target={WS_URL}  pv={PV_NAME}")
-
-    step("Connect")
-    async with websockets.connect(WS_URL) as ws:
-        ok(f"connected to {WS_URL}")
-
-        # ─── Ping/pong sanity ────────────────────────────────────────────
-        step("Ping → pong")
-        await ws.send(json.dumps({"action": "ping"}))
-        await recv_until(
-            ws,
-            lambda m: is_event(m, "pong"),
-            timeout=SUBSCRIBE_TIMEOUT,
-            description="pong",
-        )
-        ok("pong received")
-
-        # ─── Subscribe ──────────────────────────────────────────────────
-        step(f"Subscribe to {PV_NAME}")
-        await ws.send(json.dumps({"action": "subscribe", "pv_names": [PV_NAME]}))
-        ack = await recv_until(
-            ws,
-            lambda m: is_event(m, "subscribed"),
-            timeout=SUBSCRIBE_TIMEOUT,
-            description="subscribed ack",
-        )
-        sub_pvs = ack.get("pv_names", [])
-        if PV_NAME not in sub_pvs:
-            fail(f"subscribed ack missing {PV_NAME!r}: {ack}")
-        ok(f"subscribed ack pv_names={sub_pvs}")
-
-        # ─── First update ───────────────────────────────────────────────
-        step(f"Receive at least one pv_update for {PV_NAME}")
-        update = await recv_until(
-            ws,
-            lambda m: is_pv_update(m, PV_NAME),
-            timeout=UPDATE_TIMEOUT,
-            description=f"pv_update for {PV_NAME}",
-        )
-        for required in ("value", "timestamp", "connected"):
-            if required not in update:
-                fail(f"pv_update missing required field {required!r}: {update}")
-        ok(f"update received  value={update['value']!r}  connected={update['connected']}")
-
-        # ─── Unsubscribe ────────────────────────────────────────────────
-        step(f"Unsubscribe from {PV_NAME}")
-        await ws.send(json.dumps({"action": "unsubscribe", "pv_names": [PV_NAME]}))
-        await recv_until(
-            ws,
-            lambda m: is_event(m, "unsubscribed"),
-            timeout=SUBSCRIBE_TIMEOUT,
-            description="unsubscribed ack",
-        )
-        ok("unsubscribed ack received")
-
-        # ─── Close cleanly ──────────────────────────────────────────────
-        step("Close")
-    ok("connection closed cleanly")
-
+    print(f"{B}direct_control WS exerciser{X}  host={DIRECT_HOST}")
+    await exercise_pv_socket()
+    await exercise_device_socket()
     print(f"\n{G}{B}direct_control WS: ALL CHECKS PASSED{X}")
 
 

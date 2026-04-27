@@ -810,34 +810,16 @@ async def get_nested_device_value(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.websocket("/ws/pv/monitor")
-async def websocket_pv_monitor_legacy(websocket: WebSocket):
-    """PV monitoring WebSocket (legacy path)."""
-    await app.state.ws_manager.handle_client(websocket)
-
-
 @app.websocket("/api/v1/pv-socket")
 async def websocket_pv_socket(websocket: WebSocket):
-    """PV monitoring WebSocket (ophyd-websocket compatible)."""
+    """PV monitoring WebSocket — finch `ophydSocketPVPath`."""
     await app.state.ws_manager.handle_client(websocket)
 
 
 @app.websocket("/api/v1/device-socket")
 async def websocket_device_socket(websocket: WebSocket):
-    """Device-level monitoring WebSocket (ophyd-websocket compatible)."""
+    """Device-level monitoring WebSocket — finch `ophydSocketDevicePath`."""
     await app.state.device_ws_manager.handle_client(websocket)
-
-
-@app.websocket("/api/v1/control-socket")
-async def websocket_control_socket(websocket: WebSocket):
-    """
-    Combined PV + device control WebSocket (ophyd-websocket compatible).
-
-    Writes (set/stop) go through DeviceControl so coordination checks apply.
-    This is served by the same WebSocketManager that handles pv-socket; set
-    and stop operations are automatically coordination-checked.
-    """
-    await app.state.ws_manager.handle_client(websocket)
 
 
 def create_app() -> FastAPI:
