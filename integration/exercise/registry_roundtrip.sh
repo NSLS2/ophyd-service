@@ -1,24 +1,10 @@
 #!/usr/bin/env bash
 #
-# Exercise the registry-lifecycle contract end to end.
+# Exercise the registry-lifecycle contract end to end:
+# happi seed → CRUD-extend → export → re-import into a fresh service.
 #
-# Validates the full round-trip:
-#   1. configuration_service starts up with a single-IOC happi seed
-#      (mini_beamline only — see integration/happi/happi_db.json)
-#   2. The CRUD API accepts additional devices for the OTHER IOCs we run
-#      (motor records, random walks, thermo) — exactly how a real beamline
-#      would extend its registry as new instruments come online.
-#   3. /api/v1/registry/export returns the COMBINED state in happi format —
-#      every entry has the required happi shape.
-#   4. That export is itself a valid happi profile: a fresh
-#      configuration_service container loaded against it ends up with the
-#      same device count and names. Closes the loop on "the export is
-#      reimportable" — without that, export is just a debug dump.
-#
-# Pre-req: a pod must be up (any of minimal/full/dev), with the trimmed
-# canonical happi mounted. The script makes no assumptions about which one.
-#
-# Pre-req: docker must be reachable as the current user. If not, run via
+# Pre-req: a pod is up (any of minimal/full/dev) and docker is reachable as
+# the current user. If docker isn't reachable, run via:
 #   sg docker -c '/path/to/registry_roundtrip.sh'
 #
 # Usage:
@@ -27,41 +13,14 @@
 
 set -euo pipefail
 
+. "$(dirname "$0")/_exerciser_lib.sh"
+
 CONFIG_URL="${CONFIG_URL:-http://localhost:8004}"
 SIDE_PORT="${SIDE_PORT:-8104}"
 SIDE_HEALTH_TIMEOUT="${SIDE_HEALTH_TIMEOUT:-30}"
 SIDE_NAME="roundtrip_check_cs"
 WORK_DIR="${WORK_DIR:-/tmp/roundtrip_check}"
 
-if [ -t 1 ]; then
-    GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
-else
-    GREEN=''; RED=''; YELLOW=''; BOLD=''; RESET=''
-fi
-
-step() { printf "\n${BOLD}== %s ==${RESET}\n" "$1"; }
-pass() { printf "  ${GREEN}PASS${RESET}  %s\n" "$1"; }
-fail() { printf "  ${RED}FAIL${RESET}  %s\n" "$1" >&2; cleanup; exit 1; }
-note() { printf "  ${YELLOW}NOTE${RESET}  %s\n" "$1"; }
-
-req() {
-    local method=$1 url=$2 body="${3:-}"
-    local -a args=(-s -o /tmp/exer_body -w "%{http_code}" -X "$method")
-    if [ -n "$body" ]; then
-        args+=(-H "Content-Type: application/json" -d "$body")
-    fi
-    curl "${args[@]}" "$url"
-}
-
-expect_status() {
-    local want=$1 got=$2 url=$3
-    if [ "$got" != "$want" ]; then
-        printf "    response body: %s\n" "$(cat /tmp/exer_body 2>/dev/null | head -c 400)"
-        fail "$url: expected HTTP $want, got $got"
-    fi
-}
-
-# Track devices we add so we can clean them up at the end (or on failure).
 ADDED_DEVICES=()
 
 cleanup() {
@@ -78,6 +37,8 @@ cleanup() {
     rm -rf "$WORK_DIR"
 }
 
+# fail() in _exerciser_lib.sh runs CLEANUP_FN on its way out.
+CLEANUP_FN=cleanup
 trap cleanup EXIT
 
 # ─── CRUD helpers ───────────────────────────────────────────────────────

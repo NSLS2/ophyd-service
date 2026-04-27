@@ -1,56 +1,19 @@
 #!/usr/bin/env bash
 #
 # Exercise the HTTP endpoints on direct_control_service.
-#
-# Walks the public REST surface: health → list devices (seen through the
-# config-service registry) → PV reads (scalar, array, compound-leaf) → PV
-# write round-trip → device-path reads → error cases. WebSocket endpoints
-# are deliberately NOT covered here; a Python-based WS exerciser can be
-# added when needed.
-#
-# Assumes the minimal pod is up (ioc + configuration_service + direct_control)
-# with the happi db at integration/happi/happi_db.json as the registry.
+# WebSocket endpoints live in the companion direct_control_ws.py script.
 #
 # Usage:
 #   ./direct_control.sh
 #   DIRECT_URL=http://remote:8003 ./direct_control.sh
-#
-# Exit 0 on full pass; non-zero on any failure.
 
 set -euo pipefail
 
+. "$(dirname "$0")/_exerciser_lib.sh"
+
 DIRECT_URL="${DIRECT_URL:-http://localhost:8003}"
 
-if [ -t 1 ]; then
-    GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
-else
-    GREEN=''; RED=''; YELLOW=''; BOLD=''; RESET=''
-fi
-
-step()  { printf "\n${BOLD}== %s ==${RESET}\n" "$1"; }
-pass()  { printf "  ${GREEN}PASS${RESET}  %s\n" "$1"; }
-fail()  { printf "  ${RED}FAIL${RESET}  %s\n" "$1" >&2; exit 1; }
-note()  { printf "  ${YELLOW}NOTE${RESET}  %s\n" "$1"; }
-
-req() {
-    local method=$1 url=$2 body="${3:-}"
-    local -a args=(-s -o /tmp/exer_body -w "%{http_code}" -X "$method")
-    if [ -n "$body" ]; then
-        args+=(-H "Content-Type: application/json" -d "$body")
-    fi
-    curl "${args[@]}" "$url"
-}
-
-expect_status() {
-    local want=$1 got=$2 url=$3
-    if [ "$got" != "$want" ]; then
-        printf "    response body: %s\n" "$(cat /tmp/exer_body 2>/dev/null | head -c 400)"
-        fail "$url: expected HTTP $want, got $got"
-    fi
-}
-
 printf "${BOLD}direct_control exerciser${RESET}  target=${DIRECT_URL}\n"
-note "WebSocket endpoints are intentionally not exercised here (Phase 1 gap)."
 
 # ─── Health & stats ──────────────────────────────────────────────────────
 step "Health & service state"
@@ -122,54 +85,43 @@ original=$(jq -r '.value' < /tmp/exer_body)
 
 target=2.5
 status=$(req POST "${DIRECT_URL}/api/v1/pv/set" "{\"pv_name\":\"mini:dot:mtrx\",\"value\":${target}}")
-case "$status" in
-    20*) pass "POST /api/v1/pv/set  mini:dot:mtrx=${target}  HTTP $status" ;;
-    *) expect_status 200 "$status" "POST /api/v1/pv/set" ;;
-esac
+expect_success "$status" "POST /api/v1/pv/set  mini:dot:mtrx=${target}" 200
 
-# give the IOC a tick to settle
+# Caproto applies puts asynchronously; give the IOC a tick before reading back.
 sleep 0.5
 
 status=$(req GET "${DIRECT_URL}/api/v1/pv/mini:dot:mtrx/value")
 expect_status 200 "$status" "pv/mini:dot:mtrx (readback)"
 observed=$(jq -r '.value' < /tmp/exer_body)
 
-# tolerance check (awk for portable float comparison)
 if awk -v o="$observed" -v t="$target" 'BEGIN{exit !(o-t <= 0.01 && t-o <= 0.01)}'; then
     pass "readback observed=${observed} within tolerance of ${target}"
 else
     fail "readback observed=${observed} != target=${target}"
 fi
 
-# restore
 status=$(req POST "${DIRECT_URL}/api/v1/pv/set" "{\"pv_name\":\"mini:dot:mtrx\",\"value\":${original}}")
-case "$status" in 20*) pass "restored mini:dot:mtrx to ${original}" ;; esac
+expect_success "$status" "restored mini:dot:mtrx to ${original}" 200
 
-# ─── Device-level operations ─────────────────────────────────────────────
-# These endpoints are partly placeholder pending full ophyd-device integration,
+# Endpoints below are partly placeholder pending full ophyd-device integration,
 # but they accept valid request shapes and return HTTP 200. Lock that contract in.
 step "Device-level operations"
 
-# Generic device exec (method=read on a known device)
 body='{"device_name":"beam_current","method":"read","args":[],"kwargs":{}}'
 status=$(req POST "${DIRECT_URL}/api/v1/device/execute" "$body")
 expect_status 200 "$status" "POST /api/v1/device/execute"
 pass "POST /api/v1/device/execute"
 
-# Stop a device (no-op for signals; endpoint should still accept the request)
 status=$(req POST "${DIRECT_URL}/api/v1/device/beam_current/stop")
 expect_status 200 "$status" "POST /api/v1/device/beam_current/stop"
 pass "POST /api/v1/device/beam_current/stop"
 
-# Nested-component access via device-path POST
 status=$(req POST "${DIRECT_URL}/api/v1/device/beam_current.readback" '{"method":"read"}')
 expect_status 200 "$status" "POST /api/v1/device/beam_current.readback"
 pass "POST /api/v1/device/beam_current.readback (nested component)"
 
-# ─── Device-path reads ───────────────────────────────────────────────────
 step "Device-path form"
 
-# The compound `spot` device should resolve via its components.
 status=$(req GET "${DIRECT_URL}/api/v1/device/spot.roi/value")
 case "$status" in
     200) pass "/api/v1/device/spot.roi/value" ;;

@@ -1,54 +1,17 @@
 #!/usr/bin/env bash
 #
 # Exercise every major endpoint family on configuration_service.
-#
-# Plays the role of a first-time user walking through the API: health →
-# browse happi-loaded registry → CRUD on standalone PVs → CRUD on devices →
-# metadata round-trip → audit-history → registry export. Each section is a
-# copy-pasteable example; the script fails loudly on the first assertion
-# that doesn't hold.
-#
-# Intended for both local runs and future CI. Assumes `curl` and `jq` are on
-# PATH.
+# Pass/fail via exit code; intended for both local runs and CI.
 #
 # Usage:
-#   ./configuration_service.sh                    # against http://localhost:8004
+#   ./configuration_service.sh
 #   CONFIG_URL=http://remote:8004 ./configuration_service.sh
-#
-# Exit 0 on full pass; non-zero on any failure.
 
 set -euo pipefail
 
+. "$(dirname "$0")/_exerciser_lib.sh"
+
 CONFIG_URL="${CONFIG_URL:-http://localhost:8004}"
-
-if [ -t 1 ]; then
-    GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
-else
-    GREEN=''; RED=''; YELLOW=''; BOLD=''; RESET=''
-fi
-
-step()  { printf "\n${BOLD}== %s ==${RESET}\n" "$1"; }
-pass()  { printf "  ${GREEN}PASS${RESET}  %s\n" "$1"; }
-fail()  { printf "  ${RED}FAIL${RESET}  %s\n" "$1" >&2; exit 1; }
-note()  { printf "  ${YELLOW}NOTE${RESET}  %s\n" "$1"; }
-
-# req METHOD URL [BODY] → writes body to /tmp/exer_body, prints status
-req() {
-    local method=$1 url=$2 body="${3:-}"
-    local -a args=(-s -o /tmp/exer_body -w "%{http_code}" -X "$method")
-    if [ -n "$body" ]; then
-        args+=(-H "Content-Type: application/json" -d "$body")
-    fi
-    curl "${args[@]}" "$url"
-}
-
-expect_status() {
-    local want=$1 got=$2 url=$3
-    if [ "$got" != "$want" ]; then
-        printf "    response body: %s\n" "$(cat /tmp/exer_body 2>/dev/null | head -c 400)"
-        fail "$url: expected HTTP $want, got $got"
-    fi
-}
 
 printf "${BOLD}configuration_service exerciser${RESET}  target=${CONFIG_URL}\n"
 
@@ -158,28 +121,15 @@ expect_status 200 "$status" "/api/v1/pvs/standalone (pre)"
 pre_count=$(jq 'if type=="array" then length else (.count // (.pvs | length) // 0) end' < /tmp/exer_body)
 pass "/api/v1/pvs/standalone  count=${pre_count} (pre)"
 
-# register
 status=$(req POST "${CONFIG_URL}/api/v1/pvs" '{"pv_name":"exer:test:pv","description":"exerciser scratch PV"}')
-case "$status" in
-    20*) pass "POST /api/v1/pvs  exer:test:pv  HTTP $status" ;;
-    *) expect_status 201 "$status" "POST /api/v1/pvs" ;;
-esac
+expect_success "$status" "POST /api/v1/pvs  exer:test:pv" 201
 
-# update via PUT
 status=$(req PUT "${CONFIG_URL}/api/v1/pvs/standalone/exer:test:pv" '{"description":"updated by exerciser"}')
-case "$status" in
-    20*) pass "PUT /api/v1/pvs/standalone/exer:test:pv  HTTP $status" ;;
-    *) expect_status 200 "$status" "PUT /api/v1/pvs/standalone/exer:test:pv" ;;
-esac
+expect_success "$status" "PUT /api/v1/pvs/standalone/exer:test:pv" 200
 
-# delete
 status=$(req DELETE "${CONFIG_URL}/api/v1/pvs/standalone/exer:test:pv")
-case "$status" in
-    20*) pass "DELETE /api/v1/pvs/standalone/exer:test:pv  HTTP $status" ;;
-    *) expect_status 204 "$status" "DELETE /api/v1/pvs/standalone/exer:test:pv" ;;
-esac
+expect_success "$status" "DELETE /api/v1/pvs/standalone/exer:test:pv" 204
 
-# confirm gone
 status=$(req GET "${CONFIG_URL}/api/v1/pvs/standalone/exer:test:pv")
 if [ "$status" = "404" ]; then
     pass "GET after DELETE → 404 as expected"
@@ -210,67 +160,44 @@ device_payload='{
 }'
 
 status=$(req POST "${CONFIG_URL}/api/v1/devices" "$device_payload")
-case "$status" in
-    20*) pass "POST /api/v1/devices  exer_test_motor  HTTP $status" ;;
-    *) expect_status 201 "$status" "POST /api/v1/devices" ;;
-esac
+expect_success "$status" "POST /api/v1/devices  exer_test_motor" 201
 
-# retrieve
 status=$(req GET "${CONFIG_URL}/api/v1/devices/exer_test_motor")
 expect_status 200 "$status" "GET /api/v1/devices/exer_test_motor"
 pass "GET /api/v1/devices/exer_test_motor"
 
-# disable
 status=$(req PATCH "${CONFIG_URL}/api/v1/devices/exer_test_motor/disable")
-case "$status" in
-    20*) pass "PATCH .../disable  HTTP $status" ;;
-    *) expect_status 200 "$status" "PATCH .../disable" ;;
-esac
+expect_success "$status" "PATCH .../disable" 200
 
-# enable
 status=$(req PATCH "${CONFIG_URL}/api/v1/devices/exer_test_motor/enable")
-case "$status" in
-    20*) pass "PATCH .../enable  HTTP $status" ;;
-    *) expect_status 200 "$status" "PATCH .../enable" ;;
-esac
+expect_success "$status" "PATCH .../enable" 200
 
-# update (PUT)
 status=$(req PUT "${CONFIG_URL}/api/v1/devices/exer_test_motor" \
     '{"name":"exer_test_motor","device_class":"ophyd.signal.EpicsSignal","args":["exer:test:motor"],"kwargs":{"name":"exer_test_motor"},"documentation":"updated"}')
-case "$status" in
-    20*) pass "PUT /api/v1/devices/exer_test_motor  HTTP $status" ;;
-    *) expect_status 200 "$status" "PUT /api/v1/devices/exer_test_motor" ;;
-esac
+expect_success "$status" "PUT /api/v1/devices/exer_test_motor" 200
 
-# delete
 status=$(req DELETE "${CONFIG_URL}/api/v1/devices/exer_test_motor")
-case "$status" in
-    20*) pass "DELETE /api/v1/devices/exer_test_motor  HTTP $status" ;;
-    *) expect_status 204 "$status" "DELETE /api/v1/devices/exer_test_motor" ;;
-esac
+expect_success "$status" "DELETE /api/v1/devices/exer_test_motor" 204
 
 # ─── Metadata CRUD ────────────────────────────────────────────────────────
 step "Metadata round-trip"
 
 status=$(req POST "${CONFIG_URL}/api/v1/metadata/exer_scratch" '{"value":{"stage":"initial","flag":true}}')
-case "$status" in 20*) pass "POST /api/v1/metadata/exer_scratch  HTTP $status" ;;
-    *) expect_status 201 "$status" "POST /api/v1/metadata/exer_scratch" ;; esac
+expect_success "$status" "POST /api/v1/metadata/exer_scratch" 201
 
 status=$(req GET "${CONFIG_URL}/api/v1/metadata/exer_scratch")
 expect_status 200 "$status" "GET /api/v1/metadata/exer_scratch"
 pass "GET /api/v1/metadata/exer_scratch"
 
 status=$(req PUT "${CONFIG_URL}/api/v1/metadata/exer_scratch" '{"value":{"stage":"updated","flag":false}}')
-case "$status" in 20*) pass "PUT /api/v1/metadata/exer_scratch  HTTP $status" ;;
-    *) expect_status 200 "$status" "PUT /api/v1/metadata/exer_scratch" ;; esac
+expect_success "$status" "PUT /api/v1/metadata/exer_scratch" 200
 
 status=$(req GET "${CONFIG_URL}/api/v1/metadata")
 expect_status 200 "$status" "/api/v1/metadata"
 pass "/api/v1/metadata"
 
 status=$(req DELETE "${CONFIG_URL}/api/v1/metadata/exer_scratch")
-case "$status" in 20*) pass "DELETE /api/v1/metadata/exer_scratch  HTTP $status" ;;
-    *) expect_status 204 "$status" "DELETE /api/v1/metadata/exer_scratch" ;; esac
+expect_success "$status" "DELETE /api/v1/metadata/exer_scratch" 204
 
 # ─── Audit trail ──────────────────────────────────────────────────────────
 step "Change history"
