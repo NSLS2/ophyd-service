@@ -8,6 +8,11 @@ Lazy imports: Settings and pyepics-dependent modules are loaded on first
 access so CLI env vars are in place before pyepics reads them at import time.
 """
 
+# Configures the dynamic-library search path for pyepics' bundled CA libs.
+# Must run BEFORE any `from epics import ...` (otherwise epicscorelibs warns
+# that the path setup arrived too late). Side-effect-only import, no API used.
+import epicscorelibs.path.pyepics  # noqa: F401
+
 from typing import Any
 
 __version__ = "1.0.0"
