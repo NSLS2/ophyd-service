@@ -1,0 +1,74 @@
+# Pre-commit hooks for the ophyd-service monorepo.
+#
+# Setup (one-time, per developer):
+#   uv tool install pre-commit          # or: pipx install pre-commit
+#   pre-commit install                  # installs the pre-commit stage
+#   pre-commit install --hook-type pre-push   # installs the pre-push stage
+#
+# Run manually against everything:
+#   pre-commit run --all-files
+#   pre-commit run --all-files --hook-stage pre-push
+#
+# Stage policy:
+#   pre-commit  -> fast checks only (ruff, hygiene, secrets). Run on every commit.
+#   pre-push    -> mypy. Slower, runs before push so pre-existing errors don't block iteration.
+
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.7
+    hooks:
+      - id: ruff
+        name: ruff (configuration_service)
+        files: ^backend/configuration_service/.*\.py$
+        args: [--config=backend/configuration_service/pyproject.toml]
+      - id: ruff
+        name: ruff (direct_control_service)
+        files: ^backend/direct_control_service/.*\.py$
+        args: [--config=backend/direct_control_service/pyproject.toml]
+      - id: ruff-format
+        name: ruff-format (configuration_service)
+        files: ^backend/configuration_service/.*\.py$
+        args: [--config=backend/configuration_service/pyproject.toml]
+      - id: ruff-format
+        name: ruff-format (direct_control_service)
+        files: ^backend/direct_control_service/.*\.py$
+        args: [--config=backend/direct_control_service/pyproject.toml]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: mypy-configuration-service
+        name: mypy (configuration_service)
+        stages: [pre-push]
+        language: system
+        entry: bash -c 'cd backend/configuration_service && uv run python -m mypy src'
+        pass_filenames: false
+        files: ^backend/configuration_service/.*\.py$
+        require_serial: true
+
+      - id: mypy-direct-control-service
+        name: mypy (direct_control_service)
+        stages: [pre-push]
+        language: system
+        entry: bash -c 'cd backend/direct_control_service && uv run python -m mypy src'
+        pass_filenames: false
+        files: ^backend/direct_control_service/.*\.py$
+        require_serial: true
