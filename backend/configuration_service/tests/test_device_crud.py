@@ -287,11 +287,13 @@ class TestDeviceRegistryStore:
 
         # Initial seed
         registry1 = DeviceRegistry()
-        registry1.add_device(DeviceMetadata(
-            name="old_device",
-            device_label=DeviceLabel.MOTOR,
-            ophyd_class="EpicsMotor",
-        ))
+        registry1.add_device(
+            DeviceMetadata(
+                name="old_device",
+                device_label=DeviceLabel.MOTOR,
+                ophyd_class="EpicsMotor",
+            )
+        )
         store.seed_from_registry(registry1)
 
         # Add a runtime device
@@ -308,11 +310,13 @@ class TestDeviceRegistryStore:
 
         # Reset with a new registry
         registry2 = DeviceRegistry()
-        registry2.add_device(DeviceMetadata(
-            name="fresh_device",
-            device_label=DeviceLabel.MOTOR,
-            ophyd_class="EpicsMotor",
-        ))
+        registry2.add_device(
+            DeviceMetadata(
+                name="fresh_device",
+                device_label=DeviceLabel.MOTOR,
+                ophyd_class="EpicsMotor",
+            )
+        )
         store.clear_and_reseed(registry2)
 
         assert store.device_count() == 1
@@ -369,11 +373,13 @@ class TestDeviceRegistryStore:
         store1.initialize()
 
         registry = DeviceRegistry()
-        registry.add_device(DeviceMetadata(
-            name="persistent_motor",
-            device_label=DeviceLabel.MOTOR,
-            ophyd_class="EpicsMotor",
-        ))
+        registry.add_device(
+            DeviceMetadata(
+                name="persistent_motor",
+                device_label=DeviceLabel.MOTOR,
+                ophyd_class="EpicsMotor",
+            )
+        )
         store1.seed_from_registry(registry)
         store1.close()
 
@@ -634,9 +640,9 @@ class TestPartialUpdateDevice:
         assert original["documentation"] is None
 
         # Update only documentation
-        response = client.put("/api/v1/devices/sample_x", json={
-            "metadata": {"documentation": "Updated description"}
-        })
+        response = client.put(
+            "/api/v1/devices/sample_x", json={"metadata": {"documentation": "Updated description"}}
+        )
         assert response.status_code == 200
 
         # Verify documentation changed and everything else preserved
@@ -652,9 +658,9 @@ class TestPartialUpdateDevice:
         """Sending just labels preserves all other fields."""
         original = client.get("/api/v1/devices/sample_x").json()
 
-        response = client.put("/api/v1/devices/sample_x", json={
-            "metadata": {"labels": ["motors", "sample-stage"]}
-        })
+        response = client.put(
+            "/api/v1/devices/sample_x", json={"metadata": {"labels": ["motors", "sample-stage"]}}
+        )
         assert response.status_code == 200
 
         updated = client.get("/api/v1/devices/sample_x").json()
@@ -667,9 +673,9 @@ class TestPartialUpdateDevice:
         original_spec = client.get("/api/v1/devices/sample_x/instantiation").json()
         assert original_spec["active"] is True
 
-        response = client.put("/api/v1/devices/sample_x", json={
-            "instantiation_spec": {"active": False}
-        })
+        response = client.put(
+            "/api/v1/devices/sample_x", json={"instantiation_spec": {"active": False}}
+        )
         assert response.status_code == 200
 
         updated_spec = client.get("/api/v1/devices/sample_x/instantiation").json()
@@ -679,26 +685,27 @@ class TestPartialUpdateDevice:
         assert updated_spec["kwargs"] == original_spec["kwargs"]
 
         # Restore
-        client.put("/api/v1/devices/sample_x", json={
-            "instantiation_spec": {"active": True}
-        })
+        client.put("/api/v1/devices/sample_x", json={"instantiation_spec": {"active": True}})
 
     def test_partial_update_invalid_device_label(self, client):
         """Invalid enum value in partial update returns 422."""
-        response = client.put("/api/v1/devices/sample_x", json={
-            "metadata": {"device_label": "not_a_real_label"}
-        })
+        response = client.put(
+            "/api/v1/devices/sample_x", json={"metadata": {"device_label": "not_a_real_label"}}
+        )
         assert response.status_code == 422
 
     def test_partial_update_multiple_fields(self, client):
         """Multiple fields in one request all apply."""
-        response = client.put("/api/v1/devices/sample_x", json={
-            "metadata": {
-                "documentation": "Multi-field update",
-                "is_stoppable": True,
-                "labels": ["updated"],
-            }
-        })
+        response = client.put(
+            "/api/v1/devices/sample_x",
+            json={
+                "metadata": {
+                    "documentation": "Multi-field update",
+                    "is_stoppable": True,
+                    "labels": ["updated"],
+                }
+            },
+        )
         assert response.status_code == 200
 
         updated = client.get("/api/v1/devices/sample_x").json()
@@ -726,17 +733,15 @@ class TestPartialUpdateDevice:
         deserialization), but required in DeviceMetadata (so model_validate
         rejects it with 422).
         """
-        response = client.put("/api/v1/devices/sample_x", json={
-            "metadata": {"device_label": None}
-        })
+        response = client.put("/api/v1/devices/sample_x", json={"metadata": {"device_label": None}})
         assert response.status_code == 422
         assert "Invalid metadata update" in response.json()["detail"]
 
     def test_partial_update_null_required_spec_field(self, client):
         """Setting device_class to null fails model_validate on the spec."""
-        response = client.put("/api/v1/devices/sample_x", json={
-            "instantiation_spec": {"device_class": None}
-        })
+        response = client.put(
+            "/api/v1/devices/sample_x", json={"instantiation_spec": {"device_class": None}}
+        )
         assert response.status_code == 422
         assert "Invalid instantiation spec update" in response.json()["detail"]
 

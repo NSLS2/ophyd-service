@@ -12,6 +12,7 @@ from typing import Optional
 @dataclass(frozen=True)
 class DeviceCapabilities:
     """Capability flags for a device class."""
+
     is_movable: bool = False
     is_flyable: bool = False
     is_readable: bool = False
@@ -94,7 +95,6 @@ KNOWN_CAPABILITIES: dict[str, DeviceCapabilities] = {
     ),
     "MockFlyer": _FLYABLE,
     "TrivialFlyer": _FLYABLE,
-
     # ophyd real device classes
     "EpicsMotor": _MOTOR,
     "PVPositioner": _MOTOR,
@@ -102,15 +102,12 @@ KNOWN_CAPABILITIES: dict[str, DeviceCapabilities] = {
     "PseudoPositioner": _MOTOR,
     "PseudoSingle": _MOTOR,
     "SoftPositioner": _MOTOR,
-
     "EpicsSignal": _SIGNAL_RW,
     "EpicsSignalRO": _SIGNAL_RO,
     "EpicsSignalWithRBV": _SIGNAL_RW,
     "InternalSignal": _SIGNAL_RO,
-
     "EpicsScaler": _DETECTOR,
     "EpicsPathSignal": _SIGNAL_RO,
-
     "Device": _DEVICE_BASE,
     "SimDetector": DeviceCapabilities(
         is_readable=True,
@@ -120,7 +117,6 @@ KNOWN_CAPABILITIES: dict[str, DeviceCapabilities] = {
         is_subscribable=True,
         writes_external_assets=True,
     ),
-
     # Area detectors
     "AreaDetector": DeviceCapabilities(
         is_readable=True,

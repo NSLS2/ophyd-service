@@ -116,7 +116,8 @@ class PVMonitorManager:
                         except Exception as destroy_err:  # noqa: BLE001
                             logger.warning(
                                 "pv_signal_destroy_failed_on_subscribe_error",
-                                pv_name=pv_name, error=str(destroy_err),
+                                pv_name=pv_name,
+                                error=str(destroy_err),
                             )
                     raise PVNotFoundError(f"PV {pv_name} subscription failed: {e}")
 
@@ -278,9 +279,7 @@ class PVMonitorManager:
             write_access=write_access,
         )
 
-    def unsubscribe(
-        self, pv_name: str, callback: Optional[Callable] = None
-    ) -> None:
+    def unsubscribe(self, pv_name: str, callback: Optional[Callable] = None) -> None:
         signal_to_destroy = None
         with self._lock:
             if callback:

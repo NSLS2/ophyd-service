@@ -46,7 +46,7 @@ class StandalonePVStore:
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get thread-local database connection."""
-        if not hasattr(self._local, 'conn') or self._local.conn is None:
+        if not hasattr(self._local, "conn") or self._local.conn is None:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
             conn = sqlite3.connect(
@@ -152,8 +152,7 @@ class StandalonePVStore:
                         labels = ?, source = ?, updated_at = ?
                     WHERE pv_name = ?
                     """,
-                    (description, protocol, access_mode,
-                     labels_json, source, now, pv_name),
+                    (description, protocol, access_mode, labels_json, source, now, pv_name),
                 )
             else:
                 conn.execute(
@@ -163,8 +162,17 @@ class StandalonePVStore:
                          labels, source, created_by, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (pv_name, description, protocol, access_mode,
-                     labels_json, source, created_by, now, now),
+                    (
+                        pv_name,
+                        description,
+                        protocol,
+                        access_mode,
+                        labels_json,
+                        source,
+                        created_by,
+                        now,
+                        now,
+                    ),
                 )
 
         logger.debug(f"Saved standalone PV: {pv_name}")
@@ -179,9 +187,7 @@ class StandalonePVStore:
             True if PV was found and deleted
         """
         with self._transaction() as conn:
-            cursor = conn.execute(
-                "DELETE FROM standalone_pvs WHERE pv_name = ?", (pv_name,)
-            )
+            cursor = conn.execute("DELETE FROM standalone_pvs WHERE pv_name = ?", (pv_name,))
             deleted = cursor.rowcount > 0
 
         if deleted:
@@ -197,9 +203,7 @@ class StandalonePVStore:
         StandalonePV or None
         """
         conn = self._get_connection()
-        cursor = conn.execute(
-            "SELECT * FROM standalone_pvs WHERE pv_name = ?", (pv_name,)
-        )
+        cursor = conn.execute("SELECT * FROM standalone_pvs WHERE pv_name = ?", (pv_name,))
         row = cursor.fetchone()
         if row is None:
             return None
@@ -219,16 +223,11 @@ class StandalonePVStore:
         list of StandalonePV
         """
         conn = self._get_connection()
-        cursor = conn.execute(
-            "SELECT * FROM standalone_pvs ORDER BY pv_name"
-        )
+        cursor = conn.execute("SELECT * FROM standalone_pvs ORDER BY pv_name")
         pvs = [self._row_to_model(row) for row in cursor.fetchall()]
 
         if labels:
-            pvs = [
-                pv for pv in pvs
-                if all(label in pv.labels for label in labels)
-            ]
+            pvs = [pv for pv in pvs if all(label in pv.labels for label in labels)]
 
         return pvs
 
@@ -281,6 +280,6 @@ class StandalonePVStore:
 
     def close(self) -> None:
         """Close database connection."""
-        if hasattr(self._local, 'conn') and self._local.conn:
+        if hasattr(self._local, "conn") and self._local.conn:
             self._local.conn.close()
             self._local.conn = None

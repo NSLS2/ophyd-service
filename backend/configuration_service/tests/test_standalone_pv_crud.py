@@ -29,7 +29,6 @@ def client(tmp_db):
         use_mock_data=True,
         db_path=tmp_db,
         device_change_history_enabled=True,
-
     )
     app = create_app(settings)
     with TestClient(app) as test_client:
@@ -413,11 +412,14 @@ class TestListStandalonePVEndpoints:
     def test_list_with_data(self, client, sample_pv_payload):
         """Test listing standalone PVs with data."""
         client.post("/api/v1/pvs", json=sample_pv_payload)
-        client.post("/api/v1/pvs", json={
-            "pv_name": "VAC:GAUGE:1",
-            "description": "Vacuum gauge",
-            "labels": ["vacuum"],
-        })
+        client.post(
+            "/api/v1/pvs",
+            json={
+                "pv_name": "VAC:GAUGE:1",
+                "description": "Vacuum gauge",
+                "labels": ["vacuum"],
+            },
+        )
 
         response = client.get("/api/v1/pvs/standalone")
         assert response.status_code == 200
@@ -426,14 +428,20 @@ class TestListStandalonePVEndpoints:
 
     def test_list_with_label_filter(self, client):
         """Test listing standalone PVs filtered by labels."""
-        client.post("/api/v1/pvs", json={
-            "pv_name": "PV:A",
-            "labels": ["diagnostics", "ring"],
-        })
-        client.post("/api/v1/pvs", json={
-            "pv_name": "PV:B",
-            "labels": ["vacuum"],
-        })
+        client.post(
+            "/api/v1/pvs",
+            json={
+                "pv_name": "PV:A",
+                "labels": ["diagnostics", "ring"],
+            },
+        )
+        client.post(
+            "/api/v1/pvs",
+            json={
+                "pv_name": "PV:B",
+                "labels": ["vacuum"],
+            },
+        )
 
         response = client.get("/api/v1/pvs/standalone?labels=diagnostics")
         assert response.status_code == 200
@@ -443,14 +451,20 @@ class TestListStandalonePVEndpoints:
 
     def test_list_labels(self, client):
         """Test listing unique labels."""
-        client.post("/api/v1/pvs", json={
-            "pv_name": "PV:A",
-            "labels": ["diagnostics", "ring"],
-        })
-        client.post("/api/v1/pvs", json={
-            "pv_name": "PV:B",
-            "labels": ["diagnostics", "vacuum"],
-        })
+        client.post(
+            "/api/v1/pvs",
+            json={
+                "pv_name": "PV:A",
+                "labels": ["diagnostics", "ring"],
+            },
+        )
+        client.post(
+            "/api/v1/pvs",
+            json={
+                "pv_name": "PV:B",
+                "labels": ["diagnostics", "vacuum"],
+            },
+        )
 
         response = client.get("/api/v1/pvs/labels")
         assert response.status_code == 200
@@ -508,7 +522,6 @@ class TestStandalonePVPersistence:
             use_mock_data=True,
             db_path=db_path,
             device_change_history_enabled=True,
-    
         )
 
         # First "session"
@@ -543,16 +556,18 @@ class TestStandalonePVPersistence:
             use_mock_data=True,
             db_path=db_path,
             device_change_history_enabled=True,
-    
         )
 
         # First session: create and delete a PV
         app1 = create_app(settings)
         with TestClient(app1) as c1:
-            c1.post("/api/v1/pvs", json={
-                "pv_name": "TEMP:PV",
-                "description": "Temporary",
-            })
+            c1.post(
+                "/api/v1/pvs",
+                json={
+                    "pv_name": "TEMP:PV",
+                    "description": "Temporary",
+                },
+            )
             assert "TEMP:PV" in c1.get("/api/v1/pvs").json()["pvs"]
 
             resp = c1.delete("/api/v1/pvs/standalone/TEMP:PV")

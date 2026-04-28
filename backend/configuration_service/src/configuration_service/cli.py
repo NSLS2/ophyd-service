@@ -14,7 +14,7 @@ import uvicorn
 def main() -> None:
     """
     Main CLI entry point for bluesky-configuration-service.
-    
+
     Runs the Configuration Service FastAPI application using uvicorn.
     Configuration via environment variables (see config.py) or command-line args.
     """
@@ -22,7 +22,7 @@ def main() -> None:
         description="Bluesky Configuration Service (SVC-004) - Static device registry",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    
+
     # Server configuration
     parser.add_argument(
         "--host",
@@ -54,7 +54,7 @@ def main() -> None:
         choices=["critical", "error", "warning", "info", "debug", "trace"],
         help="Logging level",
     )
-    
+
     # SSL/TLS configuration
     parser.add_argument(
         "--ssl-keyfile",
@@ -71,7 +71,7 @@ def main() -> None:
         type=str,
         help="Path to SSL CA certificates file",
     )
-    
+
     # Proxy configuration
     parser.add_argument(
         "--proxy-headers",
@@ -83,7 +83,7 @@ def main() -> None:
         type=str,
         help="Comma-separated list of IPs to trust with proxy headers",
     )
-    
+
     # Configuration service specific (defaults from environment variables)
     parser.add_argument(
         "--profile-path",
@@ -125,7 +125,7 @@ def main() -> None:
         os.environ["CONFIG_LOAD_STRATEGY"] = "mock"
     elif args.load_strategy:
         os.environ["CONFIG_LOAD_STRATEGY"] = args.load_strategy
-    
+
     # Build uvicorn configuration
     # Use factory=True so uvicorn calls create_app() AFTER env vars are set
     uvicorn_config = {
@@ -137,20 +137,20 @@ def main() -> None:
         "log_level": args.log_level,
         "reload": args.reload,
     }
-    
+
     # Add SSL configuration if provided
     if args.ssl_keyfile and args.ssl_certfile:
         uvicorn_config["ssl_keyfile"] = args.ssl_keyfile
         uvicorn_config["ssl_certfile"] = args.ssl_certfile
         if args.ssl_ca_certs:
             uvicorn_config["ssl_ca_certs"] = args.ssl_ca_certs
-    
+
     # Add proxy configuration if enabled
     if args.proxy_headers:
         uvicorn_config["proxy_headers"] = True
         if args.forwarded_allow_ips:
             uvicorn_config["forwarded_allow_ips"] = args.forwarded_allow_ips
-    
+
     # Determine effective load strategy
     effective_strategy = "mock" if args.use_mock_data else args.load_strategy
 
@@ -170,7 +170,7 @@ def main() -> None:
     print(f"API Documentation: http://{args.host}:{args.port}/docs")
     print(f"Health Check: http://{args.host}:{args.port}/health")
     print()
-    
+
     try:
         uvicorn.run(**uvicorn_config)
     except KeyboardInterrupt:

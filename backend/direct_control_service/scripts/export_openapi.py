@@ -11,6 +11,7 @@ so both docker-compose (shared volume) and downstream tooling have a single sour
 WebSocket endpoints do not appear in OpenAPI — their contract is documented separately
 in the service README.
 """
+
 import argparse
 import json
 import sys
@@ -20,7 +21,9 @@ from direct_control.main import app
 
 
 def main() -> int:
-    default_output = Path(__file__).resolve().parents[3] / "shared-schema" / "direct_control.openapi.json"
+    default_output = (
+        Path(__file__).resolve().parents[3] / "shared-schema" / "direct_control.openapi.json"
+    )
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-o", "--output", type=Path, default=default_output)
     args = parser.parse_args()

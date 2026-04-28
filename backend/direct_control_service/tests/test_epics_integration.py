@@ -127,9 +127,7 @@ def test_pv_socket_receives_update_on_caput(client):
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
             msg = ws.receive_json()
-            if msg.get("event_type") == "pv_update" and msg["value"] == pytest.approx(
-                new_value
-            ):
+            if msg.get("event_type") == "pv_update" and msg["value"] == pytest.approx(new_value):
                 return
         pytest.fail(f"never saw pv_update with value={new_value}")
 
@@ -188,10 +186,7 @@ def test_ws_oversize_update_delivers_error_envelope(client):
             deadline = time.monotonic() + 3.0
             while time.monotonic() < deadline:
                 msg = ws.receive_json()
-                if (
-                    msg.get("event_type") == "pv_update"
-                    and msg.get("pv_name") == "IOC:counter"
-                ):
+                if msg.get("event_type") == "pv_update" and msg.get("pv_name") == "IOC:counter":
                     return
             pytest.fail("connection should still deliver small-payload updates")
     finally:

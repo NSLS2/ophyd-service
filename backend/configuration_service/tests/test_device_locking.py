@@ -29,11 +29,14 @@ class TestLockDevices:
     """POST /api/v1/devices/lock"""
 
     def test_lock_single_device(self, client):
-        resp = client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-001",
-            "plan_name": "count",
-        })
+        resp = client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-001",
+                "plan_name": "count",
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is True
@@ -44,28 +47,37 @@ class TestLockDevices:
         assert len(data["locked_pvs"]) > 0
 
     def test_lock_multiple_devices(self, client):
-        resp = client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x", "det1"],
-            "item_id": "item-001",
-            "plan_name": "rel_scan",
-        })
+        resp = client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x", "det1"],
+                "item_id": "item-001",
+                "plan_name": "rel_scan",
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert set(data["locked_devices"]) == {"sample_x", "det1"}
 
     def test_lock_conflict(self, client):
         # Lock sample_x
-        client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-001",
-            "plan_name": "count",
-        })
+        client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-001",
+                "plan_name": "count",
+            },
+        )
         # Try to lock again with different item_id
-        resp = client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-002",
-            "plan_name": "rel_scan",
-        })
+        resp = client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-002",
+                "plan_name": "rel_scan",
+            },
+        )
         assert resp.status_code == 409
         data = resp.json()
         assert data["success"] is False
@@ -75,11 +87,14 @@ class TestLockDevices:
         assert data["conflicting_devices"][0]["reason"] == "already_locked"
 
     def test_lock_nonexistent_device(self, client):
-        resp = client.post("/api/v1/devices/lock", json={
-            "device_names": ["nonexistent_motor"],
-            "item_id": "item-001",
-            "plan_name": "count",
-        })
+        resp = client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["nonexistent_motor"],
+                "item_id": "item-001",
+                "plan_name": "count",
+            },
+        )
         assert resp.status_code == 404
         data = resp.json()
         assert data["success"] is False
@@ -88,11 +103,14 @@ class TestLockDevices:
     def test_lock_disabled_device(self, client):
         # Disable the device first
         client.patch("/api/v1/devices/sample_x/disable")
-        resp = client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-001",
-            "plan_name": "count",
-        })
+        resp = client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-001",
+                "plan_name": "count",
+            },
+        )
         assert resp.status_code == 422
         data = resp.json()
         assert data["conflicting_devices"][0]["reason"] == "disabled"
@@ -100,17 +118,23 @@ class TestLockDevices:
     def test_lock_atomicity_partial_conflict(self, client):
         """If one device is already locked, none should be acquired."""
         # Lock det1
-        client.post("/api/v1/devices/lock", json={
-            "device_names": ["det1"],
-            "item_id": "item-001",
-            "plan_name": "count",
-        })
+        client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["det1"],
+                "item_id": "item-001",
+                "plan_name": "count",
+            },
+        )
         # Try to lock both sample_x and det1
-        resp = client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x", "det1"],
-            "item_id": "item-002",
-            "plan_name": "rel_scan",
-        })
+        resp = client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x", "det1"],
+                "item_id": "item-002",
+                "plan_name": "rel_scan",
+            },
+        )
         assert resp.status_code == 409
         # Verify sample_x was NOT locked (atomicity)
         status_resp = client.get("/api/v1/devices/sample_x/status")
@@ -122,16 +146,22 @@ class TestUnlockDevices:
 
     def test_unlock_devices(self, client):
         # Lock first
-        client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x", "det1"],
-            "item_id": "item-001",
-            "plan_name": "count",
-        })
+        client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x", "det1"],
+                "item_id": "item-001",
+                "plan_name": "count",
+            },
+        )
         # Unlock
-        resp = client.post("/api/v1/devices/unlock", json={
-            "device_names": ["sample_x", "det1"],
-            "item_id": "item-001",
-        })
+        resp = client.post(
+            "/api/v1/devices/unlock",
+            json={
+                "device_names": ["sample_x", "det1"],
+                "item_id": "item-001",
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is True
@@ -139,43 +169,61 @@ class TestUnlockDevices:
 
     def test_unlock_wrong_owner(self, client):
         # Lock with item-001
-        client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-001",
-            "plan_name": "count",
-        })
+        client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-001",
+                "plan_name": "count",
+            },
+        )
         # Try to unlock with item-002
-        resp = client.post("/api/v1/devices/unlock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-002",
-        })
+        resp = client.post(
+            "/api/v1/devices/unlock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-002",
+            },
+        )
         assert resp.status_code == 403
 
     def test_unlock_already_unlocked(self, client):
         """Unlocking a device that isn't locked should succeed (no-op)."""
-        resp = client.post("/api/v1/devices/unlock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-001",
-        })
+        resp = client.post(
+            "/api/v1/devices/unlock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-001",
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["unlocked_devices"] == []
 
     def test_relock_after_unlock(self, client):
         """Should be able to lock again after unlocking."""
-        client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-001",
-            "plan_name": "count",
-        })
-        client.post("/api/v1/devices/unlock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-001",
-        })
-        resp = client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-002",
-            "plan_name": "rel_scan",
-        })
+        client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-001",
+                "plan_name": "count",
+            },
+        )
+        client.post(
+            "/api/v1/devices/unlock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-001",
+            },
+        )
+        resp = client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-002",
+                "plan_name": "rel_scan",
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["success"] is True
 
@@ -185,16 +233,22 @@ class TestForceUnlock:
 
     def test_force_unlock(self, client):
         # Lock with item-001
-        client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-001",
-            "plan_name": "count",
-        })
+        client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-001",
+                "plan_name": "count",
+            },
+        )
         # Force-unlock (different ownership doesn't matter)
-        resp = client.post("/api/v1/devices/force-unlock", json={
-            "device_names": ["sample_x"],
-            "reason": "EE crashed, clearing stale locks",
-        })
+        resp = client.post(
+            "/api/v1/devices/force-unlock",
+            json={
+                "device_names": ["sample_x"],
+                "reason": "EE crashed, clearing stale locks",
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is True
@@ -204,18 +258,24 @@ class TestForceUnlock:
         assert status_resp.json()["lock_status"] == "unlocked"
 
     def test_force_unlock_nonexistent_device(self, client):
-        resp = client.post("/api/v1/devices/force-unlock", json={
-            "device_names": ["nonexistent_motor"],
-            "reason": "cleanup",
-        })
+        resp = client.post(
+            "/api/v1/devices/force-unlock",
+            json={
+                "device_names": ["nonexistent_motor"],
+                "reason": "cleanup",
+            },
+        )
         assert resp.status_code == 404
 
     def test_force_unlock_already_unlocked(self, client):
         """Force-unlocking an unlocked device should succeed."""
-        resp = client.post("/api/v1/devices/force-unlock", json={
-            "device_names": ["sample_x"],
-            "reason": "preventive cleanup",
-        })
+        resp = client.post(
+            "/api/v1/devices/force-unlock",
+            json={
+                "device_names": ["sample_x"],
+                "reason": "preventive cleanup",
+            },
+        )
         assert resp.status_code == 200
         assert "sample_x" in resp.json()["unlocked_devices"]
 
@@ -234,11 +294,14 @@ class TestDeviceStatus:
         assert data["locked_by_plan"] is None
 
     def test_status_locked(self, client):
-        client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-001",
-            "plan_name": "count",
-        })
+        client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-001",
+                "plan_name": "count",
+            },
+        )
         resp = client.get("/api/v1/devices/sample_x/status")
         data = resp.json()
         assert data["available"] is False
@@ -259,17 +322,23 @@ class TestDeviceStatus:
     def test_status_disabled_and_locked(self, client):
         """Disabled + locked should still be available=False."""
         # Lock first (while still enabled)
-        client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-001",
-            "plan_name": "count",
-        })
+        client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-001",
+                "plan_name": "count",
+            },
+        )
         # Now disable (unlock first since disabled devices can't be locked)
         # Actually the device is already locked — force-unlock, disable, then verify
-        client.post("/api/v1/devices/force-unlock", json={
-            "device_names": ["sample_x"],
-            "reason": "test",
-        })
+        client.post(
+            "/api/v1/devices/force-unlock",
+            json={
+                "device_names": ["sample_x"],
+                "reason": "test",
+            },
+        )
         client.patch("/api/v1/devices/sample_x/disable")
         resp = client.get("/api/v1/devices/sample_x/status")
         data = resp.json()
@@ -305,11 +374,14 @@ class TestPVStatus:
         pv_name = list(pvs.values())[0]
 
         # Lock the owning device
-        client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-001",
-            "plan_name": "count",
-        })
+        client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-001",
+                "plan_name": "count",
+            },
+        )
 
         resp = client.get("/api/v1/pvs/status", params={"pv_name": pv_name})
         data = resp.json()
@@ -320,10 +392,13 @@ class TestPVStatus:
 
     def test_pv_status_standalone_pv(self, client):
         # Register a standalone PV
-        client.post("/api/v1/pvs", json={
-            "pv_name": "BL01:RING:CURRENT",
-            "description": "Ring current",
-        })
+        client.post(
+            "/api/v1/pvs",
+            json={
+                "pv_name": "BL01:RING:CURRENT",
+                "description": "Ring current",
+            },
+        )
         resp = client.get("/api/v1/pvs/status", params={"pv_name": "BL01:RING:CURRENT"})
         assert resp.status_code == 200
         data = resp.json()
@@ -341,16 +416,22 @@ class TestLockAuditLog:
 
     def test_lock_unlock_in_audit_log(self, client):
         # Lock
-        client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-001",
-            "plan_name": "count",
-        })
+        client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-001",
+                "plan_name": "count",
+            },
+        )
         # Unlock
-        client.post("/api/v1/devices/unlock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-001",
-        })
+        client.post(
+            "/api/v1/devices/unlock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-001",
+            },
+        )
         # Check audit log
         resp = client.get("/api/v1/devices/history", params={"device_name": "sample_x"})
         entries = resp.json()
@@ -365,15 +446,21 @@ class TestLockAuditLog:
         assert details["item_id"] == "item-001"
 
     def test_force_unlock_in_audit_log(self, client):
-        client.post("/api/v1/devices/lock", json={
-            "device_names": ["sample_x"],
-            "item_id": "item-001",
-            "plan_name": "count",
-        })
-        client.post("/api/v1/devices/force-unlock", json={
-            "device_names": ["sample_x"],
-            "reason": "EE crashed",
-        })
+        client.post(
+            "/api/v1/devices/lock",
+            json={
+                "device_names": ["sample_x"],
+                "item_id": "item-001",
+                "plan_name": "count",
+            },
+        )
+        client.post(
+            "/api/v1/devices/force-unlock",
+            json={
+                "device_names": ["sample_x"],
+                "reason": "EE crashed",
+            },
+        )
         resp = client.get("/api/v1/devices/history", params={"device_name": "sample_x"})
         entries = resp.json()
         force_entry = next(e for e in entries if e["operation"] == "force_unlock")

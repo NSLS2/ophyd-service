@@ -11,8 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # ===== Device Control Enums =====
 
+
 class DeviceLockStatus(str, Enum):
     """Status of a device lock."""
+
     AVAILABLE = "available"
     LOCKED = "locked"
     UNKNOWN = "unknown"
@@ -20,12 +22,14 @@ class DeviceLockStatus(str, Enum):
 
 class CommandMode(str, Enum):
     """Command execution mode for PV writes."""
+
     PUT_COMPLETION = "put-completion"
     FIRE_AND_FORGET = "fire-and-forget"
 
 
 class SubscriptionStatus(str, Enum):
     """Status of a PV subscription."""
+
     ACTIVE = "active"
     PAUSED = "paused"
     ERROR = "error"
@@ -34,6 +38,7 @@ class SubscriptionStatus(str, Enum):
 
 class AlarmSeverity(str, Enum):
     """EPICS alarm severity levels."""
+
     NO_ALARM = "NO_ALARM"
     MINOR = "MINOR"
     MAJOR = "MAJOR"
@@ -49,6 +54,7 @@ ALARM_SEVERITY_NAMES = {
 
 
 # ===== Device Control Request/Response =====
+
 
 class PVSetRequest(BaseModel):
     """
@@ -67,13 +73,16 @@ class PVSetRequest(BaseModel):
     `ftype` forces a non-native DBR type on the wire (rare, e.g. when an IOC
     expects CHAR waveforms represented differently). Leave None for native.
     """
+
     model_config = ConfigDict(extra="forbid")
 
     pv_name: str = Field(..., description="EPICS PV name")
     value: Any = Field(..., description="Value to set")
     wait: bool = Field(False, description="Block the CA thread until put completion")
     timeout: Optional[float] = Field(
-        None, description="Put timeout in seconds (used with wait=True or use_complete=True)", ge=0.0
+        None,
+        description="Put timeout in seconds (used with wait=True or use_complete=True)",
+        ge=0.0,
     )
     connection_timeout: Optional[float] = Field(
         None, description="Max seconds to wait for CA connection (pyepics default 5s)", ge=0.0
@@ -92,6 +101,7 @@ class PVSetRequest(BaseModel):
 
 class PVSetResponse(BaseModel):
     """Response from PV set operation."""
+
     model_config = ConfigDict(extra="forbid")
 
     pv_name: str
@@ -110,6 +120,7 @@ class DeviceCommandRequest(BaseModel):
     use_put=False (default): ophyd set() waits for completion.
     use_put=True: ophyd put() returns immediately.
     """
+
     model_config = ConfigDict(extra="forbid")
 
     device_name: str
@@ -122,6 +133,7 @@ class DeviceCommandRequest(BaseModel):
 
 class DeviceCommandResponse(BaseModel):
     """Response from device command execution."""
+
     model_config = ConfigDict(extra="forbid")
 
     device_name: str
@@ -136,6 +148,7 @@ class DeviceCommandResponse(BaseModel):
 
 class CoordinationStatus(BaseModel):
     """Coordination status from Experiment Execution Service."""
+
     model_config = ConfigDict(extra="forbid")
 
     device_available: bool
@@ -145,6 +158,7 @@ class CoordinationStatus(BaseModel):
 
 
 # ===== PV Metadata / Value Models =====
+
 
 class PVValue(BaseModel):
     """
@@ -156,6 +170,7 @@ class PVValue(BaseModel):
     itself is JSON-friendly (scalars and nested lists); clients that want
     raw binary use the endpoint's `Accept: application/octet-stream` mode.
     """
+
     model_config = ConfigDict(extra="allow")
 
     pv_name: str
@@ -186,6 +201,7 @@ class PVValue(BaseModel):
 
 class PVUpdate(BaseModel):
     """PV update notification sent via WebSocket (ophyd-websocket compatible)."""
+
     model_config = ConfigDict(extra="forbid")
 
     event_type: str = "pv_update"
@@ -223,6 +239,7 @@ class PVUpdate(BaseModel):
 
 class PVInfo(BaseModel):
     """Detailed PV information including metadata."""
+
     model_config = ConfigDict(extra="forbid")
 
     pv_name: str
@@ -247,6 +264,7 @@ class PVInfo(BaseModel):
 
 class PVValueResponse(BaseModel):
     """PV value response with connection and access info."""
+
     model_config = ConfigDict(extra="forbid")
 
     pv_name: str
@@ -259,6 +277,7 @@ class PVValueResponse(BaseModel):
 
 class PVLimits(BaseModel):
     """PV value limits for validation."""
+
     model_config = ConfigDict(extra="forbid")
 
     pv_name: str
@@ -269,8 +288,10 @@ class PVLimits(BaseModel):
 
 # ===== Monitoring Subscription Models =====
 
+
 class PVMonitorRequest(BaseModel):
     """Request to monitor one or more PVs."""
+
     model_config = ConfigDict(extra="forbid")
 
     pv_names: List[str]
@@ -280,6 +301,7 @@ class PVMonitorRequest(BaseModel):
 
 class PVSubscription(BaseModel):
     """Information about an active PV subscription."""
+
     model_config = ConfigDict(extra="forbid")
 
     subscription_id: str
@@ -293,8 +315,10 @@ class PVSubscription(BaseModel):
 
 # ===== WebSocket Models (ophyd-websocket compatible) =====
 
+
 class WebSocketAction(str, Enum):
     """WebSocket control actions (ophyd-websocket compatible)."""
+
     SET = "set"
     GET = "get"
     PING = "ping"
@@ -308,6 +332,7 @@ class WebSocketAction(str, Enum):
 
 class WebSocketMessage(BaseModel):
     """Incoming WebSocket message."""
+
     model_config = ConfigDict(extra="allow")
 
     action: WebSocketAction
@@ -321,6 +346,7 @@ class WebSocketMessage(BaseModel):
 
 class WebSocketSetRequest(BaseModel):
     """WebSocket set request."""
+
     model_config = ConfigDict(extra="forbid")
 
     action: WebSocketAction
@@ -333,6 +359,7 @@ class WebSocketSetRequest(BaseModel):
 
 class WebSocketSetResponse(BaseModel):
     """WebSocket set response."""
+
     model_config = ConfigDict(extra="forbid")
 
     type: str
@@ -347,8 +374,10 @@ class WebSocketSetResponse(BaseModel):
 
 # ===== Nested Component Models =====
 
+
 class NestedDeviceRequest(BaseModel):
     """Request to access nested device component."""
+
     model_config = ConfigDict(extra="forbid")
 
     method: str = "read"
@@ -358,6 +387,7 @@ class NestedDeviceRequest(BaseModel):
 
 class NestedDeviceResponse(BaseModel):
     """Response from nested device access."""
+
     model_config = ConfigDict(extra="forbid")
 
     device_path: str
@@ -370,8 +400,10 @@ class NestedDeviceResponse(BaseModel):
 
 # ===== Device-Socket Models =====
 
+
 class DeviceUpdate(BaseModel):
     """Device value update notification (ophyd-websocket compatible)."""
+
     model_config = ConfigDict(extra="forbid")
 
     event_type: str = "device_update"
@@ -386,6 +418,7 @@ class DeviceUpdate(BaseModel):
 
 class DeviceInfo(BaseModel):
     """Device information from configuration service."""
+
     model_config = ConfigDict(extra="allow")
 
     name: str
@@ -398,8 +431,10 @@ class DeviceInfo(BaseModel):
 
 # ===== Stop Operation Models =====
 
+
 class StopRequest(BaseModel):
     """Request to stop a device/motor."""
+
     model_config = ConfigDict(extra="forbid")
 
     timeout: Optional[float] = None
@@ -407,6 +442,7 @@ class StopRequest(BaseModel):
 
 class StopResponse(BaseModel):
     """Response from stop operation."""
+
     model_config = ConfigDict(extra="forbid")
 
     pv_name: str
@@ -417,8 +453,10 @@ class StopResponse(BaseModel):
 
 # ===== Health Response =====
 
+
 class HealthResponse(BaseModel):
     """Health check response for the merged service."""
+
     model_config = ConfigDict(extra="forbid")
 
     status: str = "healthy"
@@ -430,6 +468,7 @@ class HealthResponse(BaseModel):
 
 
 # ===== Exceptions =====
+
 
 class ControlError(Exception):
     """Base exception for control errors."""

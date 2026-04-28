@@ -65,7 +65,7 @@ structlog.configure(
     processors=[
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer()
+        structlog.processors.JSONRenderer(),
     ]
 )
 logger = structlog.get_logger()
@@ -277,13 +277,25 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     openapi_tags = [
         {"name": "Health", "description": "Service health and readiness checks"},
         {"name": "Device Registry", "description": "Query registered devices and their metadata"},
-        {"name": "Device Instantiation", "description": "Device instantiation specifications for remote creation"},
-        {"name": "Device Management", "description": "Runtime device CRUD operations (add/update/delete)"},
+        {
+            "name": "Device Instantiation",
+            "description": "Device instantiation specifications for remote creation",
+        },
+        {
+            "name": "Device Management",
+            "description": "Runtime device CRUD operations (add/update/delete)",
+        },
         {"name": "Registry Admin", "description": "Administrative operations (reset, export)"},
-        {"name": "Standalone PVs", "description": "Register and manage standalone PVs not tied to ophyd devices"},
+        {
+            "name": "Standalone PVs",
+            "description": "Register and manage standalone PVs not tied to ophyd devices",
+        },
         {"name": "PV Registry", "description": "Query registered PVs from loaded devices"},
         {"name": "Device Components", "description": "Nested device component lookup and listing"},
-        {"name": "Device Locking", "description": "Device lock management for experiment coordination (A4)"},
+        {
+            "name": "Device Locking",
+            "description": "Device lock management for experiment coordination (A4)",
+        },
     ]
 
     app = FastAPI(
@@ -321,7 +333,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if "store" not in registry_store_container:
             raise HTTPException(
                 status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                detail="Device registry persistence not enabled. Set CONFIG_DEVICE_CHANGE_HISTORY_ENABLED=true."
+                detail="Device registry persistence not enabled. Set CONFIG_DEVICE_CHANGE_HISTORY_ENABLED=true.",
             )
         return registry_store_container["store"]
 
@@ -333,7 +345,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if "store" not in standalone_pv_container:
             raise HTTPException(
                 status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                detail="Standalone PV registration not enabled. Set CONFIG_DEVICE_CHANGE_HISTORY_ENABLED=true."
+                detail="Standalone PV registration not enabled. Set CONFIG_DEVICE_CHANGE_HISTORY_ENABLED=true.",
             )
         return standalone_pv_container["store"]
 
@@ -367,8 +379,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         """Readiness check endpoint."""
         if "state" not in state_container:
             return JSONResponse(
-                status_code=503,
-                content={"status": "not_ready", "reason": "registry not loaded"}
+                status_code=503, content={"status": "not_ready", "reason": "registry not loaded"}
             )
         return {"status": "ready"}
 
@@ -393,8 +404,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         Implements interface: "List Devices" from service_architecture.json
         Protocol: ProvidesDeviceRegistry.list_devices()
         """
-        logger.info("list_devices", device_label=device_label, pattern=pattern, ophyd_class=ophyd_class)
-        return state.registry.list_devices(device_label=device_label, pattern=pattern, ophyd_class=ophyd_class)
+        logger.info(
+            "list_devices", device_label=device_label, pattern=pattern, ophyd_class=ophyd_class
+        )
+        return state.registry.list_devices(
+            device_label=device_label, pattern=pattern, ophyd_class=ophyd_class
+        )
 
     @app.get(
         "/api/v1/devices-info",
@@ -428,11 +443,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         Returns sorted list of unique ophyd_class values from all devices.
         """
         logger.info("get_device_classes")
-        classes = sorted({
-            device.ophyd_class
-            for device in state.registry.devices.values()
-            if device.ophyd_class
-        })
+        classes = sorted(
+            {device.ophyd_class for device in state.registry.devices.values() if device.ophyd_class}
+        )
         return classes
 
     @app.get(
@@ -449,10 +462,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         Returns sorted list of unique device_label values (motor, detector, etc.).
         """
         logger.info("get_device_labels")
-        types = sorted({
-            device.device_label.value
-            for device in state.registry.devices.values()
-        })
+        types = sorted({device.device_label.value for device in state.registry.devices.values()})
         return types
 
     # ===== Device Instantiation Endpoints =====
@@ -537,9 +547,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         "/api/v1/devices/lock",
         response_model=DeviceLockResponse,
         responses={
-            409: {"model": DeviceLockConflictResponse, "description": "One or more devices already locked"},
-            404: {"model": DeviceLockConflictResponse, "description": "One or more devices not found"},
-            422: {"model": DeviceLockConflictResponse, "description": "One or more devices are disabled"},
+            409: {
+                "model": DeviceLockConflictResponse,
+                "description": "One or more devices already locked",
+            },
+            404: {
+                "model": DeviceLockConflictResponse,
+                "description": "One or more devices not found",
+            },
+            422: {
+                "model": DeviceLockConflictResponse,
+                "description": "One or more devices are disabled",
+            },
         },
         summary="Lock Devices (Bulk Atomic)",
         tags=["Device Locking"],
@@ -600,12 +619,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         registry_store.log_lock_event(
             device_names=result.locked_devices,
             operation="lock",
-            details=json.dumps({
-                "plan": request.plan_name,
-                "item_id": request.item_id,
-                "service": request.locked_by_service,
-                "lock_id": result.lock_id,
-            }),
+            details=json.dumps(
+                {
+                    "plan": request.plan_name,
+                    "item_id": request.item_id,
+                    "service": request.locked_by_service,
+                    "lock_id": result.lock_id,
+                }
+            ),
         )
 
         logger.info(
@@ -654,10 +675,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             registry_store.log_lock_event(
                 device_names=unlocked,
                 operation="unlock",
-                details=json.dumps({
-                    "item_id": request.item_id,
-                    "reason": "plan_completed",
-                }),
+                details=json.dumps(
+                    {
+                        "item_id": request.item_id,
+                        "reason": "plan_completed",
+                    }
+                ),
             )
 
         logger.info("devices_unlocked", devices=unlocked, item_id=request.item_id)
@@ -701,10 +724,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             registry_store.log_lock_event(
                 device_names=unlocked,
                 operation="force_unlock",
-                details=json.dumps({
-                    "reason": request.reason,
-                    "admin": True,
-                }),
+                details=json.dumps(
+                    {
+                        "reason": request.reason,
+                        "admin": True,
+                    }
+                ),
             )
 
         logger.info("devices_force_unlocked", devices=unlocked, reason=request.reason)
@@ -964,8 +989,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if spec is None:
             logger.warning("instantiation_spec_not_found", device_name=device_name)
             raise HTTPException(
-                status_code=404,
-                detail=f"Instantiation spec not found for device: {device_name}"
+                status_code=404, detail=f"Instantiation spec not found for device: {device_name}"
             )
 
         return spec
@@ -1074,16 +1098,21 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
         # Field-level merge: overlay only the fields the caller sent
         merged_metadata = (
-            _apply_partial_update(existing_metadata, request.metadata, DeviceMetadata, "metadata update")
-            if request.metadata else existing_metadata
+            _apply_partial_update(
+                existing_metadata, request.metadata, DeviceMetadata, "metadata update"
+            )
+            if request.metadata
+            else existing_metadata
         )
 
         existing_spec = state.registry.get_instantiation_spec(device_name)
         if request.instantiation_spec:
             if existing_spec:
                 merged_spec = _apply_partial_update(
-                    existing_spec, request.instantiation_spec,
-                    DeviceInstantiationSpec, "instantiation spec update",
+                    existing_spec,
+                    request.instantiation_spec,
+                    DeviceInstantiationSpec,
+                    "instantiation spec update",
                 )
             else:
                 # No existing spec — treat as creation from the partial fields
@@ -1104,9 +1133,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if request.metadata:
             changed_fields.extend(list(request.metadata.model_dump(exclude_unset=True).keys()))
         if request.instantiation_spec:
-            changed_fields.extend([
-                f"spec.{k}" for k in request.instantiation_spec.model_dump(exclude_unset=True).keys()
-            ])
+            changed_fields.extend(
+                [
+                    f"spec.{k}"
+                    for k in request.instantiation_spec.model_dump(exclude_unset=True).keys()
+                ]
+            )
 
         # Update in-memory registry
         state.registry.update_device(merged_metadata, merged_spec)
@@ -1493,6 +1525,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # Apply pattern filter if specified
         if pattern:
             import fnmatch
+
             pv_list = [pv for pv in pv_list if fnmatch.fnmatch(pv, pattern)]
 
         return {
@@ -1772,7 +1805,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         for component_name, pv in device.pvs.items():
             # Apply depth filter: depth = number of dots + 1
             if max_depth is not None and max_depth > 0:
-                component_depth = component_name.count('.') + 1
+                component_depth = component_name.count(".") + 1
                 if component_depth > max_depth:
                     continue
 
@@ -1783,15 +1816,17 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             elif not any(ro in pv.upper() for ro in ["RBV", "READBACK", "STAT"]):
                 is_settable = True
 
-            components.append(NestedDeviceComponent(
-                name=component_name,
-                device_path=f"{device_name}.{component_name}",
-                parent_device=device_name,
-                component_type="Signal",
-                pv=pv,
-                is_readable=True,
-                is_settable=is_settable,
-            ))
+            components.append(
+                NestedDeviceComponent(
+                    name=component_name,
+                    device_path=f"{device_name}.{component_name}",
+                    parent_device=device_name,
+                    component_type="Signal",
+                    pv=pv,
+                    is_readable=True,
+                    is_settable=is_settable,
+                )
+            )
 
         return components
 

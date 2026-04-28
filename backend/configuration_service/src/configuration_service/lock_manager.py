@@ -147,28 +147,34 @@ class DeviceLockManager:
             for name in device_names:
                 device = registry.get_device(name)
                 if device is None:
-                    conflicts.append(LockConflict(
-                        device_name=name,
-                        reason="not_found",
-                    ))
+                    conflicts.append(
+                        LockConflict(
+                            device_name=name,
+                            reason="not_found",
+                        )
+                    )
                     continue
 
                 spec = registry.get_instantiation_spec(name)
                 if spec is not None and not spec.active:
-                    conflicts.append(LockConflict(
-                        device_name=name,
-                        reason="disabled",
-                    ))
+                    conflicts.append(
+                        LockConflict(
+                            device_name=name,
+                            reason="disabled",
+                        )
+                    )
                     continue
 
                 existing_lock = self._locks.get(name)
                 if existing_lock is not None and existing_lock.locked:
-                    conflicts.append(LockConflict(
-                        device_name=name,
-                        reason="already_locked",
-                        locked_by_plan=existing_lock.locked_by_plan,
-                        locked_at=existing_lock.locked_at,
-                    ))
+                    conflicts.append(
+                        LockConflict(
+                            device_name=name,
+                            reason="already_locked",
+                            locked_by_plan=existing_lock.locked_by_plan,
+                            locked_at=existing_lock.locked_at,
+                        )
+                    )
 
             if conflicts:
                 # Determine error code from conflict types
@@ -303,11 +309,7 @@ class DeviceLockManager:
 
     def get_all_locks(self) -> Dict[str, DeviceLockState]:
         """Return a copy of all active locks."""
-        return {
-            name: state
-            for name, state in self._locks.items()
-            if state.locked
-        }
+        return {name: state for name, state in self._locks.items() if state.locked}
 
     def _get_device_pvs(
         self,

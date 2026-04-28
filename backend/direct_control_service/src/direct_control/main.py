@@ -84,9 +84,7 @@ async def lifespan(app: FastAPI):
     coordination_client = CoordinationClient(settings)
     device_controller = DeviceController(settings, coordination_client)
     registry_client = RegistryClient(settings)
-    config_http = httpx.AsyncClient(
-        base_url=settings.configuration_service_url, timeout=10.0
-    )
+    config_http = httpx.AsyncClient(base_url=settings.configuration_service_url, timeout=10.0)
     pv_monitor = PVMonitorManager(settings)
     ws_manager = WebSocketManager(
         pv_monitor=pv_monitor,
@@ -417,9 +415,13 @@ async def get_pv_value_from_controller(
         None,
         description="Override Accept header. 'json' or 'binary' (octet-stream).",
     ),
-    as_string: bool = Query(False, description="Return the string representation (e.g. enum label)"),
+    as_string: bool = Query(
+        False, description="Return the string representation (e.g. enum label)"
+    ),
     count: Optional[int] = Query(None, ge=1, description="Max waveform elements to return"),
-    as_numpy: bool = Query(True, description="Return arrays as numpy.ndarray (JSON-serialized to list)"),
+    as_numpy: bool = Query(
+        True, description="Return arrays as numpy.ndarray (JSON-serialized to list)"
+    ),
     use_monitor: bool = Query(
         False,
         description=(
@@ -572,9 +574,7 @@ async def execute_device_method(
         logger.warning("device_locked", device_name=request.device_name, error=str(e))
         raise HTTPException(status_code=423, detail=str(e))
     except CoordinationCheckError as e:
-        logger.error(
-            "coordination_check_failed", device_name=request.device_name, error=str(e)
-        )
+        logger.error("coordination_check_failed", device_name=request.device_name, error=str(e))
         raise HTTPException(status_code=503, detail=f"Coordination check failed: {e}")
     except Exception as e:
         logger.error(
@@ -621,9 +621,7 @@ async def _config_get(client: httpx.AsyncClient, path: str, *, not_found_msg: st
         response = await client.get(path)
     except httpx.RequestError as e:
         logger.error("config_service_fetch_error", path=path, error=str(e))
-        raise HTTPException(
-            status_code=503, detail=f"Configuration service unavailable: {e}"
-        )
+        raise HTTPException(status_code=503, detail=f"Configuration service unavailable: {e}")
     if response.status_code == 404:
         raise HTTPException(status_code=404, detail=not_found_msg)
     if response.status_code != 200:
@@ -637,9 +635,7 @@ async def _config_get(client: httpx.AsyncClient, path: str, *, not_found_msg: st
 @app.get("/api/v1/devices")
 async def list_devices(
     client: httpx.AsyncClient = Depends(get_config_http),
-    device_class: Optional[str] = Query(
-        None, description="Filter by ophyd class name"
-    ),
+    device_class: Optional[str] = Query(None, description="Filter by ophyd class name"),
     readable: Optional[bool] = Query(None, description="Filter by Readable"),
     movable: Optional[bool] = Query(None, description="Filter by Movable"),
     flyable: Optional[bool] = Query(None, description="Filter by Flyable"),
@@ -651,7 +647,8 @@ async def list_devices(
 
     if device_class:
         devices = [
-            d for d in devices
+            d
+            for d in devices
             if d.get("ophyd_class") == device_class or d.get("class") == device_class
         ]
     if readable is not None:
@@ -690,9 +687,7 @@ async def get_device_bundle(
     pvs = device_data.get("pvs", {})
     return {
         "name": device_name,
-        "class": device_data.get(
-            "ophyd_class", device_data.get("device_type", "unknown")
-        ),
+        "class": device_data.get("ophyd_class", device_data.get("device_type", "unknown")),
         "prefix": device_data.get("prefix"),
         "is_readable": device_data.get("is_readable", True),
         "is_movable": device_data.get("is_movable", False),
@@ -714,8 +709,7 @@ def _build_component_tree(pvs: Dict[str, str]) -> List[Dict[str, Any]]:
                 "pv": pv_name,
                 "type": "signal",
                 "read_only": any(
-                    ro in pv_name.upper()
-                    for ro in ["RBV", "READBACK", "STAT", "_RBK", "_MON"]
+                    ro in pv_name.upper() for ro in ["RBV", "READBACK", "STAT", "_RBK", "_MON"]
                 ),
             }
         )

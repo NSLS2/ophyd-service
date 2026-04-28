@@ -109,9 +109,7 @@ class DeviceControl(Protocol):
         """
         ...
 
-    async def execute_device_method(
-        self, request: DeviceCommandRequest
-    ) -> DeviceCommandResponse:
+    async def execute_device_method(self, request: DeviceCommandRequest) -> DeviceCommandResponse:
         """
         Execute Ophyd device method with coordination check.
 
@@ -247,9 +245,7 @@ class PVMonitor(Protocol):
         """
         ...
 
-    def unsubscribe(
-        self, pv_name: str, callback: Optional[Callable] = None
-    ) -> None:
+    def unsubscribe(self, pv_name: str, callback: Optional[Callable] = None) -> None:
         """Unsubscribe from PV updates (callback=None removes all)."""
         ...
 
@@ -302,9 +298,7 @@ class MockPVMonitor:
             connected=True,
         )
 
-    def unsubscribe(
-        self, pv_name: str, callback: Optional[Callable] = None
-    ) -> None:
+    def unsubscribe(self, pv_name: str, callback: Optional[Callable] = None) -> None:
         if callback and pv_name in self._callbacks:
             try:
                 self._callbacks[pv_name].remove(callback)
@@ -339,12 +333,20 @@ class MockPVMonitor:
             return
         now = datetime.now()
         self._values[pv_name] = PVValue(
-            pv_name=pv_name, value=value, timestamp=now, status=0,
-            severity=0, connected=True,
+            pv_name=pv_name,
+            value=value,
+            timestamp=now,
+            status=0,
+            severity=0,
+            connected=True,
         )
         update = PVUpdate(
-            pv_name=pv_name, value=value, timestamp=now, status=0,
-            severity=0, connected=True,
+            pv_name=pv_name,
+            value=value,
+            timestamp=now,
+            status=0,
+            severity=0,
+            connected=True,
         )
         for cb in self._callbacks.get(pv_name, []):
             try:
@@ -352,6 +354,4 @@ class MockPVMonitor:
             except Exception as e:  # noqa: BLE001
                 # Asyncio callback fan-out: one bad callback shouldn't kill
                 # the rest, but the failure must be visible.
-                logger.warning(
-                    "mock_pv_callback_error", pv_name=pv_name, error=str(e)
-                )
+                logger.warning("mock_pv_callback_error", pv_name=pv_name, error=str(e))

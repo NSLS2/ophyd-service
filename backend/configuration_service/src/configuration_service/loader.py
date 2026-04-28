@@ -36,8 +36,10 @@ logger = logging.getLogger(__name__)
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
-def _infer_device_label(class_name: str, labels: Optional[List[str]] = None,
-                       functional_group: Optional[str] = None) -> DeviceLabel:
+
+def _infer_device_label(
+    class_name: str, labels: Optional[List[str]] = None, functional_group: Optional[str] = None
+) -> DeviceLabel:
     """Infer DeviceLabel from class name, labels, and/or functional group."""
     # Check labels first (most reliable for BITS/KREIOS)
     if labels:
@@ -77,8 +79,7 @@ def _infer_device_label(class_name: str, labels: Optional[List[str]] = None,
     return DeviceLabel.DEVICE
 
 
-def _resolve_happi_templates(value: Any, prefix: Optional[str],
-                             name: Optional[str]) -> Any:
+def _resolve_happi_templates(value: Any, prefix: Optional[str], name: Optional[str]) -> Any:
     """
     Substitute happi's `{{prefix}}` and `{{name}}` placeholders.
 
@@ -99,8 +100,9 @@ def _resolve_happi_templates(value: Any, prefix: Optional[str],
     return value
 
 
-def _derive_pvs_from_args(class_name: str, args: List[Any],
-                          kwargs: Dict[str, Any]) -> Dict[str, str]:
+def _derive_pvs_from_args(
+    class_name: str, args: List[Any], kwargs: Dict[str, Any]
+) -> Dict[str, str]:
     """
     Derive PV names from constructor arguments when possible.
 
@@ -135,6 +137,7 @@ def _derive_pvs_from_args(class_name: str, args: List[Any],
 
 
 # ── HappiProfileLoader ──────────────────────────────────────────────────
+
 
 class HappiProfileLoader:
     """
@@ -183,8 +186,7 @@ class HappiProfileLoader:
         )
         return registry
 
-    def _process_entry(self, name: str, entry: Dict[str, Any],
-                       registry: DeviceRegistry) -> None:
+    def _process_entry(self, name: str, entry: Dict[str, Any], registry: DeviceRegistry) -> None:
         """Process a single happi database entry."""
         device_class_path = entry.get("device_class", "")
         class_name = device_class_path.rsplit(".", 1)[-1] if device_class_path else "Unknown"
@@ -248,6 +250,7 @@ class HappiProfileLoader:
 
 # ── BitsProfileLoader ───────────────────────────────────────────────────
 
+
 class BitsProfileLoader:
     """
     Load devices from BITS format (BCDA-APS) via pure YAML parsing.
@@ -294,12 +297,7 @@ class BitsProfileLoader:
         with open(self.devices_path) as f:
             devices_config = yaml.safe_load(f) or {}
 
-        beamline = (
-            self.iconfig
-            .get("RUN_ENGINE", {})
-            .get("md", {})
-            .get("beamline_id")
-        )
+        beamline = self.iconfig.get("RUN_ENGINE", {}).get("md", {}).get("beamline_id")
 
         for module_path, device_entries in devices_config.items():
             if not isinstance(device_entries, list):
@@ -324,9 +322,14 @@ class BitsProfileLoader:
         )
         return registry
 
-    def _process_entry(self, name: str, entry: Dict[str, Any],
-                       module_path: str, beamline: Optional[str],
-                       registry: DeviceRegistry) -> None:
+    def _process_entry(
+        self,
+        name: str,
+        entry: Dict[str, Any],
+        module_path: str,
+        beamline: Optional[str],
+        registry: DeviceRegistry,
+    ) -> None:
         """Process a single BITS device entry."""
         creator_name = entry.get("creator", name)
         labels = entry.get("labels", [])
@@ -394,6 +397,7 @@ class BitsProfileLoader:
 
 
 # ── MockProfileLoader ───────────────────────────────────────────────────
+
 
 class MockProfileLoader:
     """
@@ -503,6 +507,7 @@ class MockProfileLoader:
 
 
 # ── EmptyProfileLoader ─────────────────────────────────────────────────
+
 
 class EmptyProfileLoader:
     """
@@ -637,6 +642,5 @@ def create_loader(settings: "Settings") -> ProfileLoaderType:
 
     else:
         raise RuntimeError(
-            f"Unknown load strategy: {load_strategy}. "
-            f"Valid options: auto, empty, mock, happi, bits"
+            f"Unknown load strategy: {load_strategy}. Valid options: auto, empty, mock, happi, bits"
         )

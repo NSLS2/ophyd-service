@@ -8,6 +8,7 @@ Usage:
 The monorepo-level default lives at `<repo>/shared-schema/configuration_service.openapi.json`
 so both docker-compose (shared volume) and downstream tooling have a single source of truth.
 """
+
 import argparse
 import json
 import sys
@@ -26,7 +27,9 @@ def build_schema() -> dict:
 def main() -> int:
     # Default: <monorepo-root>/shared-schema/configuration_service.openapi.json.
     # The service dir is ophyd-service/backend/configuration_service; climb two levels.
-    default_output = Path(__file__).resolve().parents[3] / "shared-schema" / "configuration_service.openapi.json"
+    default_output = (
+        Path(__file__).resolve().parents[3] / "shared-schema" / "configuration_service.openapi.json"
+    )
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-o", "--output", type=Path, default=default_output)
     args = parser.parse_args()

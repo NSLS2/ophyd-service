@@ -21,18 +21,18 @@ import uvicorn
 def main(argv: Optional[list[str]] = None) -> int:
     """
     Main entry point for the bluesky-direct-control CLI.
-    
+
     This allows the service to be run via:
         pip install bluesky-direct-control
         bluesky-direct-control
-    
+
     Or from a monorepo:
         pip install bluesky-remote[direct-control]
         bluesky-direct-control
-    
+
     Args:
         argv: Command-line arguments (for testing)
-    
+
     Returns:
         Exit code (0 for success, non-zero for errors)
     """
@@ -43,59 +43,44 @@ def main(argv: Optional[list[str]] = None) -> int:
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    
+
     # Server configuration
-    parser.add_argument(
-        "--host",
-        default="0.0.0.0",
-        help="Host to bind to"
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8003,
-        help="Port to bind to"
-    )
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    parser.add_argument("--port", type=int, default=8003, help="Port to bind to")
     parser.add_argument(
         "--workers",
         type=int,
         default=1,
-        help="Number of worker processes (use 1 for WebSocket support)"
+        help="Number of worker processes (use 1 for WebSocket support)",
     )
     parser.add_argument(
         "--reload",
         action="store_true",
-        help="Enable auto-reload on code changes (development only)"
+        help="Enable auto-reload on code changes (development only)",
     )
     parser.add_argument(
         "--log-level",
         default="info",
         choices=["critical", "error", "warning", "info", "debug", "trace"],
-        help="Logging level"
+        help="Logging level",
     )
-    
+
     # SSL/TLS configuration
-    parser.add_argument(
-        "--ssl-keyfile",
-        help="SSL key file path (for HTTPS)"
-    )
-    parser.add_argument(
-        "--ssl-certfile",
-        help="SSL certificate file path (for HTTPS)"
-    )
-    
+    parser.add_argument("--ssl-keyfile", help="SSL key file path (for HTTPS)")
+    parser.add_argument("--ssl-certfile", help="SSL certificate file path (for HTTPS)")
+
     # Proxy configuration
     parser.add_argument(
         "--proxy-headers",
         action="store_true",
-        help="Enable proxy header support (for deployment behind reverse proxy)"
+        help="Enable proxy header support (for deployment behind reverse proxy)",
     )
     parser.add_argument(
         "--forwarded-allow-ips",
         default="127.0.0.1",
-        help="Comma-separated list of IPs to trust for proxy headers"
+        help="Comma-separated list of IPs to trust for proxy headers",
     )
-    
+
     args = parser.parse_args(argv)
 
     # Display startup information
@@ -131,7 +116,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         uvicorn_config["ssl_keyfile"] = args.ssl_keyfile
         uvicorn_config["ssl_certfile"] = args.ssl_certfile
     elif args.ssl_keyfile or args.ssl_certfile:
-        print("ERROR: Both --ssl-keyfile and --ssl-certfile must be provided together", file=sys.stderr)
+        print(
+            "ERROR: Both --ssl-keyfile and --ssl-certfile must be provided together",
+            file=sys.stderr,
+        )
         return 1
 
     try:

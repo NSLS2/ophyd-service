@@ -167,10 +167,17 @@ class TestDeviceProtocolFlags:
         device = data["sample_x"]
         # Verify all 11 flag keys present in bulk response
         for flag in [
-            "is_movable", "is_flyable", "is_readable",
-            "is_triggerable", "is_stageable", "is_configurable",
-            "is_pausable", "is_stoppable", "is_subscribable",
-            "is_checkable", "writes_external_assets",
+            "is_movable",
+            "is_flyable",
+            "is_readable",
+            "is_triggerable",
+            "is_stageable",
+            "is_configurable",
+            "is_pausable",
+            "is_stoppable",
+            "is_subscribable",
+            "is_checkable",
+            "writes_external_assets",
         ]:
             assert flag in device, f"Missing {flag} in devices-info response"
 

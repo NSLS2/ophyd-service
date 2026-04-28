@@ -114,9 +114,7 @@ class DeviceRegistryStore:
     def is_seeded(self) -> bool:
         """Check whether the registry has been seeded from a profile."""
         conn = self._get_connection()
-        cursor = conn.execute(
-            "SELECT value FROM registry_metadata WHERE key = 'seeded'"
-        )
+        cursor = conn.execute("SELECT value FROM registry_metadata WHERE key = 'seeded'")
         row = cursor.fetchone()
         return row is not None
 
@@ -176,9 +174,7 @@ class DeviceRegistryStore:
             metadata = DeviceMetadata.model_validate_json(row["device_metadata"])
             spec = None
             if row["instantiation_spec"]:
-                spec = DeviceInstantiationSpec.model_validate_json(
-                    row["instantiation_spec"]
-                )
+                spec = DeviceInstantiationSpec.model_validate_json(row["instantiation_spec"])
             registry.add_device(metadata, spec)
 
         return registry
@@ -212,9 +208,7 @@ class DeviceRegistryStore:
         spec_json = spec.model_dump_json() if spec else None
 
         with self._transaction() as conn:
-            cursor = conn.execute(
-                "SELECT created_at FROM device_registry WHERE name = ?", (name,)
-            )
+            cursor = conn.execute("SELECT created_at FROM device_registry WHERE name = ?", (name,))
             existing = cursor.fetchone()
 
             if existing:
@@ -256,9 +250,7 @@ class DeviceRegistryStore:
         now = time.time()
 
         with self._transaction() as conn:
-            cursor = conn.execute(
-                "DELETE FROM device_registry WHERE name = ?", (name,)
-            )
+            cursor = conn.execute("DELETE FROM device_registry WHERE name = ?", (name,))
             deleted = cursor.rowcount > 0
 
             if deleted:
@@ -282,9 +274,7 @@ class DeviceRegistryStore:
         Returns dict with 'metadata' and 'spec' keys, or None.
         """
         conn = self._get_connection()
-        cursor = conn.execute(
-            "SELECT * FROM device_registry WHERE name = ?", (name,)
-        )
+        cursor = conn.execute("SELECT * FROM device_registry WHERE name = ?", (name,))
         row = cursor.fetchone()
         if row is None:
             return None
@@ -296,9 +286,7 @@ class DeviceRegistryStore:
             "updated_at": row["updated_at"],
         }
         if row["instantiation_spec"]:
-            result["spec"] = DeviceInstantiationSpec.model_validate_json(
-                row["instantiation_spec"]
-            )
+            result["spec"] = DeviceInstantiationSpec.model_validate_json(row["instantiation_spec"])
         return result
 
     def get_audit_log(
@@ -375,9 +363,7 @@ class DeviceRegistryStore:
             metadata = DeviceMetadata.model_validate_json(row["device_metadata"])
             spec = None
             if row["instantiation_spec"]:
-                spec = DeviceInstantiationSpec.model_validate_json(
-                    row["instantiation_spec"]
-                )
+                spec = DeviceInstantiationSpec.model_validate_json(row["instantiation_spec"])
 
             device_class = (
                 spec.device_class
@@ -473,9 +459,7 @@ class DeviceRegistryStore:
         row = conn.execute("SELECT COALESCE(MAX(id), 0) AS v FROM device_audit_log").fetchone()
         current_version = int(row["v"])
 
-        row = conn.execute(
-            "SELECT value FROM registry_metadata WHERE key = 'seeded'"
-        ).fetchone()
+        row = conn.execute("SELECT value FROM registry_metadata WHERE key = 'seeded'").fetchone()
         service_epoch = row["value"] if row else "unseeded"
 
         if since_version >= current_version:

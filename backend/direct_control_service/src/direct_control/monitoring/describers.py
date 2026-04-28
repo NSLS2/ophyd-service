@@ -98,6 +98,7 @@ class OphydDescriber(BaseDescriber):
         """Check if device is an ophyd Device."""
         try:
             from ophyd import Device
+
             return isinstance(device, Device)
         except ImportError:
             return False
@@ -142,8 +143,14 @@ class OphydDescriber(BaseDescriber):
 
         try:
             from bluesky.protocols import (
-                Readable, Movable, Flyable, Stageable,
-                Pausable, Stoppable, Triggerable, Locatable
+                Readable,
+                Movable,
+                Flyable,
+                Stageable,
+                Pausable,
+                Stoppable,
+                Triggerable,
+                Locatable,
             )
 
             if isinstance(device, Readable):
@@ -171,6 +178,7 @@ class OphydDescriber(BaseDescriber):
         """Check if device is readable."""
         try:
             from bluesky.protocols import Readable
+
             return isinstance(device, Readable)
         except ImportError:
             return hasattr(device, "read")
@@ -179,6 +187,7 @@ class OphydDescriber(BaseDescriber):
         """Check if device is movable."""
         try:
             from bluesky.protocols import Movable
+
             return isinstance(device, Movable)
         except ImportError:
             return hasattr(device, "set")
@@ -187,6 +196,7 @@ class OphydDescriber(BaseDescriber):
         """Check if device is flyable."""
         try:
             from bluesky.protocols import Flyable
+
             return isinstance(device, Flyable)
         except ImportError:
             return hasattr(device, "kickoff") and hasattr(device, "complete")
@@ -199,6 +209,7 @@ class OphydAsyncDescriber(BaseDescriber):
         """Check if device is an ophyd-async Device."""
         try:
             from ophyd_async.core import Device
+
             return isinstance(device, Device)
         except ImportError:
             return False
@@ -226,6 +237,7 @@ class SignalDescriber(BaseDescriber):
         """Check if device is an ophyd Signal."""
         try:
             from ophyd import Signal
+
             return isinstance(device, Signal)
         except ImportError:
             return False
@@ -244,7 +256,9 @@ class SignalDescriber(BaseDescriber):
             description["pv"] = device.pvname
 
         # Get read-only status
-        description["read_only"] = not hasattr(device, "set") or not callable(getattr(device, "set", None))
+        description["read_only"] = not hasattr(device, "set") or not callable(
+            getattr(device, "set", None)
+        )
 
         return description
 
@@ -331,9 +345,7 @@ class DescriberRegistry:
                 try:
                     return describer.describe(device)
                 except Exception as e:
-                    logger.warning(
-                        f"Describer {type(describer).__name__} failed for {device}: {e}"
-                    )
+                    logger.warning(f"Describer {type(describer).__name__} failed for {device}: {e}")
                     continue
 
         # Should never reach here due to FallbackDescriber
