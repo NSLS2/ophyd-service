@@ -24,8 +24,17 @@ from .config import Settings
 logger = structlog.get_logger(__name__)
 
 
-def _map_lock_status(available: bool, lock_status: str) -> DeviceLockStatus:
-    """Map configuration_service's status fields to the local DeviceLockStatus enum."""
+def _map_lock_status(
+    available: bool, enabled: bool, lock_status: str
+) -> DeviceLockStatus:
+    """Map configuration_service's status fields to DeviceLockStatus.
+
+    Precedence: DISABLED beats LOCKED beats AVAILABLE. A disabled device
+    that's also locked is reported as DISABLED — it's the more permanent
+    block, and the operator should fix that first before the lock matters.
+    """
+    if not enabled:
+        return DeviceLockStatus.DISABLED
     if lock_status == "locked":
         return DeviceLockStatus.LOCKED
     if available and lock_status == "unlocked":
@@ -116,11 +125,15 @@ class CoordinationClient:
             data = response.json()
 
             available = bool(data.get("available", False))
+            enabled = bool(data.get("enabled", True))
             lock_status_str = data.get("lock_status", "unlocked")
+            mapped_status = _map_lock_status(available, enabled, lock_status_str)
+            # device_available drives the boolean gate in device_controller:
+            # any non-AVAILABLE status blocks commands (locked, disabled, unknown).
             status = CoordinationStatus(
-                device_available=available,
+                device_available=(mapped_status == DeviceLockStatus.AVAILABLE),
                 locked_by=data.get("locked_by_plan"),
-                status=_map_lock_status(available, lock_status_str),
+                status=mapped_status,
                 timestamp=datetime.now(),
             )
 

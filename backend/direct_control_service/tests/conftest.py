@@ -114,6 +114,12 @@ def app():
         async def validate_device(self, device_name: str) -> None:
             return None
 
+        async def get_owning_device(self, pv_name: str):
+            # Tests don't model device-level disable/lock state, so report
+            # every PV as standalone — the coord-check then falls back to
+            # the (mock) coordination client and reports AVAILABLE.
+            return None
+
         async def cleanup(self) -> None:
             return None
 
@@ -152,6 +158,11 @@ def client(app):
             async def validate_device(self, device_name: str) -> None:
                 return None
 
+            async def get_owning_device(self, pv_name: str):
+                # See app fixture: report PVs as standalone so the coord
+                # check defers to the (mock) coordination client.
+                return None
+
             async def cleanup(self) -> None:
                 return None
 
@@ -159,5 +170,10 @@ def client(app):
         app.state.registry_client = stub_registry
         if hasattr(app.state, "ws_manager"):
             app.state.ws_manager.registry_client = stub_registry
+        if hasattr(app.state, "device_controller"):
+            # device_controller now owns a registry_client too — for the
+            # PV->owning-device lookup that drives the disabled/locked gate
+            # on PV-keyed writes. Swap it to the stub.
+            app.state.device_controller.registry_client = stub_registry
 
         yield c

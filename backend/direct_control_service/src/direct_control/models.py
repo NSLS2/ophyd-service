@@ -13,10 +13,17 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class DeviceLockStatus(str, Enum):
-    """Status of a device lock."""
+    """Status of a device's command-availability gate.
+
+    Three blocking states (DISABLED, LOCKED, UNKNOWN) all mean "don't
+    command"; AVAILABLE is the only state that allows commands. Monitoring
+    (read / WS subscribe) is unaffected by this enum — the registry
+    validation gate handles that separately.
+    """
 
     AVAILABLE = "available"
-    LOCKED = "locked"
+    LOCKED = "locked"      # held by an active plan (queueserver/EE)
+    DISABLED = "disabled"  # administratively disabled in configuration_service
     UNKNOWN = "unknown"
 
 
@@ -476,6 +483,10 @@ class ControlError(Exception):
 
 class DeviceLockedError(ControlError):
     """Raised when device is locked by active plan."""
+
+
+class DeviceDisabledError(ControlError):
+    """Raised when device is administratively disabled in configuration_service."""
 
 
 class CoordinationCheckError(ControlError):

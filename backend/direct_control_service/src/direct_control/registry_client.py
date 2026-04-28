@@ -45,6 +45,11 @@ class RegistryClient:
         # Cache: key -> (exists: bool, timestamp: float)
         self._pv_cache: Dict[str, Tuple[bool, float]] = {}
         self._device_cache: Dict[str, Tuple[bool, float]] = {}
+        # PV -> owning device name (None for standalone PVs). Populated as a
+        # side effect of validate_pv so the disabled-state gate can map a
+        # PV-keyed write to the device-keyed lock/disable state on
+        # configuration_service without an extra round-trip.
+        self._pv_owner_cache: Dict[str, Tuple[Optional[str], float]] = {}
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -86,7 +91,18 @@ class RegistryClient:
             response = await client.get(f"/api/v1/pvs/{pv_name}")
 
             if response.status_code == 200:
-                self._pv_cache[pv_name] = (True, time.monotonic())
+                now = time.monotonic()
+                self._pv_cache[pv_name] = (True, now)
+                # Capture the owning device for the disabled-state gate.
+                try:
+                    self._pv_owner_cache[pv_name] = (
+                        response.json().get("device_name"),
+                        now,
+                    )
+                except Exception:  # noqa: BLE001
+                    # Body parse failure is non-fatal for validation; the
+                    # owner lookup will refetch on next call.
+                    logger.debug("pv_owner_capture_failed", pv_name=pv_name)
                 return
             elif response.status_code == 404:
                 self._pv_cache[pv_name] = (False, time.monotonic())
@@ -140,6 +156,34 @@ class RegistryClient:
         except httpx.RequestError as e:
             logger.error("configuration_service_unavailable", error=str(e))
             raise RuntimeError("Configuration service unavailable") from e
+
+    async def get_owning_device(self, pv_name: str) -> Optional[str]:
+        """Return the device that owns this PV in the registry, or None for
+        standalone PVs (PVs with no device-level lock/disable state).
+
+        Used by the coordination check on PV-keyed writes: a PV's commandability
+        is gated by its owning device's enabled/locked state, not by the PV
+        itself. Standalone PVs have no such gate.
+        """
+        entry = self._pv_owner_cache.get(pv_name)
+        if entry is not None and time.monotonic() - entry[1] <= self._cache_ttl:
+            return entry[0]
+
+        client = await self._get_client()
+        try:
+            response = await client.get(f"/api/v1/pvs/{pv_name}")
+        except httpx.RequestError as e:
+            logger.error("configuration_service_unavailable", error=str(e))
+            raise RuntimeError("Configuration service unavailable") from e
+
+        if response.status_code != 200:
+            # PV not in registry — caller will hit the validate_pv gate
+            # separately. Don't cache as None here: that would shadow a real
+            # owner once the PV gets registered.
+            return None
+        device_name = response.json().get("device_name")
+        self._pv_owner_cache[pv_name] = (device_name, time.monotonic())
+        return device_name
 
     async def cleanup(self) -> None:
         """Cleanup HTTP client."""

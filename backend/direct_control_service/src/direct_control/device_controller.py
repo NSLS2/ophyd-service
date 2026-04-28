@@ -19,12 +19,15 @@ from .models import (
     CommandMode,
     ControlError,
     DeviceLockedError,
+    DeviceDisabledError,
+    DeviceLockStatus,
     PVNotFoundError,
 )
 from .config import Settings
 
 if TYPE_CHECKING:
     from .protocols import CoordinationService
+    from .registry_client import RegistryClient
 
 
 logger = structlog.get_logger(__name__)
@@ -40,16 +43,26 @@ class DeviceController:
     Implements: DeviceControl protocol
     """
 
-    def __init__(self, settings: Settings, coordination: "CoordinationService"):
+    def __init__(
+        self,
+        settings: Settings,
+        coordination: "CoordinationService",
+        registry_client: "RegistryClient",
+    ):
         """
         Initialize device controller.
 
         Args:
             settings: Service configuration
             coordination: Coordination service client (implements CoordinationService protocol)
+            registry_client: Configuration-service registry client. Used to
+                map a PV name to its owning device so the
+                disabled/locked-state gate is applied at the device level
+                even for PV-keyed writes.
         """
         self.settings = settings
         self.coordination = coordination
+        self.registry_client = registry_client
 
         # Set EPICS environment if configured
         if settings.epics_ca_addr_list:
@@ -59,6 +72,44 @@ class DeviceController:
             os.environ["EPICS_CA_AUTO_ADDR_LIST"] = (
                 "YES" if settings.epics_ca_auto_addr_list else "NO"
             )
+
+    @staticmethod
+    def _raise_for_unavailable(target: str, kind: str, coord_status) -> None:
+        """If coord_status blocks commands, raise the right typed error.
+
+        DISABLED -> DeviceDisabledError (operator must enable in
+            configuration_service before commanding).
+        LOCKED -> DeviceLockedError (active plan owns it; release the lock
+            or wait for the plan to finish).
+        Other non-AVAILABLE statuses -> ControlError (e.g. UNKNOWN — config
+            service returned a state we don't model).
+        AVAILABLE -> no-op.
+        """
+        if coord_status.device_available:
+            return
+        if coord_status.status == DeviceLockStatus.DISABLED:
+            logger.warning("device_disabled", **{kind: target})
+            raise DeviceDisabledError(
+                f"{kind.replace('_', ' ').capitalize()} {target} is disabled in "
+                f"configuration_service. Re-enable before commanding."
+            )
+        if coord_status.status == DeviceLockStatus.LOCKED:
+            logger.warning(
+                "device_locked", locked_by=coord_status.locked_by, **{kind: target}
+            )
+            raise DeviceLockedError(
+                f"{kind.replace('_', ' ').capitalize()} {target} is locked by "
+                f"plan {coord_status.locked_by}"
+            )
+        logger.warning(
+            "device_unavailable",
+            status=coord_status.status.value,
+            **{kind: target},
+        )
+        raise ControlError(
+            f"{kind.replace('_', ' ').capitalize()} {target} unavailable: "
+            f"status={coord_status.status.value}"
+        )
 
     async def set_pv(self, request: PVSetRequest) -> PVSetResponse:
         """
@@ -78,23 +129,22 @@ class DeviceController:
 
         Raises:
             DeviceLockedError: If PV/device is locked by active plan
+            DeviceDisabledError: If PV/device is administratively disabled
             ControlError: If set operation fails
         """
         pv_name = request.pv_name
         mode = CommandMode.PUT_COMPLETION if request.wait else CommandMode.FIRE_AND_FORGET
 
-        # Perform coordination check
-        # Note: For PV-level control, we use the PV name as device name
-        # A more sophisticated implementation might map PVs to devices
-        coord_status = await self.coordination.check_device_available(pv_name)
-
-        if not coord_status.device_available:
-            logger.warning(
-                "device_locked",
-                pv_name=pv_name,
-                locked_by=coord_status.locked_by,
-            )
-            raise DeviceLockedError(f"PV {pv_name} is locked by plan {coord_status.locked_by}")
+        # Lock/disable state lives at the device level in configuration_service.
+        # Map this PV to its owning device so the gate fires correctly. PVs
+        # without a device owner (standalone) fall back to the PV name —
+        # configuration_service will return 404 for those, and the
+        # coordination check treats that as "no lock concept, available".
+        coord_target = (
+            await self.registry_client.get_owning_device(pv_name)
+        ) or pv_name
+        coord_status = await self.coordination.check_device_available(coord_target)
+        self._raise_for_unavailable(coord_target, "device_name", coord_status)
 
         # Execute PV set operation
         try:
@@ -188,22 +238,13 @@ class DeviceController:
 
         Raises:
             DeviceLockedError: If device is locked by active plan
+            DeviceDisabledError: If device is administratively disabled
             ControlError: If command execution fails
         """
         device_name = request.device_name
 
-        # Perform coordination check
         coord_status = await self.coordination.check_device_available(device_name)
-
-        if not coord_status.device_available:
-            logger.warning(
-                "device_locked",
-                device_name=device_name,
-                locked_by=coord_status.locked_by,
-            )
-            raise DeviceLockedError(
-                f"Device {device_name} is locked by plan {coord_status.locked_by}"
-            )
+        self._raise_for_unavailable(device_name, "device_name", coord_status)
 
         # Execute device method
         # Note: Full Ophyd device loading would require Configuration Service integration
@@ -431,19 +472,12 @@ class DeviceController:
             method=method,
         )
 
-        # For write operations, perform coordination check
+        # For write operations, perform coordination check.
+        # Read methods don't go through the lock/disabled gate — disabled
+        # devices can still be monitored, only commanding is blocked.
         if method in ("set", "put", "write", "trigger", "stop"):
             coord_status = await self.coordination.check_device_available(device_name)
-
-            if not coord_status.device_available:
-                logger.warning(
-                    "device_locked",
-                    device_path=device_path,
-                    locked_by=coord_status.locked_by,
-                )
-                raise DeviceLockedError(
-                    f"Device {device_name} is locked by plan {coord_status.locked_by}"
-                )
+            self._raise_for_unavailable(device_name, "device_name", coord_status)
 
         # In a full implementation, we would:
         # 1. Query Configuration Service for device definition

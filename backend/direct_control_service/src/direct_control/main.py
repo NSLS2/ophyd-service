@@ -30,6 +30,7 @@ from .models import (
     CoordinationCheckError,
     DeviceCommandRequest,
     DeviceCommandResponse,
+    DeviceDisabledError,
     DeviceLockedError,
     HealthResponse,
     NestedDeviceRequest,
@@ -82,8 +83,8 @@ async def lifespan(app: FastAPI):
     from .monitoring.websocket_manager import WebSocketManager
 
     coordination_client = CoordinationClient(settings)
-    device_controller = DeviceController(settings, coordination_client)
     registry_client = RegistryClient(settings)
+    device_controller = DeviceController(settings, coordination_client, registry_client)
     config_http = httpx.AsyncClient(base_url=settings.configuration_service_url, timeout=10.0)
     pv_monitor = PVMonitorManager(settings)
     ws_manager = WebSocketManager(
@@ -396,6 +397,9 @@ async def set_pv(
 
     try:
         return await device_controller.set_pv(request)
+    except DeviceDisabledError as e:
+        logger.warning("pv_disabled", pv_name=request.pv_name, error=str(e))
+        raise HTTPException(status_code=409, detail=str(e))
     except DeviceLockedError as e:
         logger.warning("pv_locked", pv_name=request.pv_name, error=str(e))
         raise HTTPException(status_code=423, detail=str(e))
@@ -570,6 +574,9 @@ async def execute_device_method(
 
     try:
         return await device_controller.execute_device_method(request)
+    except DeviceDisabledError as e:
+        logger.warning("device_disabled", device_name=request.device_name, error=str(e))
+        raise HTTPException(status_code=409, detail=str(e))
     except DeviceLockedError as e:
         logger.warning("device_locked", device_name=request.device_name, error=str(e))
         raise HTTPException(status_code=423, detail=str(e))
@@ -604,6 +611,9 @@ async def stop_device(
         return await device_controller.execute_device_method(
             DeviceCommandRequest(device_name=device_name, method="stop", args=[], kwargs={})
         )
+    except DeviceDisabledError as e:
+        logger.warning("device_stop_disabled", device_name=device_name, error=str(e))
+        raise HTTPException(status_code=409, detail=str(e))
     except DeviceLockedError as e:
         logger.warning("device_stop_locked", device_name=device_name, error=str(e))
         raise HTTPException(status_code=423, detail=str(e))
@@ -766,6 +776,9 @@ async def access_nested_device(
             timestamp=datetime.now(),
             message=None,
         )
+    except DeviceDisabledError as e:
+        logger.warning("nested_device_disabled", device_path=device_path, error=str(e))
+        raise HTTPException(status_code=409, detail=str(e))
     except DeviceLockedError as e:
         logger.warning("nested_device_locked", device_path=device_path, error=str(e))
         raise HTTPException(status_code=423, detail=str(e))
