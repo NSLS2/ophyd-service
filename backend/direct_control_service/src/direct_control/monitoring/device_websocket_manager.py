@@ -23,7 +23,14 @@ from ..models import (
     PVUpdate,
     WebSocketAction,
 )
-from ._envelopes import LockedWS, WebSocketResponseTooLarge, heartbeat_loop, send_error, send_event
+from ._envelopes import (
+    LockedWS,
+    WebSocketResponseTooLarge,
+    heartbeat_loop,
+    log_threadsafe_future_exceptions,
+    send_error,
+    send_event,
+)
 
 if TYPE_CHECKING:
     from ..protocols import DeviceControl, PVMonitor
@@ -108,9 +115,7 @@ class DeviceWebSocketManager:
     async def connect(self, websocket: WebSocket) -> tuple[str, LockedWS]:
         """Accept the WS, wrap it for serialized sends, and register the client."""
         await websocket.accept()
-        wrapped = LockedWS(
-            websocket, max_message_bytes=self.settings.response_bytesize_limit
-        )
+        wrapped = LockedWS(websocket, max_message_bytes=self.settings.response_bytesize_limit)
         client_id = str(uuid.uuid4())
 
         if self._loop is None:
@@ -206,9 +211,7 @@ class DeviceWebSocketManager:
         )
         for (component, pv_name, _), result in zip(new_subscriptions, results):
             if isinstance(result, Exception):
-                logger.error(
-                    "device_pv_subscribe_failed", pv=pv_name, error=str(result)
-                )
+                logger.error("device_pv_subscribe_failed", pv=pv_name, error=str(result))
                 if require_connection:
                     return False, "not_connected"
             else:
@@ -253,9 +256,7 @@ class DeviceWebSocketManager:
 
         logger.info("device_unsubscribed", client_id=client_id, device=device_name)
 
-    def _make_device_callback(
-        self, device_name: str, component: str
-    ) -> Callable[[PVUpdate], None]:
+    def _make_device_callback(self, device_name: str, component: str) -> Callable[[PVUpdate], None]:
         def callback(update: PVUpdate) -> None:
             if self._loop is None:
                 return
@@ -268,8 +269,11 @@ class DeviceWebSocketManager:
                 read_access=update.read_access,
                 write_access=update.write_access,
             )
-            asyncio.run_coroutine_threadsafe(
+            fut = asyncio.run_coroutine_threadsafe(
                 self._broadcast_device_update(device_name, device_update), self._loop
+            )
+            fut.add_done_callback(
+                lambda f: log_threadsafe_future_exceptions(f, where="device_broadcast_update")
             )
 
         return callback
@@ -288,7 +292,16 @@ class DeviceWebSocketManager:
             return
 
         try:
-            await websocket.send_json(update.model_dump(mode="json"))
+            async with asyncio.timeout(self.settings.ws_send_timeout):
+                await websocket.send_json(update.model_dump(mode="json"))
+        except TimeoutError:
+            logger.warning(
+                "device_websocket_send_timeout",
+                client_id=client_id,
+                device=update.device,
+                signal=update.signal,
+                timeout=self.settings.ws_send_timeout,
+            )
         except WebSocketResponseTooLarge as e:
             logger.warning(
                 "device_websocket_payload_too_large",
@@ -298,12 +311,13 @@ class DeviceWebSocketManager:
                 error=str(e),
             )
             try:
-                await send_error(
-                    websocket,
-                    "payload exceeds size limit; update dropped",
-                    device=update.device,
-                    signal=update.signal,
-                )
+                async with asyncio.timeout(self.settings.ws_send_timeout):
+                    await send_error(
+                        websocket,
+                        "payload exceeds size limit; update dropped",
+                        device=update.device,
+                        signal=update.signal,
+                    )
             except Exception:  # noqa: BLE001
                 pass
         except Exception as e:  # noqa: BLE001
@@ -392,9 +406,7 @@ class DeviceWebSocketManager:
         except WebSocketDisconnect:
             logger.info("device_websocket_disconnect", client_id=client_id)
         except Exception as e:  # noqa: BLE001
-            logger.error(
-                "device_websocket_error", client_id=client_id, error=str(e), exc_info=True
-            )
+            logger.error("device_websocket_error", client_id=client_id, error=str(e), exc_info=True)
         finally:
             await self.disconnect(client_id)
 
@@ -405,9 +417,7 @@ class DeviceWebSocketManager:
         cap = self.settings.max_subscriptions_per_client
         messages = {
             "unknown_client": "Client not registered; reconnect and retry.",
-            "cap_exceeded": (
-                f"Subscribe would exceed max_subscriptions_per_client (cap={cap})."
-            ),
+            "cap_exceeded": (f"Subscribe would exceed max_subscriptions_per_client (cap={cap})."),
             "not_found": f"Device '{device_name}' not found in configuration service",
             "not_connected": f"Device {device_name} PVs are not connected",
         }
@@ -451,13 +461,9 @@ class DeviceWebSocketManager:
             await send_error(websocket, "device field required")
             return
 
-        ok, reason = await self.subscribe_device(
-            client_id, device_name, require_connection=True
-        )
+        ok, reason = await self.subscribe_device(client_id, device_name, require_connection=True)
         if ok:
-            await send_event(
-                websocket, "subscribed", device=device_name, connected=True
-            )
+            await send_event(websocket, "subscribed", device=device_name, connected=True)
         else:
             await self._send_subscribe_error(websocket, device_name, reason)
 
@@ -469,9 +475,7 @@ class DeviceWebSocketManager:
 
         ok, reason = await self.subscribe_device(client_id, device_name)
         if ok:
-            await send_event(
-                websocket, "subscribed", device=device_name, read_only=True
-            )
+            await send_event(websocket, "subscribed", device=device_name, read_only=True)
         else:
             await self._send_subscribe_error(websocket, device_name, reason)
 
@@ -553,9 +557,7 @@ class DeviceWebSocketManager:
 
         try:
             response = await self.device_controller.execute_device_method(
-                DeviceCommandRequest(
-                    device_name=device_name, method="stop", args=[], kwargs={}
-                )
+                DeviceCommandRequest(device_name=device_name, method="stop", args=[], kwargs={})
             )
             await send_event(
                 websocket,

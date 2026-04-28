@@ -22,7 +22,14 @@ from ..models import (
     WebSocketAction,
 )
 from ..registry_client import RegistryClient, RegistryValidationError
-from ._envelopes import LockedWS, WebSocketResponseTooLarge, heartbeat_loop, send_error, send_event
+from ._envelopes import (
+    LockedWS,
+    WebSocketResponseTooLarge,
+    heartbeat_loop,
+    log_threadsafe_future_exceptions,
+    send_error,
+    send_event,
+)
 
 if TYPE_CHECKING:
     from ..protocols import DeviceControl, PVMonitor
@@ -61,9 +68,7 @@ class WebSocketManager:
     async def connect(self, websocket: WebSocket) -> tuple[str, LockedWS]:
         """Accept the WS, wrap it for serialized sends, and register the client."""
         await websocket.accept()
-        wrapped = LockedWS(
-            websocket, max_message_bytes=self.settings.response_bytesize_limit
-        )
+        wrapped = LockedWS(websocket, max_message_bytes=self.settings.response_bytesize_limit)
         client_id = str(uuid.uuid4())
 
         if self._loop is None:
@@ -181,8 +186,11 @@ class WebSocketManager:
             if self._loop is None:
                 logger.warning("callback_before_loop_initialized", pv_name=pv_name)
                 return
-            asyncio.run_coroutine_threadsafe(
+            fut = asyncio.run_coroutine_threadsafe(
                 self._broadcast_update(pv_name, update), self._loop
+            )
+            fut.add_done_callback(
+                lambda f: log_threadsafe_future_exceptions(f, where="pv_broadcast_update")
             )
 
         return callback
@@ -204,7 +212,15 @@ class WebSocketManager:
             return
 
         try:
-            await websocket.send_json(update.model_dump(mode="json"))
+            async with asyncio.timeout(self.settings.ws_send_timeout):
+                await websocket.send_json(update.model_dump(mode="json"))
+        except TimeoutError:
+            logger.warning(
+                "websocket_send_timeout",
+                client_id=client_id,
+                pv_name=update.pv_name,
+                timeout=self.settings.ws_send_timeout,
+            )
         except WebSocketResponseTooLarge as e:
             logger.warning(
                 "websocket_payload_too_large",
@@ -215,11 +231,12 @@ class WebSocketManager:
             # Error envelope itself must fit under the cap; keep message short
             # and hoist PV name into a structured field.
             try:
-                await send_error(
-                    websocket,
-                    "payload exceeds size limit; update dropped",
-                    pv_name=update.pv_name,
-                )
+                async with asyncio.timeout(self.settings.ws_send_timeout):
+                    await send_error(
+                        websocket,
+                        "payload exceeds size limit; update dropped",
+                        pv_name=update.pv_name,
+                    )
             except Exception:  # noqa: BLE001
                 pass
         except Exception as e:  # noqa: BLE001
@@ -265,9 +282,7 @@ class WebSocketManager:
         finally:
             await self.disconnect(client_id)
 
-    async def _within_cap(
-        self, client_id: str, websocket: WebSocket, requested: int
-    ) -> bool:
+    async def _within_cap(self, client_id: str, websocket: WebSocket, requested: int) -> bool:
         """Reject with a WS error if subscribing `requested` more PVs would exceed the cap."""
         cap = self.settings.max_subscriptions_per_client
         if cap <= 0:
@@ -322,9 +337,7 @@ class WebSocketManager:
 
             value = await asyncio.to_thread(self.pv_monitor.get_value, pv)
             if value is None or not value.connected:
-                await send_error(
-                    websocket, f"PV {pv} not connected", pv=pv, connected=False
-                )
+                await send_error(websocket, f"PV {pv} not connected", pv=pv, connected=False)
                 return
 
             await self.subscribe_pvs(client_id, [pv])

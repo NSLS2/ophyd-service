@@ -7,6 +7,7 @@ send that envelope so the two managers don't repeat it ~60 times.
 """
 
 import asyncio
+import concurrent.futures
 import json
 from datetime import datetime
 from typing import Any, Optional
@@ -15,6 +16,26 @@ import structlog
 from fastapi import WebSocket
 
 logger = structlog.get_logger(__name__)
+
+
+def log_threadsafe_future_exceptions(fut: "concurrent.futures.Future[Any]", *, where: str) -> None:
+    """Done-callback for ``asyncio.run_coroutine_threadsafe`` futures.
+
+    Without it, exceptions raised inside the scheduled coroutine are
+    retained on the Future but never surfaced — silently lost when the
+    EPICS callback thread discards the Future reference.
+    """
+    try:
+        exc = fut.exception()
+    except (concurrent.futures.CancelledError, asyncio.CancelledError):
+        return
+    if exc is not None:
+        logger.error(
+            "threadsafe_coroutine_failed",
+            where=where,
+            error=str(exc),
+            exc_type=type(exc).__name__,
+        )
 
 
 class WebSocketResponseTooLarge(Exception):

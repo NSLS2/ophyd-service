@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     ws_max_connections: int = 100
     ws_heartbeat_interval: int = 30
     ws_message_queue_size: int = 1000
+    # Per-message send timeout. A slow/stuck client cannot stall broadcasts
+    # to its peers — once exceeded, the update is dropped for that client
+    # and logged.
+    ws_send_timeout: float = 5.0
 
     # Max PV (pv-socket) or device (device-socket) subscriptions per WS client.
     # Protects the service and upstream IOCs from runaway subscribe storms.
