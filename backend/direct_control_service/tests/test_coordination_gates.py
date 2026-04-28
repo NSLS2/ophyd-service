@@ -13,39 +13,27 @@ override the coordination client per-test to return DISABLED / LOCKED.
 """
 
 from datetime import datetime
+from typing import Optional
 
-from direct_control.models import (
-    CoordinationStatus,
-    DeviceLockStatus,
-)
+from direct_control.models import CoordinationStatus, DeviceLockStatus
 
 
-class _DisabledCoordClient:
-    """Coordination client that reports every device as DISABLED."""
+class _CoordStub:
+    """Coordination client stub. Reports every device with the given status.
 
-    async def check_device_available(self, device_name: str) -> CoordinationStatus:
-        return CoordinationStatus(
-            device_available=False,
-            locked_by=None,
-            status=DeviceLockStatus.DISABLED,
-            timestamp=datetime.now(),
-        )
+    AVAILABLE returns device_available=True; any other status returns False
+    so the coord-gate fires.
+    """
 
-    async def is_service_available(self) -> bool:
-        return True
-
-    async def cleanup(self) -> None:
-        return None
-
-
-class _LockedCoordClient:
-    """Coordination client that reports every device as LOCKED by `demo_plan`."""
+    def __init__(self, status: DeviceLockStatus, locked_by: Optional[str] = None):
+        self.status = status
+        self.locked_by = locked_by
 
     async def check_device_available(self, device_name: str) -> CoordinationStatus:
         return CoordinationStatus(
-            device_available=False,
-            locked_by="demo_plan",
-            status=DeviceLockStatus.LOCKED,
+            device_available=(self.status == DeviceLockStatus.AVAILABLE),
+            locked_by=self.locked_by,
+            status=self.status,
             timestamp=datetime.now(),
         )
 
@@ -69,7 +57,7 @@ def _swap_coord(client, coord_client) -> None:
 
 def test_set_pv_blocked_when_owning_device_disabled(client):
     """POST /api/v1/pv/set returns 409 with a clear DISABLED message."""
-    _swap_coord(client, _DisabledCoordClient())
+    _swap_coord(client, _CoordStub(DeviceLockStatus.DISABLED))
 
     r = client.post(
         "/api/v1/pv/set",
@@ -82,7 +70,7 @@ def test_set_pv_blocked_when_owning_device_disabled(client):
 
 def test_pv_read_unaffected_by_disabled_owner(client):
     """GET /api/v1/pv/{name}/value succeeds even when owner is disabled."""
-    _swap_coord(client, _DisabledCoordClient())
+    _swap_coord(client, _CoordStub(DeviceLockStatus.DISABLED))
 
     # The read path doesn't go through the coord check at all; it reads
     # cached values + falls through to caget. With the test IOC up, this
@@ -94,7 +82,7 @@ def test_pv_read_unaffected_by_disabled_owner(client):
 
 def test_device_method_blocked_when_disabled(client):
     """POST /api/v1/device/{name}/stop returns 409 when device is disabled."""
-    _swap_coord(client, _DisabledCoordClient())
+    _swap_coord(client, _CoordStub(DeviceLockStatus.DISABLED))
 
     r = client.post("/api/v1/device/some_device/stop")
     assert r.status_code == 409
@@ -106,7 +94,7 @@ def test_device_method_blocked_when_disabled(client):
 
 def test_set_pv_blocked_when_owning_device_locked(client):
     """POST /api/v1/pv/set returns 423 with the locking-plan name in the message."""
-    _swap_coord(client, _LockedCoordClient())
+    _swap_coord(client, _CoordStub(DeviceLockStatus.LOCKED, locked_by="demo_plan"))
 
     r = client.post(
         "/api/v1/pv/set",
@@ -119,10 +107,10 @@ def test_set_pv_blocked_when_owning_device_locked(client):
 def test_disabled_distinct_from_locked_in_http_status(client):
     """Disabled is 409 (Conflict); locked is 423 (Locked). Distinct codes
     so callers can react differently (re-enable vs. wait/retry)."""
-    _swap_coord(client, _DisabledCoordClient())
+    _swap_coord(client, _CoordStub(DeviceLockStatus.DISABLED))
     r1 = client.post("/api/v1/pv/set", json={"pv_name": "IOC:m1", "value": 1.0})
 
-    _swap_coord(client, _LockedCoordClient())
+    _swap_coord(client, _CoordStub(DeviceLockStatus.LOCKED, locked_by="demo_plan"))
     r2 = client.post("/api/v1/pv/set", json={"pv_name": "IOC:m1", "value": 1.0})
 
     assert r1.status_code == 409

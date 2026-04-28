@@ -91,6 +91,28 @@ def _epics_env(test_ioc):
     yield
 
 
+class _StubRegistry:
+    """Registry client stub used by both `app` and `client` fixtures.
+
+    Stateless — every method returns None — so it's safe to share a single
+    class definition across fixtures even though each fixture instantiates
+    its own. PVs are reported as standalone (no owning device) so the
+    coord-gate falls through to the mock coordination client.
+    """
+
+    async def validate_pv(self, pv_name: str) -> None:
+        return None
+
+    async def validate_device(self, device_name: str) -> None:
+        return None
+
+    async def get_owning_device(self, pv_name: str):
+        return None
+
+    async def cleanup(self) -> None:
+        return None
+
+
 @pytest.fixture
 def app():
     """
@@ -106,22 +128,6 @@ def app():
         get_registry_client,
     )
     from direct_control.protocols import MockCoordinationClient
-
-    class _StubRegistry:
-        async def validate_pv(self, pv_name: str) -> None:
-            return None
-
-        async def validate_device(self, device_name: str) -> None:
-            return None
-
-        async def get_owning_device(self, pv_name: str):
-            # Tests don't model device-level disable/lock state, so report
-            # every PV as standalone — the coord-check then falls back to
-            # the (mock) coordination client and reports AVAILABLE.
-            return None
-
-        async def cleanup(self) -> None:
-            return None
 
     mock_coord = MockCoordinationClient(always_available=True)
     stub_registry = _StubRegistry()
@@ -151,29 +157,13 @@ def client(app):
         if hasattr(app.state, "device_controller"):
             app.state.device_controller.coordination = mock_coord
 
-        class _StubRegistry:
-            async def validate_pv(self, pv_name: str) -> None:
-                return None
-
-            async def validate_device(self, device_name: str) -> None:
-                return None
-
-            async def get_owning_device(self, pv_name: str):
-                # See app fixture: report PVs as standalone so the coord
-                # check defers to the (mock) coordination client.
-                return None
-
-            async def cleanup(self) -> None:
-                return None
-
         stub_registry = _StubRegistry()
         app.state.registry_client = stub_registry
         if hasattr(app.state, "ws_manager"):
             app.state.ws_manager.registry_client = stub_registry
         if hasattr(app.state, "device_controller"):
-            # device_controller now owns a registry_client too — for the
-            # PV->owning-device lookup that drives the disabled/locked gate
-            # on PV-keyed writes. Swap it to the stub.
+            # device_controller owns a registry_client for the PV→owning-device
+            # lookup that drives the disabled/locked gate on PV-keyed writes.
             app.state.device_controller.registry_client = stub_registry
 
         yield c

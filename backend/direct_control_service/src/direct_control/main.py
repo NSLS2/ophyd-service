@@ -320,6 +320,24 @@ def _build_value_response(
     return JSONResponse(payload)
 
 
+def _raise_http_for_device_unavailable(
+    exc: "DeviceDisabledError | DeviceLockedError",
+    event_prefix: str,
+    **log_fields: Any,
+) -> None:
+    """Translate a coord-gate exception into the right HTTP status + log line.
+
+    Disabled and locked are distinct enough that the frontend should branch
+    on the status code (re-enable in config-service vs wait/retry), so they
+    map to different codes (409 / 423).
+    """
+    if isinstance(exc, DeviceDisabledError):
+        logger.warning(f"{event_prefix}_disabled", error=str(exc), **log_fields)
+        raise HTTPException(status_code=409, detail=str(exc))
+    logger.warning(f"{event_prefix}_locked", error=str(exc), **log_fields)
+    raise HTTPException(status_code=423, detail=str(exc))
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check(
     coordination_client: CoordinationService = Depends(get_coordination_client),
@@ -397,12 +415,8 @@ async def set_pv(
 
     try:
         return await device_controller.set_pv(request)
-    except DeviceDisabledError as e:
-        logger.warning("pv_disabled", pv_name=request.pv_name, error=str(e))
-        raise HTTPException(status_code=409, detail=str(e))
-    except DeviceLockedError as e:
-        logger.warning("pv_locked", pv_name=request.pv_name, error=str(e))
-        raise HTTPException(status_code=423, detail=str(e))
+    except (DeviceDisabledError, DeviceLockedError) as e:
+        _raise_http_for_device_unavailable(e, "pv", pv_name=request.pv_name)
     except CoordinationCheckError as e:
         logger.error("coordination_check_failed", pv_name=request.pv_name, error=str(e))
         raise HTTPException(status_code=503, detail=f"Coordination check failed: {e}")
@@ -574,12 +588,8 @@ async def execute_device_method(
 
     try:
         return await device_controller.execute_device_method(request)
-    except DeviceDisabledError as e:
-        logger.warning("device_disabled", device_name=request.device_name, error=str(e))
-        raise HTTPException(status_code=409, detail=str(e))
-    except DeviceLockedError as e:
-        logger.warning("device_locked", device_name=request.device_name, error=str(e))
-        raise HTTPException(status_code=423, detail=str(e))
+    except (DeviceDisabledError, DeviceLockedError) as e:
+        _raise_http_for_device_unavailable(e, "device", device_name=request.device_name)
     except CoordinationCheckError as e:
         logger.error("coordination_check_failed", device_name=request.device_name, error=str(e))
         raise HTTPException(status_code=503, detail=f"Coordination check failed: {e}")
@@ -611,12 +621,8 @@ async def stop_device(
         return await device_controller.execute_device_method(
             DeviceCommandRequest(device_name=device_name, method="stop", args=[], kwargs={})
         )
-    except DeviceDisabledError as e:
-        logger.warning("device_stop_disabled", device_name=device_name, error=str(e))
-        raise HTTPException(status_code=409, detail=str(e))
-    except DeviceLockedError as e:
-        logger.warning("device_stop_locked", device_name=device_name, error=str(e))
-        raise HTTPException(status_code=423, detail=str(e))
+    except (DeviceDisabledError, DeviceLockedError) as e:
+        _raise_http_for_device_unavailable(e, "device_stop", device_name=device_name)
     except CoordinationCheckError as e:
         logger.error("coordination_check_failed", device_name=device_name, error=str(e))
         raise HTTPException(status_code=503, detail=f"Coordination check failed: {e}")
@@ -776,12 +782,8 @@ async def access_nested_device(
             timestamp=datetime.now(),
             message=None,
         )
-    except DeviceDisabledError as e:
-        logger.warning("nested_device_disabled", device_path=device_path, error=str(e))
-        raise HTTPException(status_code=409, detail=str(e))
-    except DeviceLockedError as e:
-        logger.warning("nested_device_locked", device_path=device_path, error=str(e))
-        raise HTTPException(status_code=423, detail=str(e))
+    except (DeviceDisabledError, DeviceLockedError) as e:
+        _raise_http_for_device_unavailable(e, "nested_device", device_path=device_path)
     except CoordinationCheckError as e:
         logger.error("coordination_check_failed", device_path=device_path, error=str(e))
         raise HTTPException(status_code=503, detail=f"Coordination check failed: {e}")

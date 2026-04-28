@@ -99,10 +99,16 @@ class RegistryClient:
                         response.json().get("device_name"),
                         now,
                     )
-                except Exception:  # noqa: BLE001
-                    # Body parse failure is non-fatal for validation; the
-                    # owner lookup will refetch on next call.
-                    logger.debug("pv_owner_capture_failed", pv_name=pv_name)
+                except Exception as e:  # noqa: BLE001
+                    # Body-parse failure here is unusual (configuration_service
+                    # returned 200 but a malformed body). Validation itself
+                    # still succeeds — get_owning_device will refetch on next
+                    # call. Warn (not debug) so a persistent issue is visible.
+                    logger.warning(
+                        "pv_owner_capture_failed",
+                        pv_name=pv_name,
+                        error=str(e),
+                    )
                 return
             elif response.status_code == 404:
                 self._pv_cache[pv_name] = (False, time.monotonic())
