@@ -54,11 +54,12 @@ class DeviceController:
         # Set EPICS environment if configured
         if settings.epics_ca_addr_list:
             import os
-            os.environ['EPICS_CA_ADDR_LIST'] = settings.epics_ca_addr_list
-            os.environ['EPICS_CA_AUTO_ADDR_LIST'] = (
-                'YES' if settings.epics_ca_auto_addr_list else 'NO'
+
+            os.environ["EPICS_CA_ADDR_LIST"] = settings.epics_ca_addr_list
+            os.environ["EPICS_CA_AUTO_ADDR_LIST"] = (
+                "YES" if settings.epics_ca_auto_addr_list else "NO"
             )
-    
+
     async def set_pv(self, request: PVSetRequest) -> PVSetResponse:
         """
         Set EPICS PV value with coordination check (Low Fidelity Channel).
@@ -93,9 +94,7 @@ class DeviceController:
                 pv_name=pv_name,
                 locked_by=coord_status.locked_by,
             )
-            raise DeviceLockedError(
-                f"PV {pv_name} is locked by plan {coord_status.locked_by}"
-            )
+            raise DeviceLockedError(f"PV {pv_name} is locked by plan {coord_status.locked_by}")
 
         # Execute PV set operation
         try:
@@ -176,29 +175,26 @@ class DeviceController:
                 mode=mode,
                 message=f"Error: {str(e)}",
             )
-    
-    async def execute_device_method(
-        self,
-        request: DeviceCommandRequest
-    ) -> DeviceCommandResponse:
+
+    async def execute_device_method(self, request: DeviceCommandRequest) -> DeviceCommandResponse:
         """
         Execute Ophyd device method with coordination check.
-        
+
         Args:
             request: Device command request
-        
+
         Returns:
             Device command response
-        
+
         Raises:
             DeviceLockedError: If device is locked by active plan
             ControlError: If command execution fails
         """
         device_name = request.device_name
-        
+
         # Perform coordination check
         coord_status = await self.coordination.check_device_available(device_name)
-        
+
         if not coord_status.device_available:
             logger.warning(
                 "device_locked",
@@ -208,7 +204,7 @@ class DeviceController:
             raise DeviceLockedError(
                 f"Device {device_name} is locked by plan {coord_status.locked_by}"
             )
-        
+
         # Execute device method
         # Note: Full Ophyd device loading would require Configuration Service integration
         # This is a simplified implementation for the pip-installable pattern
@@ -268,12 +264,10 @@ class DeviceController:
                 message=f"Error: {str(e)}",
                 use_put=request.use_put,
             )
-    
-    async def _connect(self, pv_name: str, connection_timeout: float):
+
+    async def _connect(self, pv_name: str, connection_timeout: float) -> Any:
         """Connect to a PV off-loop; returns the pyepics PV or None on failure."""
-        pv = await asyncio.to_thread(
-            get_pv, pv_name, timeout=connection_timeout, connect=True
-        )
+        pv = await asyncio.to_thread(get_pv, pv_name, timeout=connection_timeout, connect=True)
         return pv if pv.connected else None
 
     async def _execute_put(
@@ -312,9 +306,7 @@ class DeviceController:
 
         pv = await self._connect(pv_name, connection_timeout)
         if pv is None:
-            raise ControlError(
-                f"Failed to connect to PV {pv_name} within {connection_timeout}s"
-            )
+            raise ControlError(f"Failed to connect to PV {pv_name} within {connection_timeout}s")
 
         if use_complete:
             loop = asyncio.get_running_loop()
@@ -333,14 +325,12 @@ class DeviceController:
                 await asyncio.wait_for(done.wait(), timeout=timeout)
                 return True
             except asyncio.TimeoutError:
-                raise ControlError(
-                    f"PV {pv_name} put-callback did not complete within {timeout}s"
-                )
+                raise ControlError(f"PV {pv_name} put-callback did not complete within {timeout}s")
 
         status = await asyncio.to_thread(
             ca.put, pv.chid, value, wait=wait, timeout=timeout, ftype=ftype
         )
-        return status == 1
+        return bool(status == 1)
 
     async def get_pv_value(
         self,

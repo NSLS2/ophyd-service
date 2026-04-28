@@ -32,7 +32,7 @@ class CoordinationClient:
         self.settings = settings
         self.base_url = settings.experiment_execution_url
         self._client: Optional[httpx.AsyncClient] = None
-    
+
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create async HTTP client."""
         if self._client is None:
@@ -41,21 +41,21 @@ class CoordinationClient:
                 timeout=self.settings.coordination_timeout,
             )
         return self._client
-    
+
     async def check_device_available(self, device_name: str) -> CoordinationStatus:
         """
         Check if device is available for direct control.
-        
+
         This is the CRITICAL A4 coordination check. It queries SVC-001
         (Experiment Execution Service) to determine if the device is
         currently locked by an executing plan.
-        
+
         Args:
             device_name: Name of the device to check
-        
+
         Returns:
             CoordinationStatus with device availability
-        
+
         Raises:
             CoordinationCheckError: If coordination check fails
         """
@@ -63,7 +63,7 @@ class CoordinationClient:
             logger.warning(
                 "coordination_check_disabled",
                 device_name=device_name,
-                note="Allowing command without coordination check (testing mode)"
+                note="Allowing command without coordination check (testing mode)",
             )
             return CoordinationStatus(
                 device_available=True,
@@ -71,26 +71,24 @@ class CoordinationClient:
                 status=DeviceLockStatus.AVAILABLE,
                 timestamp=datetime.now(),
             )
-        
+
         try:
             client = await self._get_client()
-            
+
             logger.debug(
                 "checking_device_coordination",
                 device_name=device_name,
-                url=f"{self.base_url}/api/v1/coordination/devices/{device_name}/status"
+                url=f"{self.base_url}/api/v1/coordination/devices/{device_name}/status",
             )
-            
-            response = await client.get(
-                f"/api/v1/coordination/devices/{device_name}/status"
-            )
-            
+
+            response = await client.get(f"/api/v1/coordination/devices/{device_name}/status")
+
             if response.status_code == 404:
                 # Device not found in coordination state - treat as available
                 logger.info(
                     "device_not_in_coordination_state",
                     device_name=device_name,
-                    note="Device not tracked, assuming available"
+                    note="Device not tracked, assuming available",
                 )
                 return CoordinationStatus(
                     device_available=True,
@@ -98,17 +96,17 @@ class CoordinationClient:
                     status=DeviceLockStatus.AVAILABLE,
                     timestamp=datetime.now(),
                 )
-            
+
             response.raise_for_status()
             data = response.json()
-            
+
             status = CoordinationStatus(
                 device_available=data.get("available", False),
                 locked_by=data.get("locked_by"),
                 status=DeviceLockStatus(data.get("status", "unknown")),
                 timestamp=datetime.fromisoformat(data.get("timestamp", datetime.now().isoformat())),
             )
-            
+
             logger.info(
                 "coordination_check_result",
                 device_name=device_name,
@@ -116,9 +114,9 @@ class CoordinationClient:
                 locked_by=status.locked_by,
                 status=status.status.value,
             )
-            
+
             return status
-        
+
         except httpx.HTTPStatusError as e:
             logger.error(
                 "coordination_check_http_error",
@@ -129,17 +127,15 @@ class CoordinationClient:
             raise CoordinationCheckError(
                 f"Coordination check failed: HTTP {e.response.status_code}"
             ) from e
-        
+
         except httpx.RequestError as e:
             logger.error(
                 "coordination_check_connection_error",
                 device_name=device_name,
                 error=str(e),
             )
-            raise CoordinationCheckError(
-                f"Cannot reach Experiment Execution Service: {e}"
-            ) from e
-        
+            raise CoordinationCheckError(f"Cannot reach Experiment Execution Service: {e}") from e
+
         except Exception as e:
             logger.error(
                 "coordination_check_unexpected_error",
@@ -147,14 +143,12 @@ class CoordinationClient:
                 error=str(e),
                 exc_info=True,
             )
-            raise CoordinationCheckError(
-                f"Unexpected coordination check error: {e}"
-            ) from e
-    
+            raise CoordinationCheckError(f"Unexpected coordination check error: {e}") from e
+
     async def is_service_available(self) -> bool:
         """
         Check if Experiment Execution Service is reachable.
-        
+
         Returns:
             True if service is available
         """
@@ -164,8 +158,8 @@ class CoordinationClient:
             return response.status_code == 200
         except Exception:
             return False
-    
-    async def cleanup(self):
+
+    async def cleanup(self) -> None:
         """Cleanup HTTP client."""
         if self._client:
             await self._client.aclose()

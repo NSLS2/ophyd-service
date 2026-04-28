@@ -141,7 +141,7 @@ class RegistryClient:
             logger.error("configuration_service_unavailable", error=str(e))
             raise RuntimeError("Configuration service unavailable") from e
 
-    async def cleanup(self):
+    async def cleanup(self) -> None:
         """Cleanup HTTP client."""
         if self._client:
             await self._client.aclose()

@@ -93,9 +93,7 @@ class DeviceRegistryProtocol(Protocol):
         ...
 
     def update_device(
-        self,
-        device: DeviceMetadata,
-        instantiation_spec: Optional[DeviceInstantiationSpec] = None
+        self, device: DeviceMetadata, instantiation_spec: Optional[DeviceInstantiationSpec] = None
     ) -> bool:
         """Update an existing device in registry.
 
@@ -131,15 +129,15 @@ class ConfigurationState:
 
     def get_pv_list(self) -> List[str]:
         """Get sorted list of all PV names from the registry."""
-        if hasattr(self._registry, 'pvs'):
-            return sorted(self._registry.pvs.keys())  # type: ignore
+        if hasattr(self._registry, "pvs"):
+            return sorted(self._registry.pvs.keys())
         return []
 
     def get_all_pvs(self) -> Dict[str, Dict[str, str]]:
         """Get all PVs organized by device from the registry."""
         result: Dict[str, Dict[str, str]] = {}
-        if hasattr(self._registry, 'devices'):
-            for name, device in self._registry.devices.items():  # type: ignore
+        if hasattr(self._registry, "devices"):
+            for name, device in self._registry.devices.items():
                 if device.pvs:
                     result[name] = device.pvs
         return result

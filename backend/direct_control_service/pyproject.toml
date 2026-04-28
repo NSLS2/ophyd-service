@@ -28,7 +28,7 @@ dependencies = [
     # EPICS integration
     "pyepics>=3.5.0",
     "p4p>=4.1.0",
-    
+
     # Web framework
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
@@ -37,10 +37,10 @@ dependencies = [
     # Data validation
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
-    
+
     # HTTP client (for service dependencies)
     "httpx>=0.25.0",
-    
+
     # Observability
     "prometheus-client>=0.19.0",
     "structlog>=23.2.0",
@@ -108,23 +108,30 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "B",     # flake8-bugbear
+    "C4",    # flake8-comprehensions
+    "UP",    # pyupgrade
+    "ASYNC", # flake8-async (blocking calls in async, missing awaits, etc.)
+]
+ignore = [
+    "ASYNC109", # `timeout=` parameter on async functions — stylistic, not a bug; we use it for EPICS/CA timeouts and FastAPI Query params
 ]
 
 [tool.mypy]
 python_version = "3.11"
+plugins = ["pydantic.mypy"]
 warn_return_any = true
 warn_unused_configs = true
 no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
+strict_equality = true
+warn_unreachable = true
 
 [[tool.mypy.overrides]]
 module = [
@@ -135,3 +142,20 @@ module = [
     "structlog.*",
 ]
 ignore_missing_imports = true
+
+# Strict typing — modules already clean under disallow_untyped_defs.
+# Add new modules here as they're brought up to standard.
+[[tool.mypy.overrides]]
+module = [
+    "direct_control",
+    "direct_control._array_metadata",
+    "direct_control.cli",
+    "direct_control.config",
+    "direct_control.coordination_client",
+    "direct_control.device_controller",
+    "direct_control.models",
+    "direct_control.monitoring",
+    "direct_control.registry_client",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
