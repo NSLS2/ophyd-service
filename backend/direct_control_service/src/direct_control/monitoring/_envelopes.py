@@ -10,7 +10,7 @@ import asyncio
 import concurrent.futures
 import json
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import structlog
 from fastapi import WebSocket
@@ -18,7 +18,14 @@ from fastapi import WebSocket
 logger = structlog.get_logger(__name__)
 
 
-def log_threadsafe_future_exceptions(fut: "concurrent.futures.Future[Any]", *, where: str) -> None:
+# Where the threadsafe coroutine was scheduled from. Closed set so a typo
+# at the call site is a type error rather than a silent log-tag drift.
+ThreadsafeCallSite = Literal["pv_broadcast_update", "device_broadcast_update"]
+
+
+def log_threadsafe_future_exceptions(
+    fut: "concurrent.futures.Future[Any]", *, where: ThreadsafeCallSite
+) -> None:
     """Done-callback for ``asyncio.run_coroutine_threadsafe`` futures.
 
     Without it, exceptions raised inside the scheduled coroutine are
@@ -59,10 +66,17 @@ class LockedWS:
     the ``DIRECT_CONTROL_RESPONSE_BYTESIZE_LIMIT`` HTTP cap.
     """
 
-    def __init__(self, ws: WebSocket, *, max_message_bytes: Optional[int] = None):
+    def __init__(
+        self,
+        ws: WebSocket,
+        *,
+        max_message_bytes: Optional[int] = None,
+        send_timeout: Optional[float] = None,
+    ):
         self._ws = ws
         self._send_lock = asyncio.Lock()
         self._max_message_bytes = max_message_bytes
+        self._send_timeout = send_timeout
 
     async def accept(self) -> None:
         await self._ws.accept()
@@ -76,14 +90,19 @@ class LockedWS:
         # Starlette's own serialization (compact separators, raw UTF-8)
         # so we don't inflate wire size vs. the pre-cap behavior.
         text = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
-        self._check_size(text)
-        async with self._send_lock:
-            await self._ws.send_text(text)
+        await self.send_text(text)
 
     async def send_text(self, data: str) -> None:
+        # send_timeout protects against a slow/wedged client TCP buffer
+        # stalling a fan-out broadcast across all subscribers. TimeoutError
+        # propagates so the caller can drop the update and log.
         self._check_size(data)
         async with self._send_lock:
-            await self._ws.send_text(data)
+            if self._send_timeout is None:
+                await self._ws.send_text(data)
+            else:
+                async with asyncio.timeout(self._send_timeout):
+                    await self._ws.send_text(data)
 
     def _check_size(self, text: str) -> None:
         limit = self._max_message_bytes

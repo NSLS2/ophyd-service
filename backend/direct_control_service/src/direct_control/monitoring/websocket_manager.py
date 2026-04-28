@@ -8,6 +8,7 @@ so they inherit coordination (A4) checks.
 
 import asyncio
 import uuid
+from functools import partial
 from typing import Callable, Dict, Optional, Set, TYPE_CHECKING
 
 import structlog
@@ -30,6 +31,11 @@ from ._envelopes import (
     send_error,
     send_event,
 )
+
+
+# Hoisted out of `_make_pv_callback` so the EPICS-callback hot path doesn't
+# allocate a new closure per fired update.
+_PV_BROADCAST_DONE_CB = partial(log_threadsafe_future_exceptions, where="pv_broadcast_update")
 
 if TYPE_CHECKING:
     from ..protocols import DeviceControl, PVMonitor
@@ -68,7 +74,11 @@ class WebSocketManager:
     async def connect(self, websocket: WebSocket) -> tuple[str, LockedWS]:
         """Accept the WS, wrap it for serialized sends, and register the client."""
         await websocket.accept()
-        wrapped = LockedWS(websocket, max_message_bytes=self.settings.response_bytesize_limit)
+        wrapped = LockedWS(
+            websocket,
+            max_message_bytes=self.settings.response_bytesize_limit,
+            send_timeout=self.settings.ws_send_timeout,
+        )
         client_id = str(uuid.uuid4())
 
         if self._loop is None:
@@ -189,9 +199,7 @@ class WebSocketManager:
             fut = asyncio.run_coroutine_threadsafe(
                 self._broadcast_update(pv_name, update), self._loop
             )
-            fut.add_done_callback(
-                lambda f: log_threadsafe_future_exceptions(f, where="pv_broadcast_update")
-            )
+            fut.add_done_callback(_PV_BROADCAST_DONE_CB)
 
         return callback
 
@@ -212,8 +220,7 @@ class WebSocketManager:
             return
 
         try:
-            async with asyncio.timeout(self.settings.ws_send_timeout):
-                await websocket.send_json(update.model_dump(mode="json"))
+            await websocket.send_json(update.model_dump(mode="json"))
         except TimeoutError:
             logger.warning(
                 "websocket_send_timeout",
@@ -231,14 +238,18 @@ class WebSocketManager:
             # Error envelope itself must fit under the cap; keep message short
             # and hoist PV name into a structured field.
             try:
-                async with asyncio.timeout(self.settings.ws_send_timeout):
-                    await send_error(
-                        websocket,
-                        "payload exceeds size limit; update dropped",
-                        pv_name=update.pv_name,
-                    )
-            except Exception:  # noqa: BLE001
-                pass
+                await send_error(
+                    websocket,
+                    "payload exceeds size limit; update dropped",
+                    pv_name=update.pv_name,
+                )
+            except Exception as inner_err:  # noqa: BLE001
+                logger.debug(
+                    "websocket_send_error_envelope_failed",
+                    client_id=client_id,
+                    pv_name=update.pv_name,
+                    error=str(inner_err),
+                )
         except Exception as e:  # noqa: BLE001
             logger.error(
                 "websocket_send_error",

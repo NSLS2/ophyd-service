@@ -8,6 +8,7 @@ Write/stop operations are routed through DeviceControl for coordination checks.
 
 import asyncio
 import uuid
+from functools import partial
 from typing import Callable, Dict, Optional, Set, TYPE_CHECKING
 
 import httpx
@@ -37,6 +38,13 @@ if TYPE_CHECKING:
 
 
 logger = structlog.get_logger(__name__)
+
+
+# Hoisted out of `_make_device_callback` so the EPICS-callback hot path
+# doesn't allocate a new closure per fired update.
+_DEVICE_BROADCAST_DONE_CB = partial(
+    log_threadsafe_future_exceptions, where="device_broadcast_update"
+)
 
 
 class DeviceWebSocketManager:
@@ -115,7 +123,11 @@ class DeviceWebSocketManager:
     async def connect(self, websocket: WebSocket) -> tuple[str, LockedWS]:
         """Accept the WS, wrap it for serialized sends, and register the client."""
         await websocket.accept()
-        wrapped = LockedWS(websocket, max_message_bytes=self.settings.response_bytesize_limit)
+        wrapped = LockedWS(
+            websocket,
+            max_message_bytes=self.settings.response_bytesize_limit,
+            send_timeout=self.settings.ws_send_timeout,
+        )
         client_id = str(uuid.uuid4())
 
         if self._loop is None:
@@ -272,9 +284,7 @@ class DeviceWebSocketManager:
             fut = asyncio.run_coroutine_threadsafe(
                 self._broadcast_device_update(device_name, device_update), self._loop
             )
-            fut.add_done_callback(
-                lambda f: log_threadsafe_future_exceptions(f, where="device_broadcast_update")
-            )
+            fut.add_done_callback(_DEVICE_BROADCAST_DONE_CB)
 
         return callback
 
@@ -292,8 +302,7 @@ class DeviceWebSocketManager:
             return
 
         try:
-            async with asyncio.timeout(self.settings.ws_send_timeout):
-                await websocket.send_json(update.model_dump(mode="json"))
+            await websocket.send_json(update.model_dump(mode="json"))
         except TimeoutError:
             logger.warning(
                 "device_websocket_send_timeout",
@@ -311,15 +320,20 @@ class DeviceWebSocketManager:
                 error=str(e),
             )
             try:
-                async with asyncio.timeout(self.settings.ws_send_timeout):
-                    await send_error(
-                        websocket,
-                        "payload exceeds size limit; update dropped",
-                        device=update.device,
-                        signal=update.signal,
-                    )
-            except Exception:  # noqa: BLE001
-                pass
+                await send_error(
+                    websocket,
+                    "payload exceeds size limit; update dropped",
+                    device=update.device,
+                    signal=update.signal,
+                )
+            except Exception as inner_err:  # noqa: BLE001
+                logger.debug(
+                    "device_websocket_send_error_envelope_failed",
+                    client_id=client_id,
+                    device=update.device,
+                    signal=update.signal,
+                    error=str(inner_err),
+                )
         except Exception as e:  # noqa: BLE001
             logger.error("device_websocket_send_error", client_id=client_id, error=str(e))
 
