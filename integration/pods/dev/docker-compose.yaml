@@ -154,4 +154,4 @@ services:
       configuration_service:
         condition: service_healthy
       direct_control_service:
-        condition: service_started
+        condition: service_healthy
