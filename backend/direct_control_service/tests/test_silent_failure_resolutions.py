@@ -536,3 +536,32 @@ def test_finch_contract_meta_oversize_emits_error_envelope(client):
         from direct_control.config import Settings
 
         app.state.settings.response_bytesize_limit = Settings().response_bytesize_limit
+
+
+# ─── S4: configuration_service_url must be required (no localhost default) ───
+#
+# Pre-fix: ``Settings.configuration_service_url`` defaulted to
+# ``http://localhost:8004``. If a deployer forgot to set
+# ``DIRECT_CONTROL_CONFIGURATION_SERVICE_URL``, the service would silently
+# boot and start sending requests at localhost. The misconfig didn't
+# surface until the first request — by then the service had already passed
+# its readiness probe and been put in rotation. After the fix, the field
+# has no default and ``Settings()`` raises at startup.
+
+
+def test_s4_configuration_service_url_is_required(monkeypatch):
+    """Settings() must fail if DIRECT_CONTROL_CONFIGURATION_SERVICE_URL is unset.
+
+    Pre-fix bug: silent default to localhost:8004 hid forgotten config.
+    Now: pydantic ValidationError at boot time.
+    """
+    from pydantic import ValidationError
+
+    from direct_control.config import Settings
+
+    monkeypatch.delenv("DIRECT_CONTROL_CONFIGURATION_SERVICE_URL", raising=False)
+
+    with pytest.raises(ValidationError) as exc_info:
+        Settings()
+    msg = str(exc_info.value)
+    assert "configuration_service_url" in msg.lower()

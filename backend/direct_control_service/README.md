@@ -74,7 +74,7 @@ All settings use the `DIRECT_CONTROL_` environment variable prefix.
 | `DIRECT_CONTROL_HOST` | `0.0.0.0` | Bind address |
 | `DIRECT_CONTROL_PORT` | `8003` | HTTP port |
 | `DIRECT_CONTROL_LOG_LEVEL` | `info` | Log level |
-| `DIRECT_CONTROL_CONFIGURATION_SERVICE_URL` | `http://localhost:8004` | Configuration Service URL (registry + lock state) |
+| `DIRECT_CONTROL_CONFIGURATION_SERVICE_URL` | **required** | Configuration Service URL (registry + lock state) |
 | `DIRECT_CONTROL_COORDINATION_CHECK_ENABLED` | `true` | Enable A4 coordination checks |
 | `DIRECT_CONTROL_COORDINATION_TIMEOUT` | `5.0` | Coordination check timeout (s) |
 | `DIRECT_CONTROL_COMMAND_TIMEOUT` | `30.0` | Command execution timeout (s) |

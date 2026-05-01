@@ -62,7 +62,7 @@ Environment variables (prefix `DIRECT_CONTROL_`):
 | `HOST` | `0.0.0.0` | Bind address |
 | `PORT` | `8003` | HTTP port |
 | `LOG_LEVEL` | `info` | Log level |
-| `CONFIGURATION_SERVICE_URL` | `http://localhost:8004` | Config Service for PV/device registry validation |
+| `CONFIGURATION_SERVICE_URL` | **required** | Config Service for PV/device registry validation |
 | `EXPERIMENT_EXECUTION_URL` | `http://localhost:8001` | EE Service for A4 coordination lock checks |
 | `AUTH_SERVICE_URL` | `http://localhost:8010` | Auth Service for RBAC |
 | `REQUIRE_AUTH` | `true` | Enforce authentication |
