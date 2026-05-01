@@ -212,7 +212,7 @@ class PVUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     event_type: str = "pv_update"
-    pv_name: str
+    pv_name: str = Field(..., serialization_alias="pv")
     value: Any
     timestamp: datetime
     status: int = 0
@@ -240,6 +240,14 @@ class PVUpdate(BaseModel):
             status=pv_value.status,
             severity=pv_value.severity,
             connected=pv_value.connected,
+            units=pv_value.units,
+            precision=pv_value.precision,
+            lower_ctrl_limit=pv_value.lower_ctrl_limit,
+            upper_ctrl_limit=pv_value.upper_ctrl_limit,
+            lower_disp_limit=pv_value.lower_disp_limit,
+            upper_disp_limit=pv_value.upper_disp_limit,
+            read_access=pv_value.read_access,
+            write_access=pv_value.write_access,
             **overrides,
         )
 

@@ -174,7 +174,7 @@
             "required": false,
             "schema": {
               "type": "number",
-              "exclusiveMinimum": 0.0,
+              "exclusiveMinimum": 0,
               "description": "CA get timeout in seconds",
               "default": 5.0,
               "title": "Timeout"
@@ -187,7 +187,7 @@
             "required": false,
             "schema": {
               "type": "number",
-              "exclusiveMinimum": 0.0,
+              "exclusiveMinimum": 0,
               "description": "CA connection timeout in seconds",
               "default": 5.0,
               "title": "Connection Timeout"
@@ -693,6 +693,7 @@
             "title": "Args"
           },
           "kwargs": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Kwargs"
           },
@@ -1054,6 +1055,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",
