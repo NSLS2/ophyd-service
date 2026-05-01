@@ -383,6 +383,101 @@ class DeviceWebSocketManager:
             except Exception as e:  # noqa: BLE001
                 logger.error("send_current_value_error", error=str(e))
 
+            await self._send_meta_to_client(client_id, device_name, component, value)
+
+    async def _send_meta_to_client(
+        self, client_id: str, device_name: str, component: str, value
+    ) -> None:
+        """Send a finch-compatible ``sub_type: meta`` envelope on the device socket.
+
+        Per ``finch/src/api/ophyd/ophydDeviceSocketTypes.ts:22-38`` finch's
+        device hook keys on ``sub_type === 'meta'`` and reads ``message.device``
+        plus units/precision/limits/enum_strs to populate device-level
+        metadata. Without this message the UI's min/max/units/etc. silently
+        stay empty.
+
+        Routes through ``LockedWS`` so size-cap-violation produces a
+        structured error envelope (same discipline as the value path).
+        """
+        async with self._lock:
+            websocket = self._connections.get(client_id)
+        if not websocket:
+            return
+
+        meta_msg: dict = {
+            "sub_type": "meta",
+            "device": device_name,
+            "signal": component,
+            "connected": value.connected,
+            "read_access": value.read_access,
+            "write_access": value.write_access,
+            "timestamp": value.timestamp.timestamp(),
+            "status": value.status,
+            "severity": value.severity,
+            "precision": value.precision,
+            "units": value.units or "",
+            "lower_ctrl_limit": value.lower_ctrl_limit,
+            "upper_ctrl_limit": value.upper_ctrl_limit,
+            "enum_strs": getattr(value, "enum_strs", None),
+        }
+        try:
+            await websocket.send_json(meta_msg)
+        except TimeoutError:
+            logger.warning(
+                "device_meta_send_timeout",
+                client_id=client_id,
+                device=device_name,
+                signal=component,
+                timeout=self.settings.ws_send_timeout,
+            )
+        except WebSocketResponseTooLarge as e:
+            logger.warning(
+                "device_meta_too_large",
+                client_id=client_id,
+                device=device_name,
+                signal=component,
+                error=str(e),
+            )
+            try:
+                await send_error(
+                    websocket,
+                    "meta payload exceeds size limit; metadata dropped",
+                    device=device_name,
+                    signal=component,
+                    sub_type="meta",
+                )
+            except Exception as inner_err:  # noqa: BLE001
+                logger.debug(
+                    "device_meta_error_envelope_failed",
+                    client_id=client_id,
+                    device=device_name,
+                    error=str(inner_err),
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "device_meta_send_error",
+                client_id=client_id,
+                device=device_name,
+                signal=component,
+                error=str(e),
+                exc_info=True,
+            )
+            try:
+                await send_error(
+                    websocket,
+                    f"meta send failed: {e}",
+                    device=device_name,
+                    signal=component,
+                    sub_type="meta",
+                )
+            except Exception as inner_err:  # noqa: BLE001
+                logger.debug(
+                    "device_meta_error_envelope_failed",
+                    client_id=client_id,
+                    device=device_name,
+                    error=str(inner_err),
+                )
+
     async def handle_client(self, websocket: WebSocket):
         client_id, ws = await self.connect(websocket)
 

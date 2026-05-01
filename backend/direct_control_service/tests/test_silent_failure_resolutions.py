@@ -441,6 +441,61 @@ def test_finch_contract_meta_message_emitted_on_subscribe(client):
         pytest.fail("never received sub_type:meta envelope on subscribe")
 
 
+def test_finch_contract_device_socket_emits_meta_message(client):
+    """Device-socket subscribe must emit a ``sub_type: meta`` message per device PV.
+
+    finch's ``useOphydDeviceSocket.ts:146-159`` keys on
+    ``sub_type === 'meta'`` to populate device-level metadata
+    (units/limits/precision). Pre-fix the device-socket emitted only
+    ``DeviceUpdate`` value events, never meta — so the UI's metadata
+    silently stayed empty.
+
+    Stubs ``_fetch_device_info`` so the test doesn't need a live
+    configuration_service; the WS manager then drives real EPICS
+    subscriptions against the test IOC.
+    """
+    import time
+
+    from direct_control.models import DeviceInfo
+
+    app = client.app
+    device_ws_manager = app.state.device_ws_manager
+
+    async def _stub_fetch(device_name: str):
+        # Map a single component to a real test-IOC PV so the subsequent
+        # CA monitor + initial-value path produces a real value (and meta).
+        return DeviceInfo(
+            name=device_name,
+            device_type="motor",
+            pvs={"readback": "IOC:counter"},
+        )
+
+    device_ws_manager._fetch_device_info = _stub_fetch  # type: ignore[method-assign]
+
+    with client.websocket_connect("/api/v1/device-socket") as ws:
+        ws.send_json({"action": "subscribe", "device": "fake_motor"})
+
+        deadline = time.monotonic() + 3.0
+        saw_meta = False
+        while time.monotonic() < deadline:
+            msg = ws.receive_json()
+            if msg.get("sub_type") == "meta" and msg.get("device") == "fake_motor":
+                # Must include the metadata fields finch reads.
+                assert "lower_ctrl_limit" in msg
+                assert "upper_ctrl_limit" in msg
+                assert "units" in msg
+                assert "precision" in msg
+                # Discriminator on the device socket is the `device` field
+                # (per ophydDeviceSocketTypes.ts), not `pv`.
+                assert "device" in msg
+                # Timestamp must be epoch seconds, same contract as PV socket.
+                assert isinstance(msg["timestamp"], (int, float))
+                saw_meta = True
+                break
+
+        assert saw_meta, "device-socket never emitted sub_type:meta envelope"
+
+
 def test_finch_contract_meta_oversize_emits_error_envelope(client):
     """When the meta message exceeds the size cap, send a structured error envelope.
 
