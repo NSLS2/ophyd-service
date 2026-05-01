@@ -156,7 +156,15 @@ class DeviceLockManager:
                     continue
 
                 spec = registry.get_instantiation_spec(name)
-                if spec is not None and not spec.active:
+                if spec is None:
+                    conflicts.append(
+                        LockConflict(
+                            device_name=name,
+                            reason="spec_missing",
+                        )
+                    )
+                    continue
+                if not spec.active:
                     conflicts.append(
                         LockConflict(
                             device_name=name,
@@ -179,7 +187,9 @@ class DeviceLockManager:
             if conflicts:
                 # Determine error code from conflict types
                 reasons = {c.reason for c in conflicts}
-                if "not_found" in reasons:
+                if "spec_missing" in reasons:
+                    error_code = 500
+                elif "not_found" in reasons:
                     error_code = 404
                 elif "disabled" in reasons:
                     error_code = 422

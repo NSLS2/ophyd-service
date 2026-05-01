@@ -317,6 +317,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Expose DI containers on app.state so tests can introspect / mutate
+    # the in-memory registry. Production code goes through Depends().
+    app.state.state_container = state_container
+    app.state.lock_manager_container = lock_manager_container
+
     # Dependency injection function
     def get_state() -> ConfigurationState:
         """Get configuration state for dependency injection."""
@@ -603,6 +608,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 message = f"Device '{first.device_name}' is locked by plan '{first.locked_by_plan}'"
             elif first.reason == "not_found":
                 message = f"Device not found: {first.device_name}"
+            elif first.reason == "spec_missing":
+                message = (
+                    f"Registry inconsistency: device '{first.device_name}' "
+                    f"has no instantiation spec"
+                )
             else:
                 message = f"Device '{first.device_name}' is disabled"
 
@@ -767,7 +777,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             )
 
         spec = state.registry.get_instantiation_spec(device_name)
-        enabled = spec.active if spec is not None else True
+        if spec is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Registry inconsistency: device '{device_name}' has no instantiation spec",
+            )
+        enabled = spec.active
         lock_state = lock_manager.get_device_lock(device_name)
         locked = lock_state is not None
 
@@ -1657,7 +1672,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
         # Device-bound PV — check device lock and enabled state
         spec = state.registry.get_instantiation_spec(device_name)
-        enabled = spec.active if spec is not None else True
+        if spec is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    f"Registry inconsistency: PV '{pv_name}' references device "
+                    f"'{device_name}' which has no instantiation spec"
+                ),
+            )
+        enabled = spec.active
         lock_state = lock_manager.get_device_lock(device_name)
         locked = lock_state is not None
 
