@@ -859,6 +859,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Get Device Pvs Api V1 Devices  Device Name  Pvs Get"
                 }
               }
@@ -1083,6 +1084,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response List Pvs Api V1 Pvs Get"
                 }
               }
@@ -1291,6 +1293,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Get Pvs Detailed Api V1 Pvs Detailed Get"
                 }
@@ -1328,6 +1331,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Lookup Device Pvs By Pv Api V1 Pvs Lookup Get"
                 }
               }
@@ -1526,218 +1530,6 @@
                     "$ref": "#/components/schemas/NestedDeviceComponent"
                   },
                   "title": "Response List Device Components Api V1 Devices  Device Name  Components Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/metadata": {
-      "get": {
-        "tags": [
-          "Metadata"
-        ],
-        "summary": "List Metadata Entries",
-        "description": "List all stored metadata key-value entries",
-        "operationId": "list_metadata_api_v1_metadata_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/MetadataEntry"
-                  },
-                  "type": "array",
-                  "title": "Response List Metadata Api V1 Metadata Get"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/metadata/{key}": {
-      "get": {
-        "tags": [
-          "Metadata"
-        ],
-        "summary": "Get Metadata Entry",
-        "description": "Get a single metadata entry by key",
-        "operationId": "get_metadata_api_v1_metadata__key__get",
-        "parameters": [
-          {
-            "name": "key",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Key"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MetadataEntry"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Metadata"
-        ],
-        "summary": "Create Metadata Entry",
-        "description": "Create a new metadata key-value entry (409 if key exists)",
-        "operationId": "create_metadata_api_v1_metadata__key__post",
-        "parameters": [
-          {
-            "name": "key",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MetadataWriteRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MetadataCRUDResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Metadata"
-        ],
-        "summary": "Create or Update Metadata Entry",
-        "description": "Upsert a metadata key-value entry",
-        "operationId": "upsert_metadata_api_v1_metadata__key__put",
-        "parameters": [
-          {
-            "name": "key",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MetadataWriteRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MetadataCRUDResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Metadata"
-        ],
-        "summary": "Delete Metadata Entry",
-        "description": "Delete a metadata key-value entry",
-        "operationId": "delete_metadata_api_v1_metadata__key__delete",
-        "parameters": [
-          {
-            "name": "key",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Key"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MetadataCRUDResponse"
                 }
               }
             }
@@ -2012,6 +1804,7 @@
             "description": "Positional arguments for device constructor (e.g., ['BL01:DET1:'])"
           },
           "kwargs": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Kwargs",
             "description": "Keyword arguments for device constructor (e.g., {'name': 'det1'})"
@@ -2084,6 +1877,7 @@
           "kwargs": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -2394,6 +2188,7 @@
           "hints": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -2731,6 +2526,7 @@
           "hints": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -3021,99 +2817,6 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
-      },
-      "MetadataCRUDResponse": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "description": "Whether the operation succeeded"
-          },
-          "key": {
-            "type": "string",
-            "title": "Key",
-            "description": "Metadata key"
-          },
-          "operation": {
-            "type": "string",
-            "title": "Operation",
-            "description": "Operation performed (create/update/delete)"
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "description": "Human-readable status message"
-          }
-        },
-        "type": "object",
-        "required": [
-          "success",
-          "key",
-          "operation",
-          "message"
-        ],
-        "title": "MetadataCRUDResponse",
-        "description": "Response model for metadata CRUD operations."
-      },
-      "MetadataEntry": {
-        "properties": {
-          "key": {
-            "type": "string",
-            "title": "Key",
-            "description": "Unique string key"
-          },
-          "value": {
-            "type": "object",
-            "title": "Value",
-            "description": "Arbitrary JSON dictionary"
-          },
-          "created_at": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created At",
-            "description": "Unix timestamp of creation"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At",
-            "description": "Unix timestamp of last update"
-          }
-        },
-        "type": "object",
-        "required": [
-          "key",
-          "value"
-        ],
-        "title": "MetadataEntry",
-        "description": "A stored metadata key-value entry."
-      },
-      "MetadataWriteRequest": {
-        "properties": {
-          "value": {
-            "type": "object",
-            "title": "Value",
-            "description": "Arbitrary JSON dictionary to store"
-          }
-        },
-        "type": "object",
-        "required": [
-          "value"
-        ],
-        "title": "MetadataWriteRequest",
-        "description": "Request model for creating or updating a metadata entry."
       },
       "NestedDeviceComponent": {
         "properties": {
@@ -3682,6 +3385,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",
@@ -3718,10 +3428,6 @@
     {
       "name": "Standalone PVs",
       "description": "Register and manage standalone PVs not tied to ophyd devices"
-    },
-    {
-      "name": "Metadata",
-      "description": "Generic key-value metadata store for arbitrary JSON data"
     },
     {
       "name": "PV Registry",

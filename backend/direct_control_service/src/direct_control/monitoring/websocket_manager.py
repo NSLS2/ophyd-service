@@ -168,6 +168,31 @@ class WebSocketManager:
                 continue
             await self._send_to_client(client_id, PVUpdate.from_value(value))
 
+            # Send a finch-compatible meta message so the UI receives
+            # units, precision, and control limits.
+            meta_msg: dict = {
+                "sub_type": "meta",
+                "pv": value.pv_name,
+                "connected": value.connected,
+                "read_access": value.read_access,
+                "write_access": value.write_access,
+                "timestamp": value.timestamp.isoformat(),
+                "status": value.status,
+                "severity": value.severity,
+                "precision": value.precision,
+                "units": value.units or "",
+                "lower_ctrl_limit": value.lower_ctrl_limit,
+                "upper_ctrl_limit": value.upper_ctrl_limit,
+                "enum_strs": getattr(value, "enum_strs", None),
+            }
+            try:
+                async with self._lock:
+                    ws = self._connections.get(client_id)
+                if ws:
+                    await ws.send_json(meta_msg)
+            except Exception:  # noqa: BLE001
+                pass
+
         logger.info("client_subscribed", client_id=client_id, pv_count=len(pv_names))
 
     async def unsubscribe_pvs(self, client_id: str, pv_names: list[str]):
@@ -220,7 +245,7 @@ class WebSocketManager:
             return
 
         try:
-            await websocket.send_json(update.model_dump(mode="json"))
+            await websocket.send_json(update.model_dump(mode="json", by_alias=True, exclude_none=True))
         except TimeoutError:
             logger.warning(
                 "websocket_send_timeout",
