@@ -593,6 +593,9 @@ async def execute_device_method(
     except CoordinationCheckError as e:
         logger.error("coordination_check_failed", device_name=request.device_name, error=str(e))
         raise HTTPException(status_code=503, detail=f"Coordination check failed: {e}")
+    except NotImplementedError as e:
+        logger.warning("device_method_not_implemented", device_name=request.device_name, error=str(e))
+        raise HTTPException(status_code=501, detail=str(e))
     except Exception as e:
         logger.error(
             "device_command_error",
@@ -626,6 +629,9 @@ async def stop_device(
     except CoordinationCheckError as e:
         logger.error("coordination_check_failed", device_name=device_name, error=str(e))
         raise HTTPException(status_code=503, detail=f"Coordination check failed: {e}")
+    except NotImplementedError as e:
+        logger.warning("device_stop_not_implemented", device_name=device_name, error=str(e))
+        raise HTTPException(status_code=501, detail=str(e))
     except Exception as e:
         logger.error("device_stop_error", device_name=device_name, error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -787,6 +793,9 @@ async def access_nested_device(
     except CoordinationCheckError as e:
         logger.error("coordination_check_failed", device_path=device_path, error=str(e))
         raise HTTPException(status_code=503, detail=f"Coordination check failed: {e}")
+    except NotImplementedError as e:
+        logger.warning("nested_device_not_implemented", device_path=device_path, error=str(e))
+        raise HTTPException(status_code=501, detail=str(e))
     except Exception as e:
         logger.error("nested_device_error", device_path=device_path, error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -816,6 +825,9 @@ async def get_nested_device_value(
             "value": value,
             "timestamp": datetime.now().isoformat(),
         }
+    except NotImplementedError as e:
+        logger.warning("nested_device_read_not_implemented", device_path=device_path, error=str(e))
+        raise HTTPException(status_code=501, detail=str(e))
     except Exception as e:
         logger.error("nested_device_read_error", device_path=device_path, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
