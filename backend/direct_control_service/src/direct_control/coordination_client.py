@@ -183,13 +183,16 @@ class CoordinationClient:
             raise CoordinationCheckError(f"Unexpected coordination check error: {e}") from e
 
     async def is_service_available(self) -> ServiceAvailability:
-        """Check whether configuration_service is reachable.
+        """Probe configuration_service /health; return structured detail.
 
-        Pre-S6 this caught every exception and returned a bare ``False``,
-        which hid which failure mode actually fired (timeout vs. connect
-        refused vs. non-2xx). Now: log + return structured detail so
-        /health can surface the real reason.
+        Distinguishes timeout / connect-refused / non-2xx so /health can
+        surface why upstream is unhealthy rather than reporting bare False.
+        Honors ``coordination_check_enabled`` (testing mode skips the
+        round-trip).
         """
+        if not self.settings.coordination_check_enabled:
+            return ServiceAvailability(available=True)
+
         try:
             client = await self._get_client()
             response = await client.get("/health", timeout=2.0)

@@ -4,7 +4,7 @@ Pydantic models for Direct Device Control + Monitoring Service.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
@@ -499,7 +499,7 @@ class HealthResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    status: str = "healthy"
+    status: Literal["healthy", "unhealthy"] = "healthy"
     timestamp: datetime
     coordination_service_available: bool
     coordination_service_detail: Optional[str] = None

@@ -373,13 +373,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/health", tags=["Health"])
     async def health_check(state: StateDep):
-        """Health check: verify state loaded AND registry DB is queryable.
+        """Health check: state loaded AND registry DB queryable.
 
-        Pre-S5 this returned "healthy" the moment state was injected,
-        without ever touching the DB — a mount-gone or permissions-revoked
-        store would still pass health while every CRUD call 500'd. Now
-        runs ``SELECT 1`` against the registry store (when DB mode is on)
-        and returns 503 with the failure detail when it can't.
+        Runs ``SELECT 1`` against the registry store (when DB mode is on)
+        and returns 503 with the failure detail when it can't. Without
+        the DB ping, a mount-gone or permissions-revoked store would
+        still pass health while every CRUD call 500'd.
         """
         store = registry_store_container.get("store")
         if store is not None:

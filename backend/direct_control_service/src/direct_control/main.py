@@ -361,10 +361,9 @@ async def health_check(
 ):
     """Combined health check: coordination availability and monitoring stats.
 
-    Returns 503 when configuration_service is unreachable — pre-S5 this
-    always returned 200, so LB readiness probes never noticed an upstream
-    failure. The body still carries the structured detail in
-    ``coordination_service_detail`` so operators can see the actual reason.
+    Returns 503 when configuration_service is unreachable so LB readiness
+    probes can route away. ``coordination_service_detail`` carries the
+    structured reason (timeout / connect-refused / non-2xx).
     """
     coord = await coordination_client.is_service_available()
     stats = ws_manager.get_stats()

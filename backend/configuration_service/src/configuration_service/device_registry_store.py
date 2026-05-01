@@ -538,8 +538,13 @@ class DeviceRegistryStore:
     def ping(self) -> None:
         """Verify the DB is queryable. Raises ``sqlite3.Error`` on failure.
 
-        Used by /health to surface DB-unreachable conditions (e.g. mount
-        gone, permissions revoked) instead of reporting "healthy" while the
-        store is dead.
+        Opens a short-timeout (0.5s) connection rather than reusing the
+        thread-local pool so /health can't pile up behind a busy-locked
+        writer; the 30s busy_timeout that's appropriate for CRUD would
+        let probes block long enough for K8s to start killing the pod.
         """
-        self._get_connection().execute("SELECT 1").fetchone()
+        conn = sqlite3.connect(str(self.db_path), timeout=0.5)
+        try:
+            conn.execute("SELECT 1").fetchone()
+        finally:
+            conn.close()
