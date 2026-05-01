@@ -787,10 +787,10 @@ async def test_s7_subscribe_device_propagates_fetch_reason():
             return None, _reason
 
         mgr._fetch_device_info = _fake_fetch  # type: ignore[method-assign]
-        ok, reason, failed_pvs = await mgr.subscribe_device("c", "dev")
-        assert ok is False
-        assert reason == fake_reason
-        assert failed_pvs == []
+        outcome = await mgr.subscribe_device("c", "dev")
+        assert outcome.ok is False
+        assert outcome.reason == fake_reason
+        assert outcome.failed_pvs == []
 
 
 # ─── S8: failed PV subscribes are cleaned up + surfaced via error envelope ───
@@ -849,11 +849,12 @@ async def test_s8_failed_pv_subscribes_purged_from_bookkeeping():
 
     mgr._send_current_values = _noop_send_current_values  # type: ignore[method-assign]
 
-    ok, reason, failed_pvs = await mgr.subscribe_device("c", "dev")
-    assert ok is True
-    assert reason is None
-    assert len(failed_pvs) == 1
-    assert failed_pvs[0][1] == "IOC:bad"
+    outcome = await mgr.subscribe_device("c", "dev")
+    assert outcome.ok is True
+    assert outcome.reason is None
+    assert len(outcome.failed_pvs) == 1
+    assert outcome.failed_pvs[0].pv == "IOC:bad"
+    assert outcome.failed_pvs[0].signal == "bad_signal"
 
     # Bookkeeping must reflect the actual subscribed-vs-failed split.
     assert "IOC:good" in mgr._pv_callbacks
@@ -908,12 +909,12 @@ async def test_s8_require_connection_rolls_back_on_partial_failure():
 
     mgr._fetch_device_info = _fetch  # type: ignore[method-assign]
 
-    ok, reason, failed_pvs = await mgr.subscribe_device(
+    outcome = await mgr.subscribe_device(
         "c", "dev", require_connection=True
     )
-    assert ok is False
-    assert reason == "not_connected"
-    assert failed_pvs == []  # rolled-back path returns empty per the contract
+    assert outcome.ok is False
+    assert outcome.reason == "not_connected"
+    assert outcome.failed_pvs == []  # rolled-back path returns empty per the contract
 
     # Rollback teardown: the GOOD PV that subscribed must be unsubscribed
     # so we don't leak a CA monitor.
