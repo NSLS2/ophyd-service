@@ -63,6 +63,7 @@ class SubscribeOutcome(BaseModel):
     failed_pvs: List[FailedPV] = []
 from ._envelopes import (
     LockedWS,
+    fanout_error,
     heartbeat_loop,
     log_threadsafe_future_exceptions,
     send_error,
@@ -465,28 +466,18 @@ class DeviceWebSocketManager:
     ) -> None:
         async with self._lock:
             client_ids = self._device_clients.get(device_name, set()).copy()
-        for client_id in client_ids:
-            async with self._lock:
-                websocket = self._connections.get(client_id)
-            if websocket is None:
-                continue
-            try:
-                await send_error(
-                    websocket,
-                    f"Device callback failed: {exc}",
-                    device=device_name,
-                    signal=component,
-                    pv=pv_name,
-                )
-            except Exception as send_exc:  # noqa: BLE001
-                logger.warning(
-                    "device_callback_error_envelope_send_failed",
-                    device=device_name,
-                    component=component,
-                    pv=pv_name,
-                    client_id=client_id,
-                    error=str(send_exc),
-                )
+            ws_by_client = {cid: self._connections.get(cid) for cid in client_ids}
+        await fanout_error(
+            ws_by_client,
+            f"Device callback failed: {exc}",
+            log_event="device_callback_error_envelope_send_failed",
+            error_envelope_fields={
+                "device": device_name,
+                "signal": component,
+                "pv": pv_name,
+            },
+            log_fields={"device": device_name, "component": component, "pv": pv_name},
+        )
 
     async def _broadcast_device_update(self, device_name: str, update: DeviceUpdate):
         async with self._lock:

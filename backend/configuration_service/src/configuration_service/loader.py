@@ -122,15 +122,15 @@ def _resolve_happi_templates(value: Any, prefix: Optional[str], name: Optional[s
         if "{{prefix}}" in value:
             if prefix is None:
                 raise ValueError(
-                    "unresolved {{prefix}} template in " + repr(value)
-                    + ": entry has no 'prefix' field"
+                    "unresolved {{prefix}} template in {!r}: entry has no 'prefix' field".format(
+                        value
+                    )
                 )
             value = value.replace("{{prefix}}", prefix)
         if "{{name}}" in value:
             if name is None:
                 raise ValueError(
-                    "unresolved {{name}} template in " + repr(value)
-                    + ": no name available"
+                    "unresolved {{name}} template in {!r}: no name available".format(value)
                 )
             value = value.replace("{{name}}", name)
         return value

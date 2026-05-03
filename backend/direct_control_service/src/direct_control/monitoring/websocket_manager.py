@@ -25,6 +25,7 @@ from ..models import (
 from ..registry_client import RegistryClient, RegistryValidationError
 from ._envelopes import (
     LockedWS,
+    fanout_error,
     heartbeat_loop,
     log_threadsafe_future_exceptions,
     send_error,
@@ -253,24 +254,14 @@ class WebSocketManager:
     async def _broadcast_pv_callback_error(self, pv_name: str, exc: BaseException) -> None:
         async with self._lock:
             client_ids = self._pv_clients.get(pv_name, set()).copy()
-        for client_id in client_ids:
-            async with self._lock:
-                websocket = self._connections.get(client_id)
-            if websocket is None:
-                continue
-            try:
-                await send_error(
-                    websocket,
-                    f"PV callback failed: {exc}",
-                    pv=pv_name,
-                )
-            except Exception as send_exc:  # noqa: BLE001
-                logger.warning(
-                    "pv_callback_error_envelope_send_failed",
-                    pv_name=pv_name,
-                    client_id=client_id,
-                    error=str(send_exc),
-                )
+            ws_by_client = {cid: self._connections.get(cid) for cid in client_ids}
+        await fanout_error(
+            ws_by_client,
+            f"PV callback failed: {exc}",
+            log_event="pv_callback_error_envelope_send_failed",
+            error_envelope_fields={"pv": pv_name},
+            log_fields={"pv_name": pv_name},
+        )
 
     async def _send_to_client(
         self, client_id: str, update: PVUpdate, websocket: Optional[LockedWS] = None

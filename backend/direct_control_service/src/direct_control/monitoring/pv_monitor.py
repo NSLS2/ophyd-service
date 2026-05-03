@@ -10,7 +10,7 @@ Implements: PVMonitor protocol
 import os
 from collections import defaultdict, deque
 from datetime import datetime
-from typing import Callable, Deque, Dict, List, NamedTuple, Optional
+from typing import Callable, Deque, Dict, List, Literal, NamedTuple, Optional
 
 import numpy as np
 import structlog
@@ -144,7 +144,7 @@ class PVMonitorManager:
         sub: _Subscriber,
         update: "PVUpdate",
         *,
-        source: str,
+        source: Literal["value", "meta"],
     ) -> None:
         """Invoke a subscriber's callback and route any exception to its on_error.
 

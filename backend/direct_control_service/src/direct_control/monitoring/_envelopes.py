@@ -163,6 +163,38 @@ async def send_error(ws: WebSocket, message: str, **fields: Any) -> None:
     await send_event(ws, "error", error=message, **fields)
 
 
+async def fanout_error(
+    ws_by_client: dict[str, Optional["LockedWS"]],
+    message: str,
+    *,
+    log_event: str,
+    error_envelope_fields: dict,
+    log_fields: dict,
+) -> None:
+    """Fan out an error envelope to a pre-snapshotted set of clients.
+
+    Caller takes the manager lock once, snapshots ``{client_id: ws}``,
+    then hands the dict here so the fan-out does not reacquire the
+    lock per client. Clients whose websocket is ``None`` (disconnected
+    between snapshot and send-attempt) are skipped silently. Send
+    failures are logged at warning under ``log_event`` with the
+    caller-supplied fields and never re-raised — one wedged client
+    must not poison fan-out for the others.
+    """
+    for client_id, websocket in ws_by_client.items():
+        if websocket is None:
+            continue
+        try:
+            await send_error(websocket, message, **error_envelope_fields)
+        except Exception as send_exc:  # noqa: BLE001
+            logger.warning(
+                log_event,
+                client_id=client_id,
+                error=str(send_exc),
+                **log_fields,
+            )
+
+
 async def send_payload_or_size_error(
     ws: "LockedWS",
     payload: Any,
