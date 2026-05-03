@@ -71,8 +71,11 @@ structlog.configure(
 logger = structlog.get_logger()
 
 
+_OPENAPI_EXPORT_PATH_ENV = "OPHYD_SERVICE_OPENAPI_EXPORT_PATH"
+
+
 def _maybe_export_openapi(app: FastAPI) -> None:
-    """If OPHYD_SERVICE_OPENAPI_EXPORT_PATH is set, dump the schema there.
+    """If ``_OPENAPI_EXPORT_PATH_ENV`` is set, dump the schema there.
 
     Used by docker-compose to publish the schema onto the shared-schema volume
     for the frontend's codegen watcher. A no-op in local dev unless the env var is set.
@@ -81,7 +84,7 @@ def _maybe_export_openapi(app: FastAPI) -> None:
     write fails (volume unwritable, parent missing, etc.) we fail startup rather
     than let the frontend codegen silently consume a stale schema.
     """
-    path = os.environ.get("OPHYD_SERVICE_OPENAPI_EXPORT_PATH")
+    path = os.environ.get(_OPENAPI_EXPORT_PATH_ENV)
     if not path:
         return
     try:
@@ -95,7 +98,7 @@ def _maybe_export_openapi(app: FastAPI) -> None:
         )
         raise RuntimeError(
             f"OpenAPI schema export to {path} failed: {exc}. "
-            "Unset OPHYD_SERVICE_OPENAPI_EXPORT_PATH to skip export."
+            f"Unset {_OPENAPI_EXPORT_PATH_ENV} to skip export."
         ) from exc
 
 

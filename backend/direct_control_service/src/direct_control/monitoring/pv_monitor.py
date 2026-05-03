@@ -360,15 +360,9 @@ class PVMonitorManager:
                 logger.warning("pv_destroy_failed", pv_name=pv_name, error=str(e))
 
     def get_value(self, pv_name: str) -> Optional[PVValue]:
-        """Return the latest cached value, or read once if subscribed but uncached.
-
-        Returns ``None`` only when ``pv_name`` is not in the subscription
-        cache at all — i.e. genuinely "we don't track this PV." Raises
-        ``PVReadError`` if the PV is subscribed (in ``_signals``) but
-        the on-demand read fails: that's a transient EPICS error, not a
-        not-found, and callers should map it to a 5xx (REST) or a
-        structured WS error rather than 404.
-        """
+        """See ``PVMonitor.get_value``: ``None`` if not subscribed, else
+        the cached value or a fresh read; raises ``PVReadError`` if the
+        on-demand read fails."""
         with self._lock:
             if pv_name in self._latest_values:
                 return self._latest_values[pv_name]
@@ -378,7 +372,7 @@ class PVMonitorManager:
                 try:
                     pv_value = self._signal_to_pv_value(pv_name, signal)
                 except Exception as e:
-                    logger.warning("get_value_error", pv_name=pv_name, error=str(e))
+                    logger.warning("pv_read_failed", pv_name=pv_name, error=str(e))
                     raise PVReadError(f"read failed for {pv_name}: {e}") from e
                 self._latest_values[pv_name] = pv_value
                 return pv_value
