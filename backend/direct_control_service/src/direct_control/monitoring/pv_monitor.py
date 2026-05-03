@@ -10,7 +10,7 @@ Implements: PVMonitor protocol
 import os
 from collections import defaultdict, deque
 from datetime import datetime
-from typing import Callable, Deque, Dict, List, Optional
+from typing import Callable, Deque, Dict, List, NamedTuple, Optional
 
 import numpy as np
 import structlog
@@ -35,6 +35,19 @@ from ophyd import EpicsSignal, EpicsSignalRO
 logger = structlog.get_logger(__name__)
 
 
+class _Subscriber(NamedTuple):
+    """A registered (callback, on_error) pair for a subscribed PV.
+
+    The optional ``on_error`` is invoked synchronously on the CA thread
+    when ``callback`` raises during a value or meta update — letting the
+    subscriber translate the failure into a user-visible signal (e.g. a
+    ``pv_error`` WebSocket envelope) instead of having it disappear into
+    a log line.
+    """
+    callback: Callable[["PVUpdate"], None]
+    on_error: Optional[Callable[[BaseException], None]]
+
+
 class PVMonitorManager:
     """
     Manages EPICS PV monitoring subscriptions using ophyd.
@@ -51,7 +64,7 @@ class PVMonitorManager:
         self._buffers: Dict[str, Deque[PVValue]] = defaultdict(
             lambda: deque(maxlen=settings.pv_buffer_size)
         )
-        self._callbacks: Dict[str, List[Callable]] = defaultdict(list)
+        self._callbacks: Dict[str, List[_Subscriber]] = defaultdict(list)
         self._connection_status: Dict[str, bool] = {}
         self._latest_values: Dict[str, PVValue] = {}
         self._lock = threading.RLock()
@@ -66,6 +79,7 @@ class PVMonitorManager:
         pv_name: str,
         callback: Optional[Callable[[PVUpdate], None]] = None,
         read_only: bool = False,
+        on_error: Optional[Callable[[BaseException], None]] = None,
     ) -> None:
         with self._lock:
             if pv_name not in self._signals:
@@ -122,7 +136,47 @@ class PVMonitorManager:
                     raise PVNotFoundError(f"PV {pv_name} subscription failed: {e}")
 
             if callback:
-                self._callbacks[pv_name].append(callback)
+                self._callbacks[pv_name].append(_Subscriber(callback, on_error))
+
+    def _dispatch_subscriber(
+        self,
+        pv_name: str,
+        sub: _Subscriber,
+        update: "PVUpdate",
+        *,
+        source: str,
+    ) -> None:
+        """Invoke a subscriber's callback and route any exception to its on_error.
+
+        Runs on the CA listener thread. The outer ``try`` keeps a single
+        broken subscriber from poisoning fan-out for the others on this
+        PV. ``exc_info=True`` preserves the traceback in the log so a
+        future failure isn't a one-line mystery, and ``on_error`` (when
+        provided) lets the subscriber translate the failure into a
+        user-visible signal — e.g. a ``pv_error`` WS envelope.
+        """
+        try:
+            sub.callback(update)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "pv_callback_failed",
+                pv_name=pv_name,
+                source=source,
+                error=str(exc),
+                exc_info=True,
+            )
+            if sub.on_error is None:
+                return
+            try:
+                sub.on_error(exc)
+            except Exception as inner:  # noqa: BLE001
+                logger.error(
+                    "pv_callback_on_error_raised",
+                    pv_name=pv_name,
+                    source=source,
+                    error=str(inner),
+                    exc_info=True,
+                )
 
     def _handle_value_update(self, pv_name: str, value, timestamp):
         with self._lock:
@@ -158,11 +212,8 @@ class PVMonitorManager:
             )
             callbacks = list(self._callbacks.get(pv_name, []))
 
-        for cb in callbacks:
-            try:
-                cb(update)
-            except Exception as e:
-                logger.error("callback_error", pv_name=pv_name, error=str(e))
+        for sub in callbacks:
+            self._dispatch_subscriber(pv_name, sub, update, source="value")
 
     def _handle_meta_update(self, pv_name: str, **kwargs):
         if "connected" not in kwargs:
@@ -198,11 +249,8 @@ class PVMonitorManager:
             severity=0,
             connected=connected,
         )
-        for cb in callbacks:
-            try:
-                cb(update)
-            except Exception as e:
-                logger.error("meta_callback_error", pv_name=pv_name, error=str(e))
+        for sub in callbacks:
+            self._dispatch_subscriber(pv_name, sub, update, source="meta")
 
     def _convert_value(self, value):
         if isinstance(value, np.ndarray):
@@ -287,10 +335,11 @@ class PVMonitorManager:
         with self._lock:
             if callback:
                 if pv_name in self._callbacks:
-                    try:
-                        self._callbacks[pv_name].remove(callback)
-                    except ValueError:
-                        pass
+                    # Identity match on the value callback — the on_error
+                    # paired with it (if any) goes away with the entry.
+                    self._callbacks[pv_name] = [
+                        sub for sub in self._callbacks[pv_name] if sub.callback is not callback
+                    ]
             else:
                 self._callbacks.pop(pv_name, None)
 

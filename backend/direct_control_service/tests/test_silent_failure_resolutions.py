@@ -814,7 +814,7 @@ async def test_s8_failed_pv_subscribes_purged_from_bookkeeping():
         def __init__(self):
             self.subscribed: list[str] = []
 
-        def subscribe(self, pv_name: str, callback):
+        def subscribe(self, pv_name: str, callback, *, on_error=None):
             # Simulate: "good" PVs subscribe fine; "bad" PVs raise.
             if "bad" in pv_name:
                 raise RuntimeError(f"CA timeout for {pv_name}")
@@ -880,7 +880,7 @@ async def test_s8_require_connection_rolls_back_on_partial_failure():
             self.subscribed: list[str] = []
             self.unsubscribed: list[str] = []
 
-        def subscribe(self, pv_name: str, callback):
+        def subscribe(self, pv_name: str, callback, *, on_error=None):
             if "bad" in pv_name:
                 raise RuntimeError("CA timeout")
             self.subscribed.append(pv_name)
@@ -1110,3 +1110,197 @@ async def test_m7_send_current_values_propagates_pvvalue_access_bits():
         "device-socket current-values must propagate write_access=False — "
         "pre-fix override is back (Site E)"
     )
+
+
+# ─── M9: PV callback exceptions surface to the WS subscriber ─────────────────
+#
+# Pre-fix: a callback raising in ``_handle_value_update`` /
+# ``_handle_meta_update`` was logged at error and dropped on the floor.
+# WS subscribers saw nothing change and would assume the broken PV was
+# just quiet. Now ``subscribe(on_error=...)`` lets the subscriber
+# translate the failure into a ``pv_error`` envelope.
+
+
+def test_m9_subscribe_on_error_fires_when_value_callback_raises():
+    """``_dispatch_subscriber`` must invoke ``on_error`` after callback raise.
+
+    Calls ``_dispatch_subscriber`` directly (rather than going through
+    the CA listener thread) so the test is fast and deterministic.
+    """
+    from datetime import datetime
+    from direct_control.config import Settings
+    from direct_control.models import PVUpdate
+    from direct_control.monitoring.pv_monitor import PVMonitorManager, _Subscriber
+
+    captured: list[BaseException] = []
+
+    def failing_cb(_update):
+        raise RuntimeError("simulated callback failure")
+
+    def on_error(exc):
+        captured.append(exc)
+
+    mgr = PVMonitorManager(Settings())
+    sub = _Subscriber(callback=failing_cb, on_error=on_error)
+    update = PVUpdate(
+        pv="IOC:x",
+        value=1.0,
+        timestamp=datetime.now(),
+        status=0,
+        severity=0,
+        connected=True,
+    )
+
+    mgr._dispatch_subscriber("IOC:x", sub, update, source="value")
+
+    assert len(captured) == 1
+    assert isinstance(captured[0], RuntimeError)
+    assert "simulated callback failure" in str(captured[0])
+
+
+def test_m9_dispatch_swallows_on_error_failures_so_other_subscribers_run():
+    """An on_error that itself raises must not poison the dispatch loop.
+
+    Pre-M9 the bare ``logger.error`` ate the callback exception; M9
+    surfaces it. The on_error handler (running on the CA thread) must
+    in turn be defensive — if it raises, log and move on, otherwise a
+    bug in one subscriber's error handling would break fan-out for
+    every other subscriber on the same PV.
+    """
+    from datetime import datetime
+    from direct_control.config import Settings
+    from direct_control.models import PVUpdate
+    from direct_control.monitoring.pv_monitor import PVMonitorManager, _Subscriber
+
+    def failing_cb(_update):
+        raise RuntimeError("primary callback failure")
+
+    def failing_on_error(_exc):
+        raise RuntimeError("on_error itself blew up")
+
+    mgr = PVMonitorManager(Settings())
+    sub = _Subscriber(callback=failing_cb, on_error=failing_on_error)
+    update = PVUpdate(
+        pv="IOC:x",
+        value=1.0,
+        timestamp=datetime.now(),
+        status=0,
+        severity=0,
+        connected=True,
+    )
+
+    # Should not raise — both layers are caught and logged.
+    mgr._dispatch_subscriber("IOC:x", sub, update, source="value")
+
+
+def test_m9_unsubscribe_finds_subscriber_by_callback_identity():
+    """``unsubscribe(pv, callback)`` must locate the entry by callback identity.
+
+    Pre-M9 ``_callbacks`` stored bare callables and used ``list.remove``
+    (equality match). M9 stores ``(callback, on_error)`` tuples; the
+    new ``unsubscribe`` path filters by ``sub.callback is not callback``
+    so the on_error doesn't strand the entry.
+    """
+    from direct_control.config import Settings
+    from direct_control.monitoring.pv_monitor import PVMonitorManager, _Subscriber
+
+    mgr = PVMonitorManager(Settings())
+
+    def cb1(_u):
+        pass
+
+    def cb2(_u):
+        pass
+
+    def on_err(_exc):
+        pass
+
+    mgr._callbacks["IOC:x"].append(_Subscriber(cb1, on_err))
+    mgr._callbacks["IOC:x"].append(_Subscriber(cb2, None))
+
+    # Without _signals[pv], unsubscribe early-exits the destroy path —
+    # we only care about _callbacks bookkeeping here.
+    mgr.unsubscribe("IOC:x", cb1)
+
+    remaining = [sub.callback for sub in mgr._callbacks["IOC:x"]]
+    assert remaining == [cb2]
+
+
+@pytest.mark.asyncio
+async def test_m9_pv_socket_error_handler_broadcasts_envelope_to_clients():
+    """``WebSocketManager._broadcast_pv_callback_error`` sends to all subs.
+
+    Builds the manager state directly (bypassing the WS handshake),
+    registers a stub LockedWS for two clients on the same PV, then
+    invokes the broadcast helper and verifies both got an ``error``
+    envelope mentioning the PV.
+    """
+    from direct_control.config import Settings
+    from direct_control.monitoring.websocket_manager import WebSocketManager
+
+    sent: dict[str, list] = {"a": [], "b": []}
+
+    class _StubWS:
+        def __init__(self, client_id: str):
+            self.client_id = client_id
+
+        async def send_json(self, payload):
+            sent[self.client_id].append(payload)
+
+    mgr = WebSocketManager(
+        pv_monitor=object(),  # type: ignore[arg-type]
+        device_controller=object(),  # type: ignore[arg-type]
+        settings=Settings(),
+    )
+    mgr._connections["a"] = _StubWS("a")  # type: ignore[assignment]
+    mgr._connections["b"] = _StubWS("b")  # type: ignore[assignment]
+    mgr._pv_clients["IOC:x"] = {"a", "b"}
+
+    await mgr._broadcast_pv_callback_error("IOC:x", RuntimeError("kaboom"))
+
+    for client_id in ("a", "b"):
+        assert len(sent[client_id]) == 1, (
+            f"client {client_id} should have received exactly one error envelope"
+        )
+        msg = sent[client_id][0]
+        assert msg["type"] == "error"
+        assert msg["pv"] == "IOC:x"
+        assert "kaboom" in msg["error"]
+
+
+@pytest.mark.asyncio
+async def test_m9_device_socket_error_handler_broadcasts_envelope_to_clients():
+    """Parallel of the PV-socket test for ``DeviceWebSocketManager``."""
+    from direct_control.config import Settings
+    from direct_control.monitoring.device_websocket_manager import DeviceWebSocketManager
+
+    sent: dict[str, list] = {"c1": [], "c2": []}
+
+    class _StubWS:
+        def __init__(self, client_id: str):
+            self.client_id = client_id
+
+        async def send_json(self, payload):
+            sent[self.client_id].append(payload)
+
+    mgr = DeviceWebSocketManager(
+        pv_monitor=object(),  # type: ignore[arg-type]
+        device_controller=object(),  # type: ignore[arg-type]
+        settings=Settings(),
+    )
+    mgr._connections["c1"] = _StubWS("c1")  # type: ignore[assignment]
+    mgr._connections["c2"] = _StubWS("c2")  # type: ignore[assignment]
+    mgr._device_clients["dev"] = {"c1", "c2"}
+
+    await mgr._broadcast_device_callback_error(
+        "dev", "motor", "IOC:motor", RuntimeError("kaboom")
+    )
+
+    for client_id in ("c1", "c2"):
+        assert len(sent[client_id]) == 1
+        msg = sent[client_id][0]
+        assert msg["type"] == "error"
+        assert msg["device"] == "dev"
+        assert msg["signal"] == "motor"
+        assert msg["pv"] == "IOC:motor"
+        assert "kaboom" in msg["error"]

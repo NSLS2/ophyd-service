@@ -39,6 +39,9 @@ SUB_TYPE_META = "meta"
 # Hoisted out of `_make_pv_callback` so the EPICS-callback hot path doesn't
 # allocate a new closure per fired update.
 _PV_BROADCAST_DONE_CB = partial(log_threadsafe_future_exceptions, where="pv_broadcast_update")
+_PV_CALLBACK_ERROR_DONE_CB = partial(
+    log_threadsafe_future_exceptions, where="pv_callback_error"
+)
 
 if TYPE_CHECKING:
     from ..protocols import DeviceControl, PVMonitor
@@ -140,20 +143,23 @@ class WebSocketManager:
                 logger.warning("subscribe_unknown_client", client_id=client_id)
                 return
 
-            new_pvs: list[tuple[str, Callable[[PVUpdate], None]]] = []
+            new_pvs: list[tuple[str, Callable[[PVUpdate], None], Callable[[BaseException], None]]] = []
             for pv_name in pv_names:
                 self._subscriptions[client_id].add(pv_name)
                 if pv_name not in self._pv_clients:
                     self._pv_clients[pv_name] = set()
                     callback = self._make_pv_callback(pv_name)
+                    on_error = self._make_pv_error_handler(pv_name)
                     self._pv_callbacks[pv_name] = callback
-                    new_pvs.append((pv_name, callback))
+                    new_pvs.append((pv_name, callback, on_error))
                 self._pv_clients[pv_name].add(client_id)
 
         # Run blocking EPICS subscribes outside the asyncio lock.
-        for pv_name, callback in new_pvs:
+        for pv_name, callback, on_error in new_pvs:
             try:
-                await asyncio.to_thread(self.pv_monitor.subscribe, pv_name, callback)
+                await asyncio.to_thread(
+                    self.pv_monitor.subscribe, pv_name, callback, on_error=on_error
+                )
                 logger.info("subscribed_to_pv", pv_name=pv_name, client_id=client_id)
             except Exception as e:  # noqa: BLE001
                 logger.error("pv_subscription_failed", pv_name=pv_name, error=str(e))
@@ -213,11 +219,58 @@ class WebSocketManager:
 
         return callback
 
+    def _make_pv_error_handler(self, pv_name: str) -> Callable[[BaseException], None]:
+        """Build an ``on_error`` for ``PVMonitor.subscribe`` that fans out a
+        ``pv_error`` envelope to every client subscribed to ``pv_name``.
+
+        Runs on the CA listener thread, so the broadcast is scheduled
+        threadsafe onto the event loop. Without this hook, a callback
+        exception would be log-only and the WS subscriber would assume
+        the PV was simply quiet (M9, 2026-05-01 silent-failure audit).
+        """
+
+        def on_error(exc: BaseException) -> None:
+            if self._loop is None:
+                logger.warning(
+                    "pv_callback_error_before_loop_initialized",
+                    pv_name=pv_name,
+                    error=str(exc),
+                )
+                return
+            fut = asyncio.run_coroutine_threadsafe(
+                self._broadcast_pv_callback_error(pv_name, exc), self._loop
+            )
+            fut.add_done_callback(_PV_CALLBACK_ERROR_DONE_CB)
+
+        return on_error
+
     async def _broadcast_update(self, pv_name: str, update: PVUpdate):
         async with self._lock:
             client_ids = self._pv_clients.get(pv_name, set()).copy()
         for client_id in client_ids:
             await self._send_to_client(client_id, update)
+
+    async def _broadcast_pv_callback_error(self, pv_name: str, exc: BaseException) -> None:
+        async with self._lock:
+            client_ids = self._pv_clients.get(pv_name, set()).copy()
+        for client_id in client_ids:
+            async with self._lock:
+                websocket = self._connections.get(client_id)
+            if websocket is None:
+                continue
+            try:
+                await send_error(
+                    websocket,
+                    f"PV callback failed: {exc}",
+                    pv=pv_name,
+                )
+            except Exception as send_exc:  # noqa: BLE001
+                logger.warning(
+                    "pv_callback_error_envelope_send_failed",
+                    pv_name=pv_name,
+                    client_id=client_id,
+                    error=str(send_exc),
+                )
 
     async def _send_to_client(
         self, client_id: str, update: PVUpdate, websocket: Optional[LockedWS] = None

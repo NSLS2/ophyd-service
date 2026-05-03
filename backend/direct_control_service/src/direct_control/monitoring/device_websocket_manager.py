@@ -83,6 +83,9 @@ logger = structlog.get_logger(__name__)
 _DEVICE_BROADCAST_DONE_CB = partial(
     log_threadsafe_future_exceptions, where="device_broadcast_update"
 )
+_DEVICE_CALLBACK_ERROR_DONE_CB = partial(
+    log_threadsafe_future_exceptions, where="device_callback_error"
+)
 
 
 class DeviceWebSocketManager:
@@ -267,7 +270,9 @@ class DeviceWebSocketManager:
         if device_info is None:
             return SubscribeOutcome(ok=False, reason=fetch_reason)
 
-        new_subscriptions: list[tuple[str, str, Callable[[PVUpdate], None]]] = []
+        new_subscriptions: list[
+            tuple[str, str, Callable[[PVUpdate], None], Callable[[BaseException], None]]
+        ] = []
         async with self._lock:
             self._device_subscriptions[client_id].add(device_name)
 
@@ -277,23 +282,26 @@ class DeviceWebSocketManager:
 
                 for component, pv_name in device_info.pvs.items():
                     callback = self._make_device_callback(device_name, component)
+                    on_error = self._make_device_error_handler(device_name, component, pv_name)
                     self._pv_callbacks[pv_name] = callback
-                    new_subscriptions.append((component, pv_name, callback))
+                    new_subscriptions.append((component, pv_name, callback, on_error))
 
             self._device_clients[device_name].add(client_id)
 
         # Run blocking EPICS subscribes concurrently, outside the asyncio lock.
         results = await asyncio.gather(
             *(
-                asyncio.to_thread(self.pv_monitor.subscribe, pv_name, callback)
-                for _, pv_name, callback in new_subscriptions
+                asyncio.to_thread(
+                    self.pv_monitor.subscribe, pv_name, callback, on_error=on_error
+                )
+                for _, pv_name, callback, on_error in new_subscriptions
             ),
             return_exceptions=True,
         )
         succeeded: list[tuple[str, str, Callable[[PVUpdate], None]]] = []
         failed: list[FailedPV] = []
         for entry, result in zip(new_subscriptions, results):
-            component, pv_name, _ = entry
+            component, pv_name, callback, _on_error = entry
             if isinstance(result, Exception):
                 logger.error("device_pv_subscribe_failed", pv=pv_name, error=str(result))
                 failed.append(FailedPV(signal=component, pv=pv_name, error=str(result)))
@@ -304,7 +312,7 @@ class DeviceWebSocketManager:
                     component=component,
                     pv=pv_name,
                 )
-                succeeded.append(entry)
+                succeeded.append((component, pv_name, callback))
 
         if failed and require_connection:
             await self._rollback_device_subscription(client_id, device_name, succeeded)
@@ -420,6 +428,65 @@ class DeviceWebSocketManager:
             fut.add_done_callback(_DEVICE_BROADCAST_DONE_CB)
 
         return callback
+
+    def _make_device_error_handler(
+        self, device_name: str, component: str, pv_name: str
+    ) -> Callable[[BaseException], None]:
+        """Build an ``on_error`` for ``PVMonitor.subscribe`` that fans out a
+        device-level error envelope to clients subscribed to ``device_name``.
+
+        Runs on the CA listener thread, so the broadcast is scheduled
+        threadsafe onto the event loop. Without this hook, a callback
+        exception would be log-only and the device-socket subscriber
+        would assume the signal was simply quiet (M9, 2026-05-01
+        silent-failure audit).
+        """
+
+        def on_error(exc: BaseException) -> None:
+            if self._loop is None:
+                logger.warning(
+                    "device_callback_error_before_loop_initialized",
+                    device=device_name,
+                    component=component,
+                    pv=pv_name,
+                    error=str(exc),
+                )
+                return
+            fut = asyncio.run_coroutine_threadsafe(
+                self._broadcast_device_callback_error(device_name, component, pv_name, exc),
+                self._loop,
+            )
+            fut.add_done_callback(_DEVICE_CALLBACK_ERROR_DONE_CB)
+
+        return on_error
+
+    async def _broadcast_device_callback_error(
+        self, device_name: str, component: str, pv_name: str, exc: BaseException
+    ) -> None:
+        async with self._lock:
+            client_ids = self._device_clients.get(device_name, set()).copy()
+        for client_id in client_ids:
+            async with self._lock:
+                websocket = self._connections.get(client_id)
+            if websocket is None:
+                continue
+            try:
+                await send_error(
+                    websocket,
+                    f"Device callback failed: {exc}",
+                    device=device_name,
+                    signal=component,
+                    pv=pv_name,
+                )
+            except Exception as send_exc:  # noqa: BLE001
+                logger.warning(
+                    "device_callback_error_envelope_send_failed",
+                    device=device_name,
+                    component=component,
+                    pv=pv_name,
+                    client_id=client_id,
+                    error=str(send_exc),
+                )
 
     async def _broadcast_device_update(self, device_name: str, update: DeviceUpdate):
         async with self._lock:

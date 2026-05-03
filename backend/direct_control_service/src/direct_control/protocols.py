@@ -243,9 +243,15 @@ class PVMonitor(Protocol):
         pv_name: str,
         callback: Optional[Callable[[PVUpdate], None]] = None,
         read_only: bool = False,
+        on_error: Optional[Callable[[BaseException], None]] = None,
     ) -> None:
         """
         Subscribe to PV updates.
+
+        ``on_error`` (when supplied) is invoked synchronously on the CA
+        listener thread when ``callback`` raises during a value or meta
+        dispatch — letting the subscriber translate the failure into a
+        user-visible signal instead of swallowing it.
 
         Raises:
             PVNotFoundError: If PV cannot be connected.
@@ -292,6 +298,7 @@ class MockPVMonitor:
         pv_name: str,
         callback: Optional[Callable[[PVUpdate], None]] = None,
         read_only: bool = False,
+        on_error: Optional[Callable[[BaseException], None]] = None,
     ) -> None:
         self._subscribed[pv_name] = True
         if callback:

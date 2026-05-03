@@ -20,7 +20,12 @@ logger = structlog.get_logger(__name__)
 
 # Where the threadsafe coroutine was scheduled from. Closed set so a typo
 # at the call site is a type error rather than a silent log-tag drift.
-ThreadsafeCallSite = Literal["pv_broadcast_update", "device_broadcast_update"]
+ThreadsafeCallSite = Literal[
+    "pv_broadcast_update",
+    "device_broadcast_update",
+    "pv_callback_error",
+    "device_callback_error",
+]
 
 
 def log_threadsafe_future_exceptions(
