@@ -927,137 +927,38 @@ async def test_s8_require_connection_rolls_back_on_partial_failure():
     assert "IOC:good" not in mgr._pv_callbacks
 
 
-# ─── M7: PV access bits default to False on extraction failure / on overrides ──
+# ─── M7: PV access bits must default to False on extraction failure ──────────
 #
-# Pre-fix had three sites that lied about PV access in the safe direction:
-# (1) `_signal_to_pv_value` defaulted both `read_access` and `write_access`
-#     to True before its try/except metadata-extraction block — so a signal
-#     with no `_read_pv` (or whose attribute reads raised) was reported as
-#     fully accessible.
-# (2) `_handle_refresh` (PV-socket) called
-#     `PVUpdate.from_value(value, read_access=True, write_access=True)`,
-#     overriding the real bits the PVValue carried.
-# (3) `_send_current_values` (device-socket) constructed `DeviceUpdate(...,
-#     read_access=True, write_access=True, ...)` instead of pulling the
-#     bits from the PVValue.
-# All three told a UI "you can write this PV" when we hadn't confirmed it.
-# After the fix, extraction defaults to `False` and the two override sites
-# propagate the real bits.
+# Three sites pre-fix told a UI "you can write this PV" when we hadn't
+# confirmed it: `_signal_to_pv_value` defaulted access bits to True before
+# its try/except metadata block; `_handle_refresh` and `_send_current_values`
+# overrode the real bits with hardcoded True. Now extraction defaults to
+# False and the two override sites propagate the real PVValue bits.
 
 
-def test_m7_metadata_extraction_failure_defaults_to_no_access():
-    """``_signal_to_pv_value`` must default access bits to ``False`` when
-    metadata extraction yields nothing — not ``True``.
+def _make_fake_signal(read_pv=None, value=0):
+    """Stub of an ophyd EpicsSignal exposing only what `_signal_to_pv_value` reads."""
 
-    Pre-fix: signal with no ``_read_pv`` got ``read_access=True,
-    write_access=True``. A UI driven by this update would render writable
-    controls for a PV we never confirmed write access on.
-    """
-    from direct_control.config import Settings
-    from direct_control.monitoring.pv_monitor import PVMonitorManager
-
-    mgr = PVMonitorManager(Settings())
-
-    class _FakeSignal:
-        # No `_read_pv` attribute → the entire metadata try-block falls
-        # through and we land at the pre-try defaults.
+    class _Signal:
         connected = True
         timestamp = None
 
         def get(self):
-            return 0
+            return value
 
-    pv_value = mgr._signal_to_pv_value("FAKE:pv", _FakeSignal())  # type: ignore[arg-type]
-
-    assert pv_value.read_access is False, (
-        "missing _read_pv must default read_access=False (M7 regression — "
-        "pre-fix this was True, telling clients the PV was readable)"
-    )
-    assert pv_value.write_access is False, (
-        "missing _read_pv must default write_access=False (M7 regression — "
-        "pre-fix this was True, telling clients the PV was writable)"
-    )
+    if read_pv is not None:
+        _Signal._read_pv = read_pv
+    return _Signal()
 
 
-def test_m7_metadata_extraction_exception_keeps_access_false():
-    """If the metadata try-block raises mid-extraction, access bits stay False."""
-    from direct_control.config import Settings
-    from direct_control.monitoring.pv_monitor import PVMonitorManager
-
-    mgr = PVMonitorManager(Settings())
-
-    class _ExplodingPV:
-        # Any attribute access raises — exercises the except branch.
-        def __getattr__(self, name):
-            raise RuntimeError(f"simulated EPICS metadata read failure on {name}")
-
-    class _FakeSignal:
-        connected = True
-        timestamp = None
-        _read_pv = _ExplodingPV()
-
-        def get(self):
-            return 0
-
-    pv_value = mgr._signal_to_pv_value("FAKE:pv", _FakeSignal())  # type: ignore[arg-type]
-
-    assert pv_value.read_access is False
-    assert pv_value.write_access is False
-
-
-def test_m7_metadata_extraction_propagates_real_access_bits():
-    """When ``_read_pv`` exposes real access bits, they pass through unchanged."""
-    from direct_control.config import Settings
-    from direct_control.monitoring.pv_monitor import PVMonitorManager
-
-    mgr = PVMonitorManager(Settings())
-
-    class _LockedDownPV:
-        units = "mm"
-        precision = 3
-        enum_strs = None
-        lower_ctrl_limit = 0.0
-        upper_ctrl_limit = 100.0
-        lower_disp_limit = 0.0
-        upper_disp_limit = 100.0
-        # Real PV reports read-only (e.g. caput access denied).
-        read_access = True
-        write_access = False
-
-    class _FakeSignal:
-        connected = True
-        timestamp = None
-        _read_pv = _LockedDownPV()
-
-        def get(self):
-            return 42.0
-
-    pv_value = mgr._signal_to_pv_value("FAKE:pv", _FakeSignal())  # type: ignore[arg-type]
-
-    assert pv_value.read_access is True
-    assert pv_value.write_access is False, (
-        "extraction must surface a read-only PV's write_access=False — "
-        "if this asserts True, the True default is masking the real value"
-    )
-
-
-@pytest.mark.asyncio
-async def test_m7_handle_refresh_propagates_pvvalue_access_bits():
-    """``_handle_refresh`` must NOT override the PVValue's access bits.
-
-    Pre-fix it forced ``read_access=True, write_access=True``, throwing away
-    the real bits ``pv_monitor.get_value()`` had stored. This test stubs
-    ``get_value`` to return a PVValue with both bits False, then asserts the
-    sent ``pv_update`` reflects that.
-    """
+def _locked_pvvalue(pv_name: str):
+    """A PVValue with both access bits False — the input the override-site tests need."""
     from datetime import datetime
 
-    from direct_control.config import Settings
-    from direct_control.models import PVUpdate, PVValue
-    from direct_control.monitoring.websocket_manager import WebSocketManager
+    from direct_control.models import PVValue
 
-    locked_value = PVValue(
-        pv_name="LOCKED:pv",
+    return PVValue(
+        pv_name=pv_name,
         value=0,
         timestamp=datetime.now(),
         status=0,
@@ -1067,9 +968,79 @@ async def test_m7_handle_refresh_propagates_pvvalue_access_bits():
         write_access=False,
     )
 
+
+def test_m7_extraction_defaults_to_no_access_when_read_pv_missing():
+    from direct_control.config import Settings
+    from direct_control.monitoring.pv_monitor import PVMonitorManager
+
+    pv_value = PVMonitorManager(Settings())._signal_to_pv_value(
+        "FAKE:pv", _make_fake_signal()
+    )
+
+    assert pv_value.read_access is False, (
+        "missing _read_pv must default read_access=False — pre-fix this was True"
+    )
+    assert pv_value.write_access is False, (
+        "missing _read_pv must default write_access=False — pre-fix this was True"
+    )
+
+
+def test_m7_extraction_keeps_no_access_when_metadata_read_raises():
+    from direct_control.config import Settings
+    from direct_control.monitoring.pv_monitor import PVMonitorManager
+
+    class _ExplodingPV:
+        def __getattr__(self, name):
+            raise RuntimeError(f"simulated EPICS metadata read failure on {name}")
+
+    pv_value = PVMonitorManager(Settings())._signal_to_pv_value(
+        "FAKE:pv", _make_fake_signal(read_pv=_ExplodingPV())
+    )
+
+    assert pv_value.read_access is False
+    assert pv_value.write_access is False
+
+
+def test_m7_extraction_propagates_real_access_bits():
+    from direct_control.config import Settings
+    from direct_control.monitoring.pv_monitor import PVMonitorManager
+
+    class _ReadOnlyPV:
+        units = "mm"
+        precision = 3
+        enum_strs = None
+        lower_ctrl_limit = 0.0
+        upper_ctrl_limit = 100.0
+        lower_disp_limit = 0.0
+        upper_disp_limit = 100.0
+        read_access = True
+        write_access = False  # caput access denied
+
+    pv_value = PVMonitorManager(Settings())._signal_to_pv_value(
+        "FAKE:pv", _make_fake_signal(read_pv=_ReadOnlyPV(), value=42.0)
+    )
+
+    assert pv_value.read_access is True
+    assert pv_value.write_access is False, (
+        "extraction must surface write_access=False — if True, default is masking real value"
+    )
+
+
+@pytest.mark.asyncio
+async def test_m7_handle_refresh_propagates_pvvalue_access_bits():
+    from direct_control.config import Settings
+    from direct_control.models import PVUpdate
+    from direct_control.monitoring.websocket_manager import WebSocketManager
+
+    locked_value = _locked_pvvalue("LOCKED:pv")
+
     class _PVMonitorStub:
-        def get_value(self, pv_name: str) -> PVValue:
+        def get_value(self, pv_name: str):
             return locked_value
+
+    class _StubWS:
+        async def send_json(self, payload):
+            return None
 
     sent: list[PVUpdate] = []
 
@@ -1085,49 +1056,27 @@ async def test_m7_handle_refresh_propagates_pvvalue_access_bits():
 
     mgr._send_to_client = _capture_send  # type: ignore[method-assign]
 
-    class _StubWS:
-        async def send_json(self, payload):
-            return None
-
     await mgr._handle_refresh("c", websocket=_StubWS(), data={"pv": "LOCKED:pv"})  # type: ignore[arg-type]
 
     assert len(sent) == 1
-    update = sent[0]
-    assert update.read_access is False, (
-        "refresh must propagate read_access=False from the PVValue — "
-        "if True, _handle_refresh is overriding the real bits again (M7 Site C)"
+    assert sent[0].read_access is False, (
+        "refresh must propagate read_access=False — pre-fix override is back (Site C)"
     )
-    assert update.write_access is False, (
-        "refresh must propagate write_access=False — pre-fix this was forced True"
+    assert sent[0].write_access is False, (
+        "refresh must propagate write_access=False — pre-fix override is back (Site C)"
     )
 
 
 @pytest.mark.asyncio
 async def test_m7_send_current_values_propagates_pvvalue_access_bits():
-    """``_send_current_values`` (device-socket) must pull access bits from PVValue.
-
-    Pre-fix it constructed ``DeviceUpdate(read_access=True, write_access=True)``
-    regardless of the real PV access. This test pins the propagation.
-    """
-    from datetime import datetime
-
     from direct_control.config import Settings
-    from direct_control.models import DeviceUpdate, PVValue
+    from direct_control.models import DeviceUpdate
     from direct_control.monitoring.device_websocket_manager import DeviceWebSocketManager
 
-    locked_value = PVValue(
-        pv_name="IOC:locked",
-        value=0,
-        timestamp=datetime.now(),
-        status=0,
-        severity=0,
-        connected=True,
-        read_access=False,
-        write_access=False,
-    )
+    locked_value = _locked_pvvalue("IOC:locked")
 
     class _PVMonitorStub:
-        def get_value(self, pv_name: str) -> PVValue:
+        def get_value(self, pv_name: str):
             return locked_value
 
     sent: list[DeviceUpdate] = []
@@ -1137,7 +1086,6 @@ async def test_m7_send_current_values_propagates_pvvalue_access_bits():
         device_controller=object(),  # type: ignore[arg-type]
         settings=Settings(),
     )
-    # Wire up the device → component → PV mapping that _send_current_values reads.
     mgr._device_pvs["dev"] = {"motor": "IOC:locked"}
     mgr._connections["c"] = object()  # type: ignore[assignment]
 
@@ -1154,12 +1102,11 @@ async def test_m7_send_current_values_propagates_pvvalue_access_bits():
     await mgr._send_current_values("c", "dev")
 
     assert len(sent) == 1
-    update = sent[0]
-    assert update.read_access is False, (
+    assert sent[0].read_access is False, (
         "device-socket current-values must propagate read_access=False — "
-        "if True, _send_current_values is overriding the real bits again (M7 Site E)"
+        "pre-fix override is back (Site E)"
     )
-    assert update.write_access is False, (
+    assert sent[0].write_access is False, (
         "device-socket current-values must propagate write_access=False — "
-        "pre-fix this was forced True"
+        "pre-fix override is back (Site E)"
     )

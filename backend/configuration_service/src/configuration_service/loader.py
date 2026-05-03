@@ -34,6 +34,36 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
+# Cap the number of failures that get embedded in the RuntimeError message.
+# A registry of 10k broken entries would otherwise build a multi-MB string
+# that gets re-formatted by every layer that prints the traceback. The full
+# list still goes to the structured logger above the raise.
+_MAX_FAILURES_IN_RAISE = 20
+
+
+def _raise_if_partial_load(failures: List[str], total: int, source: str) -> None:
+    """Refuse to seed from a partial registry.
+
+    Pre-2026-05-02 the loader logged per-entry failures then announced a
+    successful "Loaded N devices", silently masking dropped entries. See
+    feedback_no_silent_fallbacks.
+    """
+    if not failures:
+        return
+    shown = failures[:_MAX_FAILURES_IN_RAISE]
+    suffix = (
+        f"; ...and {len(failures) - _MAX_FAILURES_IN_RAISE} more"
+        if len(failures) > _MAX_FAILURES_IN_RAISE
+        else ""
+    )
+    raise RuntimeError(
+        f"Failed to load {len(failures)} of {total} {source} entries; "
+        f"refusing to seed registry from partial data. Errors: "
+        + "; ".join(shown)
+        + suffix
+    )
+
+
 # ── helpers ──────────────────────────────────────────────────────────────
 
 
@@ -181,15 +211,7 @@ class HappiProfileLoader:
                 logger.error(f"Failed to process happi device {name}: {e}")
                 failures.append(f"{name}: {e}")
 
-        # Refuse to seed from a partial registry — pre-fix the loader logged
-        # per-entry failures then announced a successful "Loaded N devices",
-        # silently masking dropped entries. See feedback_no_silent_fallbacks.
-        if failures:
-            raise RuntimeError(
-                f"Failed to load {len(failures)} of {len(db)} happi entries; "
-                f"refusing to seed registry from partial data. Errors: "
-                + "; ".join(failures)
-            )
+        _raise_if_partial_load(failures, len(db), "happi")
 
         logger.info(
             f"Loaded {len(registry.devices)} devices, "
@@ -333,15 +355,7 @@ class BitsProfileLoader:
                     logger.error(f"Failed to process BITS device {name}: {e}")
                     failures.append(f"{name}: {e}")
 
-        # Refuse to seed from a partial registry — pre-fix the loader logged
-        # per-entry failures then announced a successful "Loaded N devices",
-        # silently masking dropped entries. See feedback_no_silent_fallbacks.
-        if failures:
-            raise RuntimeError(
-                f"Failed to load {len(failures)} of {total_entries} BITS entries; "
-                f"refusing to seed registry from partial data. Errors: "
-                + "; ".join(failures)
-            )
+        _raise_if_partial_load(failures, total_entries, "BITS")
 
         logger.info(
             f"Loaded {len(registry.devices)} devices, "

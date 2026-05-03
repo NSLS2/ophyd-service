@@ -434,7 +434,7 @@ which perform the coordination check.
 - **Command timeout** (30s default): Long-running ophyd methods or EPICS operations timeout after 30s
   - Set via `DIRECT_CONTROL_COMMAND_TIMEOUT`
 - **EPICS CA timeout** (5s typical): Individual channel access operations timeout; not user-configurable
-- **Coordination check timeout** (5s default): HTTP read of device-lock state from `configuration_service`; configurable via `DIRECT_CONTROL_COORDINATION_TIMEOUT`
+- **Coordination check timeout** (5s default): timeout for the HTTP read of device-lock state from `configuration_service`; configurable via `DIRECT_CONTROL_COORDINATION_TIMEOUT`
 
 If a timeout occurs, the PV/device may be in an indeterminate state. Query the device state endpoint to verify.
 

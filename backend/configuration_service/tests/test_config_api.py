@@ -443,19 +443,12 @@ class TestHealthEndpointDbProbe:
 class TestM3StandalonePVStoreInitFailureFailsStartup:
     """M3 regression: StandalonePVStore init failure must crash startup.
 
-    Pre-fix the lifespan caught any exception from ``StandalonePVStore.initialize``
-    and continued. The service started up "healthy" with no PV store, then every
-    ``/standalone-pvs/*`` endpoint returned ``501 Not Implemented`` with the
-    misleading message ``"Set CONFIG_DEVICE_CHANGE_HISTORY_ENABLED=true."`` —
-    even though the flag *was* set (otherwise init wouldn't have been attempted).
-    The new behavior: init errors propagate, startup fails with the real reason,
-    and the operator sees the actual underlying problem (disk error, permissions,
-    schema migration failure, etc.) instead of being told to set a flag they
-    already set.
+    Pre-fix the lifespan caught any init exception and continued; downstream
+    /standalone-pvs/* endpoints then returned 501 with the misleading message
+    "Set CONFIG_DEVICE_CHANGE_HISTORY_ENABLED=true." even when the flag was set.
     """
 
     def test_lifespan_raises_when_pv_store_init_fails(self, mock_settings, monkeypatch):
-        """Init failure on PV store must propagate out of lifespan."""
         from fastapi.testclient import TestClient
 
         from configuration_service import standalone_pv_store as standalone_pv_module
@@ -478,9 +471,8 @@ class TestM3StandalonePVStoreInitFailureFailsStartup:
     ):
         """When the flag is OFF the broken initializer must never run.
 
-        This pins the gate: ``device_change_history_enabled=False`` short-circuits
-        the init block entirely, so an unrelated init breakage doesn't affect
-        deployments that don't use the feature.
+        Pins the gate so an unrelated init breakage can't affect deployments
+        that don't opt into the feature.
         """
         from fastapi.testclient import TestClient
 
