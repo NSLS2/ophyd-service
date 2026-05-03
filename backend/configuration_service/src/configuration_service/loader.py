@@ -165,6 +165,7 @@ class HappiProfileLoader:
         """Load device registry from happi database JSON."""
         logger.info(f"Loading happi device registry from {self.db_path}")
         registry = DeviceRegistry()
+        failures: List[str] = []
 
         with open(self.db_path) as f:
             db = json.load(f)
@@ -178,6 +179,17 @@ class HappiProfileLoader:
                 self._process_entry(name, entry, registry)
             except Exception as e:
                 logger.error(f"Failed to process happi device {name}: {e}")
+                failures.append(f"{name}: {e}")
+
+        # Refuse to seed from a partial registry — pre-fix the loader logged
+        # per-entry failures then announced a successful "Loaded N devices",
+        # silently masking dropped entries. See feedback_no_silent_fallbacks.
+        if failures:
+            raise RuntimeError(
+                f"Failed to load {len(failures)} of {len(db)} happi entries; "
+                f"refusing to seed registry from partial data. Errors: "
+                + "; ".join(failures)
+            )
 
         logger.info(
             f"Loaded {len(registry.devices)} devices, "
@@ -293,6 +305,8 @@ class BitsProfileLoader:
         """Load device registry from BITS devices.yml."""
         logger.info(f"Loading BITS device registry from {self.devices_path}")
         registry = DeviceRegistry()
+        failures: List[str] = []
+        total_entries = 0
 
         with open(self.devices_path) as f:
             devices_config = yaml.safe_load(f) or {}
@@ -301,19 +315,33 @@ class BitsProfileLoader:
 
         for module_path, device_entries in devices_config.items():
             if not isinstance(device_entries, list):
-                logger.warning(f"Invalid devices entry for {module_path}")
+                logger.error(f"Invalid devices entry for {module_path}")
+                failures.append(f"{module_path}: not a list of device entries")
                 continue
 
             for entry in device_entries:
+                total_entries += 1
                 name = entry.get("name")
                 if not name:
-                    logger.warning(f"Device entry missing name in {module_path}")
+                    logger.error(f"Device entry missing name in {module_path}")
+                    failures.append(f"{module_path}: device entry missing required 'name' field")
                     continue
 
                 try:
                     self._process_entry(name, entry, module_path, beamline, registry)
                 except Exception as e:
                     logger.error(f"Failed to process BITS device {name}: {e}")
+                    failures.append(f"{name}: {e}")
+
+        # Refuse to seed from a partial registry — pre-fix the loader logged
+        # per-entry failures then announced a successful "Loaded N devices",
+        # silently masking dropped entries. See feedback_no_silent_fallbacks.
+        if failures:
+            raise RuntimeError(
+                f"Failed to load {len(failures)} of {total_entries} BITS entries; "
+                f"refusing to seed registry from partial data. Errors: "
+                + "; ".join(failures)
+            )
 
         logger.info(
             f"Loaded {len(registry.devices)} devices, "

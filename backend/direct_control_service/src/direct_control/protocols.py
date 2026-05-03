@@ -41,7 +41,9 @@ class CoordinationService(Protocol):
     available for direct control (not locked by an active plan).
 
     Implementations:
-    - CoordinationClient: HTTP client to Experiment Execution Service
+    - CoordinationClient: HTTP client to configuration_service (reads
+      device-lock state via ``GET /api/v1/devices/{name}/status``;
+      EE/queueserver write the locks via POST /devices/lock)
     - MockCoordinationClient: Always returns available (for testing)
     """
 
@@ -49,9 +51,10 @@ class CoordinationService(Protocol):
         """
         Check if device is available for direct control.
 
-        This is the CRITICAL A4 coordination check. It queries SVC-001
-        (Experiment Execution Service) to determine if the device is
-        currently locked by an executing plan.
+        This is the CRITICAL A4 coordination check. It reads the device-lock
+        state from configuration_service to determine whether the device is
+        currently locked by an executing plan. direct_control NEVER talks
+        to EE / queueserver directly — see feedback_direct_control_no_ee_polling.
 
         Args:
             device_name: Name of the device to check

@@ -5,7 +5,7 @@ monitoring via WebSocket, running on a single port.
 
 ## Features
 
-- **A4 Device Coordination**: Checks with experiment_execution before any write; returns `423 Locked` if a plan holds the device.
+- **A4 Device Coordination**: Checks the device-lock state in `configuration_service` before any write; returns `423 Locked` if a plan holds the device.
 - **PV Control**: Low-fidelity channel for EPICS PV set/get (fire-and-forget or put-completion).
 - **Device Method Execution**: High-fidelity channel for Ophyd device methods, always confirmed.
 - **Nested Device Access**: Navigate device component hierarchies (ophyd-websocket compatible).
@@ -25,11 +25,8 @@ pip install -e .
 ### Running the Service
 
 ```bash
-# Basic startup (port 8003)
-bluesky-direct-control
-
-# With custom experiment_execution URL
-export DIRECT_CONTROL_EXPERIMENT_EXECUTION_URL=http://localhost:8001
+# Basic startup (port 8003) — DIRECT_CONTROL_CONFIGURATION_SERVICE_URL is required.
+export DIRECT_CONTROL_CONFIGURATION_SERVICE_URL=http://localhost:8004
 bluesky-direct-control
 
 # With EPICS configuration
@@ -390,8 +387,9 @@ port 5064 for the duration of the test session; if port 5064 is already
 in use, the fixture assumes an IOC is already running and reuses it.
 `tests/test_ioc.py` defines the PV set (`IOC:m1`, `IOC:counter`, `IOC:wf1`,
 `IOC:shutter`). Coordination and registry validation are stubbed out in
-`conftest.py` so tests don't require the real experiment_execution or
-configuration services.
+`conftest.py` so tests don't require a real `configuration_service` instance
+(coordination state lives in `configuration_service`; direct_control reads
+device-lock status from there).
 
 ## Architecture
 
@@ -436,7 +434,7 @@ which perform the coordination check.
 - **Command timeout** (30s default): Long-running ophyd methods or EPICS operations timeout after 30s
   - Set via `DIRECT_CONTROL_COMMAND_TIMEOUT`
 - **EPICS CA timeout** (5s typical): Individual channel access operations timeout; not user-configurable
-- **Coordination check timeout** (5s default): Check with experiment_execution; configurable via `DIRECT_CONTROL_COORDINATION_TIMEOUT`
+- **Coordination check timeout** (5s default): HTTP read of device-lock state from `configuration_service`; configurable via `DIRECT_CONTROL_COORDINATION_TIMEOUT`
 
 If a timeout occurs, the PV/device may be in an indeterminate state. Query the device state endpoint to verify.
 
@@ -453,6 +451,6 @@ If a timeout occurs, the PV/device may be in an indeterminate state. Query the d
 - Service is degraded but may still be usable for read operations
 
 **Devices are locked:**
-- Check coordination service: `curl http://localhost:8004/coordination/state`
-- Wait for experiment to complete or check with experiment_execution service
+- Inspect a specific device's lock state: `curl http://localhost:8004/api/v1/devices/{name}/status`
+- Wait for the holding plan to complete (the lock-holding service — typically queueserver — releases it on env-close)
 - Return 423 is expected during active experiments

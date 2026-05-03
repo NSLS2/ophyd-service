@@ -411,7 +411,7 @@ class WebSocketManager:
                 continue
             await self._send_to_client(
                 client_id,
-                PVUpdate.from_value(value, read_access=True, write_access=True),
+                PVUpdate.from_value(value),
             )
 
         await send_event(websocket, "refreshed", pv_names=pv_names)

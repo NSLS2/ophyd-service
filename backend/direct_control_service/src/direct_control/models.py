@@ -33,7 +33,7 @@ class DeviceLockStatus(str, Enum):
     """
 
     AVAILABLE = "available"
-    LOCKED = "locked"      # held by an active plan (queueserver/EE)
+    LOCKED = "locked"      # held by an active plan (lock written by queueserver to configuration_service)
     DISABLED = "disabled"  # administratively disabled in configuration_service
     UNKNOWN = "unknown"
 
@@ -165,7 +165,13 @@ class DeviceCommandResponse(BaseModel):
 
 
 class CoordinationStatus(BaseModel):
-    """Coordination status from Experiment Execution Service."""
+    """Coordination status read from configuration_service's device-lock state.
+
+    Locks are written into configuration_service by queueserver / any plan-
+    execution service via ``POST /api/v1/devices/lock``; direct_control reads
+    them via ``GET /api/v1/devices/{name}/status``. We never talk to EE or
+    queueserver directly — see feedback_direct_control_no_ee_polling.
+    """
 
     model_config = ConfigDict(extra="forbid")
 

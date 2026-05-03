@@ -238,7 +238,10 @@ class PVMonitorManager:
         units = precision = enum_strs = None
         lower_ctrl_limit = upper_ctrl_limit = None
         lower_disp_limit = upper_disp_limit = None
-        read_access = write_access = True
+        # Default to no access — assume locked-out until EPICS confirms otherwise.
+        # Defaulting write_access=True would let a UI render writable controls for a
+        # PV we never confirmed write access on. See feedback_no_silent_fallbacks.
+        read_access = write_access = False
 
         try:
             pv = getattr(signal, "_read_pv", None)
@@ -250,8 +253,8 @@ class PVMonitorManager:
                 upper_ctrl_limit = getattr(pv, "upper_ctrl_limit", None)
                 lower_disp_limit = getattr(pv, "lower_disp_limit", None)
                 upper_disp_limit = getattr(pv, "upper_disp_limit", None)
-                read_access = getattr(pv, "read_access", True)
-                write_access = getattr(pv, "write_access", True)
+                read_access = getattr(pv, "read_access", False)
+                write_access = getattr(pv, "write_access", False)
                 if enum_strs and isinstance(enum_strs, tuple):
                     enum_strs = list(enum_strs)
         except Exception as e:

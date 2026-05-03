@@ -474,8 +474,8 @@ class DeviceWebSocketManager:
                 value=value.value,
                 timestamp=value.timestamp,
                 connected=value.connected,
-                read_access=True,
-                write_access=True,
+                read_access=value.read_access,
+                write_access=value.write_access,
             )
             await self._send_to_client(client_id, update, websocket=websocket)
             await self._send_meta_to_client(

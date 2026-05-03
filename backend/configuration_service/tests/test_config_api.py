@@ -438,3 +438,72 @@ class TestHealthEndpointDbProbe:
         resp = client.get("/health")
         assert resp.status_code == 200
         assert resp.json()["status"] == "healthy"
+
+
+class TestM3StandalonePVStoreInitFailureFailsStartup:
+    """M3 regression: StandalonePVStore init failure must crash startup.
+
+    Pre-fix the lifespan caught any exception from ``StandalonePVStore.initialize``
+    and continued. The service started up "healthy" with no PV store, then every
+    ``/standalone-pvs/*`` endpoint returned ``501 Not Implemented`` with the
+    misleading message ``"Set CONFIG_DEVICE_CHANGE_HISTORY_ENABLED=true."`` —
+    even though the flag *was* set (otherwise init wouldn't have been attempted).
+    The new behavior: init errors propagate, startup fails with the real reason,
+    and the operator sees the actual underlying problem (disk error, permissions,
+    schema migration failure, etc.) instead of being told to set a flag they
+    already set.
+    """
+
+    def test_lifespan_raises_when_pv_store_init_fails(self, mock_settings, monkeypatch):
+        """Init failure on PV store must propagate out of lifespan."""
+        from fastapi.testclient import TestClient
+
+        from configuration_service import standalone_pv_store as standalone_pv_module
+        from configuration_service.main import create_app
+
+        def _broken_initialize(self):
+            raise RuntimeError("simulated PV store schema migration failure")
+
+        monkeypatch.setattr(
+            standalone_pv_module.StandalonePVStore, "initialize", _broken_initialize
+        )
+
+        app = create_app(mock_settings)
+        with pytest.raises(RuntimeError, match="simulated PV store schema migration failure"):
+            with TestClient(app):
+                pass  # Entering the with-block runs lifespan; we expect it to raise.
+
+    def test_lifespan_succeeds_when_flag_disabled_and_init_would_fail(
+        self, tmp_path, monkeypatch
+    ):
+        """When the flag is OFF the broken initializer must never run.
+
+        This pins the gate: ``device_change_history_enabled=False`` short-circuits
+        the init block entirely, so an unrelated init breakage doesn't affect
+        deployments that don't use the feature.
+        """
+        from fastapi.testclient import TestClient
+
+        from configuration_service import standalone_pv_store as standalone_pv_module
+        from configuration_service.config import Settings
+        from configuration_service.main import create_app
+
+        called = {"initialize": False}
+
+        def _broken_initialize(self):
+            called["initialize"] = True
+            raise RuntimeError("should never run when flag is off")
+
+        monkeypatch.setattr(
+            standalone_pv_module.StandalonePVStore, "initialize", _broken_initialize
+        )
+
+        settings = Settings(
+            use_mock_data=True,
+            db_path=tmp_path / "test.db",
+            device_change_history_enabled=False,
+        )
+        app = create_app(settings)
+        with TestClient(app) as c:
+            assert c.get("/health").status_code == 200
+        assert called["initialize"] is False

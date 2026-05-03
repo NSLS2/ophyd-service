@@ -243,19 +243,20 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         state = ConfigurationState(registry=registry)
         state_container["state"] = state
 
-        # Initialize standalone PV store (uses same gate as registry store)
+        # Initialize standalone PV store (uses same gate as registry store).
+        # Init failure must crash startup — pre-fix behavior was to log+continue,
+        # leaving the service "healthy" but every /standalone-pvs/* endpoint
+        # returning 501 with the misleading "Set CONFIG_DEVICE_CHANGE_HISTORY_ENABLED=true"
+        # message even though the flag was set. See feedback_no_silent_fallbacks.
         if settings.device_change_history_enabled:
-            try:
-                pv_store = StandalonePVStore(settings.db_path)
-                pv_store.initialize()
-                standalone_pv_container["store"] = pv_store
-                _apply_standalone_pvs(registry, pv_store, logger)
-                logger.info(
-                    "standalone_pv_store_enabled",
-                    db_path=str(settings.db_path),
-                )
-            except Exception as e:
-                logger.error("standalone_pv_store_init_failed", error=str(e))
+            pv_store = StandalonePVStore(settings.db_path)
+            pv_store.initialize()
+            standalone_pv_container["store"] = pv_store
+            _apply_standalone_pvs(registry, pv_store, logger)
+            logger.info(
+                "standalone_pv_store_enabled",
+                db_path=str(settings.db_path),
+            )
 
         # Initialize device lock manager (in-memory, ephemeral)
         lock_manager_container["manager"] = DeviceLockManager()
