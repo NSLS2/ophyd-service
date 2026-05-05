@@ -1261,6 +1261,60 @@ async def test_c2_concurrent_subscribers_to_same_device_serialize():
     )
 
 
+@pytest.mark.asyncio
+async def test_c2_disconnect_during_subscribe_returns_unknown_client():
+    """A disconnect mid-subscribe must not raise KeyError on _device_subscriptions."""
+    from direct_control.config import Settings
+    from direct_control.models import DeviceInfo
+    from direct_control.monitoring.device_websocket_manager import DeviceWebSocketManager
+    import asyncio as _asyncio
+    import threading
+
+    settings = Settings()
+
+    # Block subscribe inside _fetch_device_info — that's an await point
+    # AFTER the initial _connections check but BEFORE the inner self._lock
+    # re-check. Disconnecting in this window is the precise race.
+    fetch_started = threading.Event()
+    fetch_release = _asyncio.Event()
+
+    mgr = DeviceWebSocketManager(
+        pv_monitor=object(),
+        device_controller=object(),
+        settings=settings,
+    )
+    mgr._connections["a"] = object()  # type: ignore[assignment]
+    mgr._device_subscriptions["a"] = set()
+
+    async def _fetch_blocking(_name):
+        fetch_started.set()
+        await fetch_release.wait()
+        return (
+            DeviceInfo(name="dev", device_type="motor", pvs={"good": "IOC:good"}),
+            None,
+        )
+
+    mgr._fetch_device_info = _fetch_blocking  # type: ignore[method-assign]
+
+    subscribe_task = _asyncio.create_task(mgr.subscribe_device("a", "dev"))
+
+    # Wait for the subscribe to enter _fetch_device_info, then disconnect.
+    await _asyncio.to_thread(fetch_started.wait, 2.0)
+    await mgr.disconnect("a")
+
+    # Release the fetch so subscribe_device proceeds past the await.
+    fetch_release.set()
+    outcome = await subscribe_task
+
+    # Pre-fix: KeyError on self._device_subscriptions["a"].add() because
+    # disconnect popped the entry.
+    assert outcome.ok is False
+    assert outcome.reason == "unknown_client", (
+        "subscribe must surface unknown_client (not KeyError) when the client "
+        "disconnects mid-await (C2 follow-up D)"
+    )
+
+
 # ─── M7: PV access bits must default to False on extraction failure ──────────
 #
 # Three sites pre-fix told a UI "you can write this PV" when we hadn't

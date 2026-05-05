@@ -114,7 +114,11 @@ class DeviceWebSocketManager:
         # retry-on-next-subscribe behavior and SubscribeOutcome.failed_pvs;
         # cleared on last-client teardown.
         self._device_pv_failures: Dict[str, Dict[str, FailedPV]] = {}
-        # Per-device subscribe serialization. Cleared on last-client teardown.
+        # Per-device subscribe serialization. Locks are intentionally kept
+        # for the lifetime of the manager — popping them on last-client
+        # teardown races with any in-flight subscribe still holding the
+        # lock and lets the next subscriber create a fresh one, breaking
+        # serialization. Memory cost is bounded by total devices ever seen.
         self._device_subscribe_locks: Dict[str, asyncio.Lock] = {}
         self._pv_callbacks: Dict[str, Callable[[PVUpdate], None]] = {}
         self._device_clients: Dict[str, Set[str]] = {}
@@ -303,6 +307,13 @@ class DeviceWebSocketManager:
                 tuple[str, str, Callable[[PVUpdate], None], Callable[[BaseException], None]]
             ] = []
             async with self._lock:
+                # The initial connections check ran before _fetch_device_info
+                # and before acquiring device_lock — both await points where
+                # disconnect(client_id) can race in. _connections and
+                # _device_subscriptions are popped together under self._lock
+                # in disconnect(), so re-checking _connections is sufficient.
+                if client_id not in self._connections:
+                    return SubscribeOutcome(ok=False, reason="unknown_client")
                 self._device_subscriptions[client_id].add(device_name)
 
                 if device_name not in self._device_clients:
@@ -403,7 +414,8 @@ class DeviceWebSocketManager:
                     self._device_clients.pop(device_name)
                     released_pvs = self._device_pvs.pop(device_name, {})
                     self._device_pv_failures.pop(device_name, None)
-                    self._device_subscribe_locks.pop(device_name, None)
+                    # _device_subscribe_locks intentionally left in place —
+                    # see __init__ comment.
 
         teardowns: list[tuple[str, Callable[[PVUpdate], None]]] = []
         for pv_name in released_pvs.values():
