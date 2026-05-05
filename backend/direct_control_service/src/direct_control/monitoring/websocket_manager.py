@@ -167,6 +167,12 @@ class WebSocketManager:
                 async with self._lock:
                     self._pv_callbacks.pop(pv_name, None)
                     self._pv_clients.pop(pv_name, None)
+                    # Roll back the speculative add to the client's subscription
+                    # set; otherwise a never-subscribed PV counts toward the
+                    # per-client cap and later refresh/unsubscribe paths treat
+                    # the client as actually subscribed.
+                    if client_id in self._subscriptions:
+                        self._subscriptions[client_id].discard(pv_name)
 
         # Send current values in parallel. Read the connection once so the
         # per-PV value+meta sends don't reacquire the manager lock 2N times.

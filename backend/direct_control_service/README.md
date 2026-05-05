@@ -426,8 +426,7 @@ which perform the coordination check.
 | 406 Not Acceptable | Unsupported accept header | Client requested unsupported media type |
 | 423 Locked | Device is locked by coordination | Experiment running, plan holds the device |
 | 500 Internal Server Error | Service error | EPICS unavailable, configuration error |
-| 502 Bad Gateway | Configuration service unavailable | Configuration service down, network issue |
-| 503 Service Unavailable | Health check failed | Service initializing or shutting down |
+| 503 Service Unavailable | Service unhealthy or coordination check failed | Configuration service down, service initializing or shutting down |
 
 ### Timeout Behavior
 
@@ -448,7 +447,7 @@ If a timeout occurs, the PV/device may be in an indeterminate state. Query the d
 **Health check failing:**
 - Check `/health` endpoint: `curl http://localhost:8003/health`
 - If coordination_service_available is false, check coordination service status
-- Service is degraded but may still be usable for read operations
+- Service reports `status="unhealthy"` (HTTP 503) when configuration_service is unreachable; reads against already-subscribed PVs may still work, but coordination-checked operations will fail until it recovers
 
 **Devices are locked:**
 - Inspect a specific device's lock state: `curl http://localhost:8004/api/v1/devices/{name}/status`

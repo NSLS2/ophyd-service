@@ -351,6 +351,10 @@ class BitsProfileLoader:
             if not isinstance(device_entries, list):
                 logger.error(f"Invalid devices entry for {module_path}")
                 failures.append(f"{module_path}: not a list of device entries")
+                # Count the malformed module as one entry so the aggregate
+                # "Failed to load N of M" message is sensible — otherwise a
+                # broken module-level value reports failures out of zero.
+                total_entries += 1
                 continue
 
             for entry in device_entries:
