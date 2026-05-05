@@ -186,6 +186,7 @@ class PVMonitorManager:
             shape, dtype, ndim, nbytes = describe_array(value)
             converted_value = self._convert_value(value)
             ts = datetime.fromtimestamp(timestamp) if timestamp else datetime.now()
+            read_access, write_access = self._extract_access_bits(pv_name)
 
             pv_value = PVValue(
                 pv_name=pv_name,
@@ -198,6 +199,8 @@ class PVMonitorManager:
                 dtype=dtype,
                 ndim=ndim,
                 nbytes=nbytes,
+                read_access=read_access,
+                write_access=write_access,
             )
             self._latest_values[pv_name] = pv_value
             self._buffers[pv_name].append(pv_value)
@@ -209,6 +212,8 @@ class PVMonitorManager:
                 status=0,
                 severity=0,
                 connected=True,
+                read_access=read_access,
+                write_access=write_access,
             )
             callbacks = list(self._callbacks.get(pv_name, []))
 
@@ -233,6 +238,7 @@ class PVMonitorManager:
                 return
             callbacks = list(self._callbacks.get(pv_name, []))
             latest = self._latest_values.get(pv_name)
+            read_access, write_access = self._extract_access_bits(pv_name)
 
         if connected:
             logger.info("pv_reconnected", pv_name=pv_name)
@@ -248,19 +254,49 @@ class PVMonitorManager:
             status=0,
             severity=0,
             connected=connected,
+            read_access=read_access,
+            write_access=write_access,
         )
         for sub in callbacks:
             self._dispatch_subscriber(pv_name, sub, update, source="meta")
 
+    def _extract_access_bits(self, pv_name: str) -> tuple[bool, bool]:
+        """Read (read_access, write_access) from a subscribed signal's CA PV.
+
+        Caller must hold ``self._lock``. Returns ``(False, False)`` if the
+        signal is missing or extraction fails — matches the no-silent-fallback
+        policy in ``_signal_to_pv_value``: defaulting to permissive bits
+        would let a UI render writable controls for a PV we never confirmed
+        write access on. Pre-M14 the streaming-update path skipped this
+        entirely and PVUpdate's pydantic defaults silently reported
+        ``read_access=True, write_access=False`` regardless of CA reality.
+        """
+        signal = self._signals.get(pv_name)
+        if signal is None:
+            return False, False
+        try:
+            pv = getattr(signal, "_read_pv", None)
+            if pv is None:
+                return False, False
+            return (
+                bool(getattr(pv, "read_access", False)),
+                bool(getattr(pv, "write_access", False)),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.debug("access_bits_extraction_error", pv_name=pv_name, error=str(e))
+            return False, False
+
     def _convert_value(self, value):
+        # No int-array→ASCII heuristic. Pre-M11 we rendered any uint/int
+        # array whose values were all <256 as a string (after dropping
+        # zeros). That collapsed legitimate uint8 readbacks (status bytes,
+        # image strips) into garbled chars and silently dropped data.
+        # Per feedback_no_silent_fallbacks, surface arrays as-is; the
+        # ``dtype``/``shape`` fields on PVValue carry the structure for
+        # any client that needs to decode a DBR_CHAR waveform back to
+        # string. EPICS DBR_STRING (≤40 chars) still arrives as ``str``
+        # and falls through; bytes is decoded explicitly below.
         if isinstance(value, np.ndarray):
-            if value.dtype.kind in ["i", "u"]:
-                if len(value) > 0 and value.max() < 256:
-                    cleaned = value[value != 0]
-                    try:
-                        return "".join(chr(x) for x in cleaned)
-                    except Exception:
-                        pass
             return value.tolist()
         elif isinstance(value, np.integer):
             return int(value)

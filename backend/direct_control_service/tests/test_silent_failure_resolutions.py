@@ -1450,3 +1450,303 @@ def test_m13_openapi_export_no_op_when_env_unset(tmp_path, monkeypatch):
     monkeypatch.delenv("OPHYD_SERVICE_OPENAPI_EXPORT_PATH", raising=False)
     _maybe_export_openapi(FastAPI())
     assert list(tmp_path.iterdir()) == []
+
+
+# ─── M11: int-array → ASCII heuristic removed from _convert_value ────────────
+#
+# Pre-fix: any uint/int ndarray whose values were all <256 was rendered
+# as a string after dropping zero entries. Legitimate uint8 status bytes
+# came through as garbled chars (and lost the zero values entirely). Now
+# arrays pass through as lists; clients that need DBR_CHAR-as-string
+# semantics decode based on the dtype/shape metadata on PVValue.
+
+
+def test_m11_uint8_array_passes_through_as_list_not_ascii_string():
+    import numpy as np
+
+    from direct_control.config import Settings
+    from direct_control.monitoring.pv_monitor import PVMonitorManager
+
+    mgr = PVMonitorManager(Settings())
+    # Status-byte array — pre-fix this became "\x01\x02\x03" (and dropped any zero).
+    raw = np.array([1, 2, 3, 0, 4], dtype=np.uint8)
+
+    converted = mgr._convert_value(raw)
+
+    assert converted == [1, 2, 3, 0, 4], (
+        "uint8 array must come through as list — pre-M11 the ASCII heuristic "
+        "rendered it as a string and silently dropped zeros"
+    )
+
+
+def test_m11_int_array_with_small_values_passes_through_as_list():
+    import numpy as np
+
+    from direct_control.config import Settings
+    from direct_control.monitoring.pv_monitor import PVMonitorManager
+
+    mgr = PVMonitorManager(Settings())
+    # Pre-fix any int array with all values <256 triggered the ASCII path.
+    raw = np.array([10, 20, 30], dtype=np.int32)
+
+    converted = mgr._convert_value(raw)
+
+    assert converted == [10, 20, 30]
+
+
+def test_m11_float_array_unchanged():
+    import numpy as np
+
+    from direct_control.config import Settings
+    from direct_control.monitoring.pv_monitor import PVMonitorManager
+
+    mgr = PVMonitorManager(Settings())
+    raw = np.array([1.5, 2.5], dtype=np.float64)
+
+    converted = mgr._convert_value(raw)
+
+    assert converted == [1.5, 2.5]
+
+
+def test_m11_bytes_still_decode_to_string():
+    """Bytes-typed scalar values (e.g. DBR_CHAR scalar) keep their string decode.
+
+    The M11 fix only removes the *array*-to-ASCII heuristic; the scalar
+    bytes branch is the right place for a known-string EPICS value.
+    """
+    from direct_control.config import Settings
+    from direct_control.monitoring.pv_monitor import PVMonitorManager
+
+    mgr = PVMonitorManager(Settings())
+
+    assert mgr._convert_value(b"hello") == "hello"
+
+
+# ─── M14: streaming PV callbacks must populate access bits ───────────────────
+#
+# Pre-fix: ``_handle_value_update`` and ``_handle_meta_update`` built
+# PVUpdate (and the cached PVValue) without setting read/write_access.
+# The pydantic defaults silently produced ``read_access=True`` /
+# ``write_access=False`` regardless of CA reality. M14 plumbs the real
+# bits through ``_extract_access_bits`` and flips the model defaults to
+# False so a future construction-site miss surfaces as locked-out
+# (under-permissive) instead of fully-readable (over-permissive).
+
+
+def test_m14_pvvalue_default_access_bits_are_locked_out():
+    from datetime import datetime
+
+    from direct_control.models import PVValue
+
+    pv_value = PVValue(
+        pv_name="IOC:x",
+        value=1.0,
+        timestamp=datetime.now(),
+    )
+
+    assert pv_value.read_access is False, (
+        "PVValue must default read_access=False — pre-M14 was True"
+    )
+    assert pv_value.write_access is False, (
+        "PVValue must default write_access=False — pre-M14 was True"
+    )
+
+
+def test_m14_pvupdate_default_access_bits_are_locked_out():
+    from datetime import datetime
+
+    from direct_control.models import PVUpdate
+
+    update = PVUpdate(
+        pv="IOC:x",
+        value=1.0,
+        timestamp=datetime.now(),
+    )
+
+    assert update.read_access is False, (
+        "PVUpdate must default read_access=False — pre-M14 was True"
+    )
+    assert update.write_access is False
+
+
+def test_m14_pvinfo_default_access_bits_are_locked_out():
+    from datetime import datetime
+
+    from direct_control.models import PVInfo
+
+    info = PVInfo(
+        pv_name="IOC:x",
+        connected=True,
+        timestamp=datetime.now(),
+    )
+
+    assert info.read_access is False, "PVInfo defaults flipped to False post-M14"
+    assert info.write_access is False
+
+
+def test_m14_pvvalueresponse_default_access_bits_are_locked_out():
+    from datetime import datetime
+
+    from direct_control.models import PVValueResponse
+
+    resp = PVValueResponse(pv_name="IOC:x", value=1.0, timestamp=datetime.now())
+
+    assert resp.read_access is False
+    assert resp.write_access is False
+
+
+def _install_signal_with_access(mgr, pv_name: str, *, read_access: bool, write_access: bool):
+    """Install a stub EpicsSignal in the manager's registry exposing access bits.
+
+    The streaming callbacks read access bits from
+    ``self._signals[pv_name]._read_pv``; fixing them up bypasses the
+    real pyepics subscribe path and lets us drive the value/meta
+    handlers directly with deterministic access state.
+    """
+
+    class _ReadPV:
+        pass
+
+    rpv = _ReadPV()
+    rpv.read_access = read_access  # type: ignore[attr-defined]
+    rpv.write_access = write_access  # type: ignore[attr-defined]
+
+    class _Signal:
+        _read_pv = rpv
+
+    mgr._signals[pv_name] = _Signal()  # type: ignore[assignment]
+
+
+def test_m14_extract_access_bits_returns_real_values_from_read_pv():
+    from direct_control.config import Settings
+    from direct_control.monitoring.pv_monitor import PVMonitorManager
+
+    mgr = PVMonitorManager(Settings())
+    _install_signal_with_access(mgr, "IOC:x", read_access=True, write_access=False)
+
+    assert mgr._extract_access_bits("IOC:x") == (True, False)
+
+
+def test_m14_extract_access_bits_locks_out_when_signal_missing():
+    from direct_control.config import Settings
+    from direct_control.monitoring.pv_monitor import PVMonitorManager
+
+    mgr = PVMonitorManager(Settings())
+
+    assert mgr._extract_access_bits("IOC:never_subscribed") == (False, False)
+
+
+def test_m14_extract_access_bits_locks_out_when_read_pv_missing():
+    from direct_control.config import Settings
+    from direct_control.monitoring.pv_monitor import PVMonitorManager
+
+    mgr = PVMonitorManager(Settings())
+
+    class _SignalNoReadPV:
+        pass
+
+    mgr._signals["IOC:x"] = _SignalNoReadPV()  # type: ignore[assignment]
+
+    assert mgr._extract_access_bits("IOC:x") == (False, False)
+
+
+def test_m14_streaming_value_update_propagates_access_bits():
+    from direct_control.config import Settings
+    from direct_control.models import PVUpdate
+    from direct_control.monitoring.pv_monitor import PVMonitorManager, _Subscriber
+
+    mgr = PVMonitorManager(Settings())
+    _install_signal_with_access(mgr, "IOC:x", read_access=True, write_access=False)
+
+    captured: list[PVUpdate] = []
+
+    def cb(update):
+        captured.append(update)
+
+    mgr._callbacks["IOC:x"] = [_Subscriber(callback=cb, on_error=None)]
+
+    mgr._handle_value_update("IOC:x", 42.0, timestamp=None)
+
+    assert len(captured) == 1, "callback must fire on value update"
+    assert captured[0].read_access is True, (
+        "streaming PVUpdate must carry the real read_access — pre-M14 it "
+        "fell back to the model default and silently asserted True regardless"
+    )
+    assert captured[0].write_access is False, (
+        "streaming PVUpdate must carry the real write_access — pre-M14 it "
+        "fell back to write_access=False (here that's accidentally correct, "
+        "but only because the default happened to match the locked state)"
+    )
+
+
+def test_m14_streaming_value_update_caches_access_bits_in_pvvalue():
+    """Pre-M14 the cached PVValue inherited PVValue's permissive True/True.
+
+    A subsequent ``_handle_refresh`` or ``_send_current_values`` reads
+    that cache; if the streaming path doesn't populate access bits, the
+    cached value silently misrepresents the PV's CA access right after
+    the very first update — the M7 propagation tests then become moot.
+    """
+    from direct_control.config import Settings
+    from direct_control.monitoring.pv_monitor import PVMonitorManager
+
+    mgr = PVMonitorManager(Settings())
+    _install_signal_with_access(mgr, "IOC:locked", read_access=False, write_access=False)
+
+    mgr._handle_value_update("IOC:locked", 7.0, timestamp=None)
+
+    cached = mgr._latest_values["IOC:locked"]
+    assert cached.read_access is False
+    assert cached.write_access is False, (
+        "cached PVValue must reflect the real CA bits — pre-M14 the "
+        "streaming path inherited PVValue's True/True defaults"
+    )
+
+
+def test_m14_streaming_meta_update_propagates_access_bits():
+    from direct_control.config import Settings
+    from direct_control.models import PVUpdate
+    from direct_control.monitoring.pv_monitor import PVMonitorManager, _Subscriber
+
+    mgr = PVMonitorManager(Settings())
+    _install_signal_with_access(mgr, "IOC:x", read_access=True, write_access=True)
+    # Prime the connection-tracking so the meta handler treats this as
+    # a real transition (not the first-and-connected dedupe).
+    mgr._connection_status["IOC:x"] = True
+
+    captured: list[PVUpdate] = []
+
+    def cb(update):
+        captured.append(update)
+
+    mgr._callbacks["IOC:x"] = [_Subscriber(callback=cb, on_error=None)]
+
+    # Disconnect transition.
+    mgr._handle_meta_update("IOC:x", connected=False)
+
+    assert len(captured) == 1
+    assert captured[0].connected is False
+    assert captured[0].read_access is True, (
+        "meta-update PVUpdate must carry real access bits — pre-M14 it "
+        "would have silently reported the pydantic defaults instead"
+    )
+    assert captured[0].write_access is True
+
+
+def test_m14_streaming_value_update_locks_out_when_signal_already_unregistered():
+    """If the value handler fires after a teardown race, defaults must be locked-out.
+
+    The handler returns early when ``pv_name not in self._signals`` so
+    no callback fires — but if a future refactor re-orders that guard,
+    the default access bits must still be safe.
+    """
+    from datetime import datetime
+
+    from direct_control.models import PVUpdate
+
+    update = PVUpdate(pv="IOC:x", value=1.0, timestamp=datetime.now())
+
+    # Construction without explicit access bits ⇒ post-M14 defaults
+    # ⇒ both False ⇒ a UI driven by this would refuse to write.
+    assert update.read_access is False
+    assert update.write_access is False

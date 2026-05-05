@@ -310,6 +310,9 @@ class MockPVMonitor:
         self._subscribed[pv_name] = True
         if callback:
             self._callbacks.setdefault(pv_name, []).append(callback)
+        # Mock-PV access bits are explicit so the test path doesn't depend
+        # on PVValue's locked-out defaults (post-M14). A mock with no access
+        # would silently break tests that assumed permissive bits.
         self._values[pv_name] = PVValue(
             pv_name=pv_name,
             value=0.0,
@@ -317,6 +320,8 @@ class MockPVMonitor:
             status=0,
             severity=0,
             connected=True,
+            read_access=True,
+            write_access=not read_only,
         )
 
     def unsubscribe(self, pv_name: str, callback: Optional[Callable] = None) -> None:
@@ -353,6 +358,12 @@ class MockPVMonitor:
         if pv_name not in self._subscribed:
             return
         now = datetime.now()
+        # Preserve the access bits that ``subscribe`` recorded on this PV
+        # so set_mock_value updates don't silently flip the mock's
+        # advertised access (post-M14 model defaults are locked-out).
+        prior = self._values.get(pv_name)
+        read_access = prior.read_access if prior is not None else True
+        write_access = prior.write_access if prior is not None else True
         self._values[pv_name] = PVValue(
             pv_name=pv_name,
             value=value,
@@ -360,6 +371,8 @@ class MockPVMonitor:
             status=0,
             severity=0,
             connected=True,
+            read_access=read_access,
+            write_access=write_access,
         )
         update = PVUpdate(
             pv=pv_name,
@@ -368,6 +381,8 @@ class MockPVMonitor:
             status=0,
             severity=0,
             connected=True,
+            read_access=read_access,
+            write_access=write_access,
         )
         for cb in self._callbacks.get(pv_name, []):
             try:

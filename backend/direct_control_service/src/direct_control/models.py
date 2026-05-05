@@ -219,8 +219,12 @@ class PVValue(BaseModel):
     lower_disp_limit: Optional[float] = None
     upper_disp_limit: Optional[float] = None
 
-    read_access: bool = True
-    write_access: bool = True
+    # Default to no access — assume locked-out until EPICS confirms otherwise.
+    # Pre-M14 these defaulted to True/True so any construction site that
+    # forgot to populate them would advertise the PV as fully writable.
+    # See feedback_no_silent_fallbacks.
+    read_access: bool = False
+    write_access: bool = False
 
 
 class PVUpdate(BaseModel):
@@ -240,7 +244,10 @@ class PVUpdate(BaseModel):
     status: int = 0
     severity: int = 0
     connected: bool = True
-    read_access: bool = True
+    # Default to no access. See PVValue rationale; PVUpdate's pre-M14
+    # default of read_access=True (write_access already False) silently
+    # painted streaming-update PVs as readable regardless of CA reality.
+    read_access: bool = False
     write_access: bool = False
     alarm_status: Optional[str] = None
     alarm_severity: Optional[int] = None
@@ -284,8 +291,9 @@ class PVInfo(BaseModel):
     pv_name: str
     value: Any = None
     connected: bool
-    read_access: bool = True
-    write_access: bool = True
+    # Default to no access (mirror PVValue/PVUpdate post-M14).
+    read_access: bool = False
+    write_access: bool = False
     timestamp: datetime
 
     lower_ctrl_limit: Optional[float] = None
@@ -310,8 +318,9 @@ class PVValueResponse(BaseModel):
     value: Any
     timestamp: datetime
     connected: bool = True
-    read_access: bool = True
-    write_access: bool = True
+    # Default to no access (mirror PVValue/PVUpdate post-M14).
+    read_access: bool = False
+    write_access: bool = False
 
 
 class PVLimits(BaseModel):
