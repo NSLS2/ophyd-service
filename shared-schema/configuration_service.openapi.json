@@ -12,7 +12,7 @@
           "Health"
         ],
         "summary": "Health Check",
-        "description": "Health check endpoint.",
+        "description": "Health check: state loaded AND registry DB queryable.\n\nRuns ``SELECT 1`` against the registry store (when DB mode is on)\nand returns 503 with the failure detail when it can't. Without\nthe DB ping, a mount-gone or permissions-revoked store would\nstill pass health while every CRUD call 500'd.",
         "operationId": "health_check_health_get",
         "responses": {
           "200": {
@@ -1846,8 +1846,7 @@
                 "type": "null"
               }
             ],
-            "title": "Name",
-            "description": "Device name from profile collection"
+            "title": "Name"
           },
           "device_class": {
             "anyOf": [
@@ -1858,8 +1857,7 @@
                 "type": "null"
               }
             ],
-            "title": "Device Class",
-            "description": "Fully qualified class path (e.g., 'ophyd.EpicsMotor', 'ophyd.EpicsScaler')"
+            "title": "Device Class"
           },
           "args": {
             "anyOf": [
@@ -1871,8 +1869,7 @@
                 "type": "null"
               }
             ],
-            "title": "Args",
-            "description": "Positional arguments for device constructor (e.g., ['BL01:DET1:'])"
+            "title": "Args"
           },
           "kwargs": {
             "anyOf": [
@@ -1884,8 +1881,7 @@
                 "type": "null"
               }
             ],
-            "title": "Kwargs",
-            "description": "Keyword arguments for device constructor (e.g., {'name': 'det1'})"
+            "title": "Kwargs"
           },
           "active": {
             "anyOf": [
@@ -1896,12 +1892,12 @@
                 "type": "null"
               }
             ],
-            "title": "Active",
-            "description": "Whether this device should be instantiated"
+            "title": "Active"
           }
         },
         "type": "object",
-        "title": "DeviceInstantiationSpecUpdate"
+        "title": "DeviceInstantiationSpecUpdate",
+        "description": "Partial of DeviceInstantiationSpec for PATCH/PUT updates.\n\nEvery field is Optional with default None so callers can send only\nthe fields they want to change. Pair with ``model_dump(exclude_unset=True)``\nto distinguish \"not sent\" from \"sent as None\". Field set must mirror\nDeviceInstantiationSpec \u2014 enforced by test_partial_models_field_parity."
       },
       "DeviceLabel": {
         "type": "string",
@@ -2338,8 +2334,7 @@
                 "type": "null"
               }
             ],
-            "title": "Name",
-            "description": "Device name from profile collection"
+            "title": "Name"
           },
           "device_label": {
             "anyOf": [
@@ -2349,8 +2344,7 @@
               {
                 "type": "null"
               }
-            ],
-            "description": "Classification of device"
+            ]
           },
           "ophyd_class": {
             "anyOf": [
@@ -2361,8 +2355,7 @@
                 "type": "null"
               }
             ],
-            "title": "Ophyd Class",
-            "description": "Ophyd device class name"
+            "title": "Ophyd Class"
           },
           "module": {
             "anyOf": [
@@ -2373,8 +2366,7 @@
                 "type": "null"
               }
             ],
-            "title": "Module",
-            "description": "Python module containing the device class"
+            "title": "Module"
           },
           "is_movable": {
             "anyOf": [
@@ -2385,8 +2377,7 @@
                 "type": "null"
               }
             ],
-            "title": "Is Movable",
-            "description": "Implements Movable protocol"
+            "title": "Is Movable"
           },
           "is_flyable": {
             "anyOf": [
@@ -2397,8 +2388,7 @@
                 "type": "null"
               }
             ],
-            "title": "Is Flyable",
-            "description": "Implements Flyable protocol"
+            "title": "Is Flyable"
           },
           "is_readable": {
             "anyOf": [
@@ -2409,8 +2399,7 @@
                 "type": "null"
               }
             ],
-            "title": "Is Readable",
-            "description": "Implements Readable protocol"
+            "title": "Is Readable"
           },
           "is_triggerable": {
             "anyOf": [
@@ -2421,8 +2410,7 @@
                 "type": "null"
               }
             ],
-            "title": "Is Triggerable",
-            "description": "Implements Triggerable protocol (has trigger)"
+            "title": "Is Triggerable"
           },
           "is_stageable": {
             "anyOf": [
@@ -2433,8 +2421,7 @@
                 "type": "null"
               }
             ],
-            "title": "Is Stageable",
-            "description": "Implements Stageable protocol (has stage/unstage)"
+            "title": "Is Stageable"
           },
           "is_configurable": {
             "anyOf": [
@@ -2445,8 +2432,7 @@
                 "type": "null"
               }
             ],
-            "title": "Is Configurable",
-            "description": "Implements Configurable protocol (has read_configuration/describe_configuration)"
+            "title": "Is Configurable"
           },
           "is_pausable": {
             "anyOf": [
@@ -2457,8 +2443,7 @@
                 "type": "null"
               }
             ],
-            "title": "Is Pausable",
-            "description": "Implements Pausable protocol (has pause/resume)"
+            "title": "Is Pausable"
           },
           "is_stoppable": {
             "anyOf": [
@@ -2469,8 +2454,7 @@
                 "type": "null"
               }
             ],
-            "title": "Is Stoppable",
-            "description": "Implements Stoppable protocol (has stop)"
+            "title": "Is Stoppable"
           },
           "is_subscribable": {
             "anyOf": [
@@ -2481,8 +2465,7 @@
                 "type": "null"
               }
             ],
-            "title": "Is Subscribable",
-            "description": "Implements Subscribable protocol (has subscribe/clear_sub)"
+            "title": "Is Subscribable"
           },
           "is_checkable": {
             "anyOf": [
@@ -2493,8 +2476,7 @@
                 "type": "null"
               }
             ],
-            "title": "Is Checkable",
-            "description": "Implements Checkable protocol (has check_value)"
+            "title": "Is Checkable"
           },
           "writes_external_assets": {
             "anyOf": [
@@ -2505,8 +2487,7 @@
                 "type": "null"
               }
             ],
-            "title": "Writes External Assets",
-            "description": "Writes external assets (has collect_asset_docs)"
+            "title": "Writes External Assets"
           },
           "pvs": {
             "anyOf": [
@@ -2520,8 +2501,7 @@
                 "type": "null"
               }
             ],
-            "title": "Pvs",
-            "description": "Component name to PV mapping"
+            "title": "Pvs"
           },
           "hints": {
             "anyOf": [
@@ -2533,8 +2513,7 @@
                 "type": "null"
               }
             ],
-            "title": "Hints",
-            "description": "Bluesky hints for plotting/display"
+            "title": "Hints"
           },
           "read_attrs": {
             "anyOf": [
@@ -2548,8 +2527,7 @@
                 "type": "null"
               }
             ],
-            "title": "Read Attrs",
-            "description": "Readable attributes"
+            "title": "Read Attrs"
           },
           "configuration_attrs": {
             "anyOf": [
@@ -2563,8 +2541,7 @@
                 "type": "null"
               }
             ],
-            "title": "Configuration Attrs",
-            "description": "Configuration attributes"
+            "title": "Configuration Attrs"
           },
           "parent": {
             "anyOf": [
@@ -2575,8 +2552,7 @@
                 "type": "null"
               }
             ],
-            "title": "Parent",
-            "description": "Parent device if this is a component"
+            "title": "Parent"
           },
           "labels": {
             "anyOf": [
@@ -2590,8 +2566,7 @@
                 "type": "null"
               }
             ],
-            "title": "Labels",
-            "description": "Device labels for grouping (e.g., 'motors', 'detectors', 'baseline')"
+            "title": "Labels"
           },
           "beamline": {
             "anyOf": [
@@ -2602,8 +2577,7 @@
                 "type": "null"
               }
             ],
-            "title": "Beamline",
-            "description": "Beamline identifier (from happi)"
+            "title": "Beamline"
           },
           "location_group": {
             "anyOf": [
@@ -2614,8 +2588,7 @@
                 "type": "null"
               }
             ],
-            "title": "Location Group",
-            "description": "Location grouping (from happi)"
+            "title": "Location Group"
           },
           "functional_group": {
             "anyOf": [
@@ -2626,8 +2599,7 @@
                 "type": "null"
               }
             ],
-            "title": "Functional Group",
-            "description": "Functional grouping (from happi)"
+            "title": "Functional Group"
           },
           "documentation": {
             "anyOf": [
@@ -2638,12 +2610,12 @@
                 "type": "null"
               }
             ],
-            "title": "Documentation",
-            "description": "Device documentation/description"
+            "title": "Documentation"
           }
         },
         "type": "object",
-        "title": "DeviceMetadataUpdate"
+        "title": "DeviceMetadataUpdate",
+        "description": "Partial of DeviceMetadata for PATCH/PUT updates.\n\nEvery field is Optional with default None so callers can send only\nthe fields they want to change. Pair with ``model_dump(exclude_unset=True)``\nto distinguish \"not sent\" from \"sent as None\". Field set must mirror\nDeviceMetadata \u2014 enforced by test_partial_models_field_parity."
       },
       "DeviceStatusResponse": {
         "properties": {
