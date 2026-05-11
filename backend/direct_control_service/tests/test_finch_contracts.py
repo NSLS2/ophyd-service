@@ -42,7 +42,7 @@ def test_pv_update_event_type_literal(client):
 def test_pv_update_carries_all_value_update_response_fields(client):
     """pv_update must include every key from finch's ``ValueUpdateResponse``.
 
-    ``finch/src/api/ophyd/ophydPVSocketTypes.ts:13-20`` declares:
+    Source: ``finch/src/api/ophyd/ophydPVSocketTypes.ts`` (``ValueUpdateResponse``):
     pv, value, timestamp, connected, read_access, write_access.
     Missing any one of these is an undefined on the finch side.
     """
@@ -68,10 +68,10 @@ def test_pv_update_carries_all_value_update_response_fields(client):
 def test_device_update_event_type_and_device_field(client):
     """device_update envelope must carry ``event_type='device_update'`` + ``device`` field.
 
-    ``finch/src/api/ophyd/ophydDeviceSocketTypes.ts:13-20`` discriminates
-    value updates on the ``device`` key (not ``device_name``). The
-    ``event_type`` literal is our own stable convention from
-    ``DeviceUpdate.event_type`` default.
+    Source: ``finch/src/api/ophyd/ophydDeviceSocketTypes.ts``
+    (``ValueUpdateResponse``) discriminates on the ``device`` key, not
+    ``device_name``. The ``event_type`` literal is our own stable
+    convention from ``DeviceUpdate.event_type`` default.
     """
     from direct_control.models import DeviceInfo
 
@@ -92,9 +92,13 @@ def test_device_update_event_type_and_device_field(client):
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             msg = ws.receive_json()
-            if msg.get("event_type") == "device_update" and msg.get("device") == "fake_motor":
-                assert msg["event_type"] == "device_update"
-                assert msg["device"] == "fake_motor"
+            # Loose predicate so the inner asserts can pin the literals — a
+            # regression like event_type='value' should surface as a specific
+            # assertion message, not pytest.fail's "never received...".
+            if msg.get("device") == "fake_motor" and "event_type" in msg and msg.get("sub_type") is None:
+                assert msg["event_type"] == "device_update", (
+                    f"event_type must literally be 'device_update'; got {msg['event_type']!r}"
+                )
                 assert "device_name" not in msg, (
                     f"device_update still carries legacy 'device_name' field: {msg!r}"
                 )
@@ -106,7 +110,7 @@ def test_device_update_event_type_and_device_field(client):
 def test_meta_envelope_carries_finch_required_keys(client):
     """Meta envelope must include every key from finch's ``MetaUpdateResponseBase`` we emit.
 
-    ``finch/src/api/ophyd/ophydPVSocketTypes.ts:22-35`` declares
+    Source: ``finch/src/api/ophyd/ophydPVSocketTypes.ts`` (``MetaUpdateResponseBase``):
     status, severity, precision, lower_ctrl_limit, upper_ctrl_limit,
     units, enum_strs, sub_type. The ``setpoint_*`` fields finch also
     declares are nullable on its side and intentionally not emitted by
@@ -144,10 +148,10 @@ def test_meta_envelope_carries_finch_required_keys(client):
 def test_error_envelope_full_shape(client):
     """Error envelope must carry ``type='error'``, ``timestamp``, and ``error`` (message text).
 
-    ``finch/src/api/ophyd/ophydPVSocketTypes.ts:9-11`` declares only
-    ``error: string``. The ``type`` and ``timestamp`` fields come from
-    ``send_event`` in ``_envelopes.py`` and are part of our wire
-    schema even though finch doesn't read them.
+    Source: ``finch/src/api/ophyd/ophydPVSocketTypes.ts`` (``ErrorResponse``)
+    declares only ``error: string``. The ``type`` and ``timestamp``
+    fields come from ``send_event`` in ``_envelopes.py`` and are part
+    of our wire schema even though finch doesn't read them.
     """
     with client.websocket_connect("/api/v1/pv-socket") as ws:
         ws.send_json({"action": "set"})  # missing pv + value → send_error
