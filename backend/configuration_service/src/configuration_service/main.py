@@ -259,7 +259,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # Init failure must crash startup — pre-fix behavior was to log+continue,
         # leaving the service "healthy" but every /standalone-pvs/* endpoint
         # returning 501 with the misleading "Set CONFIG_DEVICE_CHANGE_HISTORY_ENABLED=true"
-        # message even though the flag was set. See feedback_no_silent_fallbacks.
+        # message even though the flag was set.
         if settings.device_change_history_enabled:
             pv_store = StandalonePVStore(settings.db_path)
             pv_store.initialize()

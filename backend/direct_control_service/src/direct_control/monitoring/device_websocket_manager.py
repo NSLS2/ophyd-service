@@ -261,8 +261,7 @@ class DeviceWebSocketManager:
         into broken signals (pre-C2, only the first subscriber learned
         about them) and turns each subscribe into an opportunistic retry
         for previously-failed components (the next-subscribe-as-retry
-        policy; see project_technical_debt.md for follow-ups like backoff
-        and registry-drift handling).
+        policy).
 
         Concurrent subscribes to the same device serialize on a per-device
         lock so a second subscriber can't observe an empty failure set

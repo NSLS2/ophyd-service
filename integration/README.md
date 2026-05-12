@@ -97,7 +97,7 @@ This intentionally mirrors how a real beamline boots: start with one known-good 
 
 Minimal vanilla-ophyd shim. Defines `Det`, `Spot`, `RandomWalk`, `Eurotherm`, `Thermo` — all the compound classes referenced by `happi_db.json`. **Not mounted into any container yet** (the loader doesn't import it). Shipped here for the future queueserver pod, where actual device instantiation happens.
 
-Vanilla ophyd only — no `nslsii` dependency, even though `Eurotherm` originated there. The bluesky-pods upstream extracted it specifically to drop that dep; we keep it that way (see the `feedback_community_not_nsls` memory).
+Vanilla ophyd only — no `nslsii` dependency, even though `Eurotherm` originated there. The bluesky-pods upstream extracted it specifically to drop that dep; we keep it that way so this integration env stays community-friendly (no NSLS-II-specific packages).
 
 ## Endpoint exercisers (`exercise/`)
 

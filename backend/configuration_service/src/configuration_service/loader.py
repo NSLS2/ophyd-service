@@ -45,8 +45,7 @@ def _raise_if_partial_load(failures: List[str], total: int, source: str) -> None
     """Refuse to seed from a partial registry.
 
     Pre-2026-05-02 the loader logged per-entry failures then announced a
-    successful "Loaded N devices", silently masking dropped entries. See
-    feedback_no_silent_fallbacks.
+    successful "Loaded N devices", silently masking dropped entries.
     """
     if not failures:
         return
