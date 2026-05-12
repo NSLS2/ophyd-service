@@ -152,6 +152,30 @@ def app():
 
 
 @pytest.fixture
+def install_config_http_stub(app):
+    """Install a ``get_config_http`` override returning a MockTransport-backed client.
+
+    Use in tests that need to stub the configuration_service-facing httpx
+    client. Pass a handler ``(httpx.Request) -> httpx.Response`` and the
+    fixture returns the mock client. MockTransport is in-memory (no real
+    sockets) so no async-close is needed; the override is torn down by
+    the ``app`` fixture's ``dependency_overrides.clear()``.
+    """
+    import httpx
+
+    from direct_control.main import get_config_http
+
+    def install(handler):
+        mock_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url="http://stub"
+        )
+        app.dependency_overrides[get_config_http] = lambda: mock_client
+        return mock_client
+
+    return install
+
+
+@pytest.fixture
 def client(app):
     """FastAPI TestClient. Entering the `with` block runs lifespan."""
     from fastapi.testclient import TestClient
