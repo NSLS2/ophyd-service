@@ -114,8 +114,7 @@ def test_meta_envelope_carries_finch_required_keys(client):
     status, severity, precision, lower_ctrl_limit, upper_ctrl_limit,
     units, enum_strs, sub_type. The ``setpoint_*`` fields finch also
     declares are nullable on its side and intentionally not emitted by
-    the backend today — see project_finch_compat_gaps for that
-    follow-up.
+    the backend today; that's a tracked follow-up.
     """
     required = {
         "sub_type",

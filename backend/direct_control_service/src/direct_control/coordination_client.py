@@ -7,9 +7,6 @@ of that contract:
 
     EE / queueserver  --POST /api/v1/devices/lock-->  configuration_service
     direct_control    --GET  /api/v1/devices/{name}/status-->  configuration_service
-
-See `feedback_direct_control_no_ee_polling` memory for the architectural
-intent.
 """
 
 import httpx

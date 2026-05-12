@@ -170,7 +170,7 @@ class CoordinationStatus(BaseModel):
     Locks are written into configuration_service by queueserver / any plan-
     execution service via ``POST /api/v1/devices/lock``; direct_control reads
     them via ``GET /api/v1/devices/{name}/status``. We never talk to EE or
-    queueserver directly — see feedback_direct_control_no_ee_polling.
+    queueserver directly.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -222,7 +222,6 @@ class PVValue(BaseModel):
     # Default to no access — assume locked-out until EPICS confirms otherwise.
     # Pre-M14 these defaulted to True/True so any construction site that
     # forgot to populate them would advertise the PV as fully writable.
-    # See feedback_no_silent_fallbacks.
     read_access: bool = False
     write_access: bool = False
 

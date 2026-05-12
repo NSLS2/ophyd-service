@@ -54,7 +54,7 @@ class CoordinationService(Protocol):
         This is the CRITICAL A4 coordination check. It reads the device-lock
         state from configuration_service to determine whether the device is
         currently locked by an executing plan. direct_control NEVER talks
-        to EE / queueserver directly — see feedback_direct_control_no_ee_polling.
+        to EE / queueserver directly.
 
         Args:
             device_name: Name of the device to check

@@ -291,11 +291,11 @@ class PVMonitorManager:
         # array whose values were all <256 as a string (after dropping
         # zeros). That collapsed legitimate uint8 readbacks (status bytes,
         # image strips) into garbled chars and silently dropped data.
-        # Per feedback_no_silent_fallbacks, surface arrays as-is; the
-        # ``dtype``/``shape`` fields on PVValue carry the structure for
-        # any client that needs to decode a DBR_CHAR waveform back to
-        # string. EPICS DBR_STRING (≤40 chars) still arrives as ``str``
-        # and falls through; bytes is decoded explicitly below.
+        # Surface arrays as-is; the ``dtype``/``shape`` fields on PVValue
+        # carry the structure for any client that needs to decode a
+        # DBR_CHAR waveform back to string. EPICS DBR_STRING (≤40 chars)
+        # still arrives as ``str`` and falls through; bytes is decoded
+        # explicitly below.
         if isinstance(value, np.ndarray):
             return value.tolist()
         elif isinstance(value, np.integer):
@@ -324,7 +324,7 @@ class PVMonitorManager:
         lower_disp_limit = upper_disp_limit = None
         # Default to no access — assume locked-out until EPICS confirms otherwise.
         # Defaulting write_access=True would let a UI render writable controls for a
-        # PV we never confirmed write access on. See feedback_no_silent_fallbacks.
+        # PV we never confirmed write access on.
         read_access = write_access = False
 
         try:
