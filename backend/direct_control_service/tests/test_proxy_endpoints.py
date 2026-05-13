@@ -86,7 +86,12 @@ def test_get_device_nominal(install_config_http_stub, client):
 
 
 def test_get_device_not_found_returns_404(install_config_http_stub, client):
-    """Upstream 404 propagates with a useful detail."""
+    """Upstream 404 surfaces as a 404 whose detail is the proxy-side ``not_found_msg``.
+
+    ``_config_get`` doesn't forward the upstream's ``detail``; it raises with
+    its own message (``f"Device not found: {device_name}"``), so the
+    assertion below checks for the device name rather than the upstream text.
+    """
 
     def handler(_req: httpx.Request) -> httpx.Response:
         return httpx.Response(404, json={"detail": "no such device"})
