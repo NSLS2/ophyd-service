@@ -1,15 +1,15 @@
 """
-Coverage for the four GET endpoints that proxy to configuration_service:
+Coverage for four GET endpoints:
 
-  - GET /api/v1/devices
-  - GET /api/v1/devices/{name}
-  - GET /api/v1/devices/{name}/bundle
-  - GET /api/v1/pvs/connected  (no proxy — uses pv_monitor directly)
+  - GET /api/v1/devices                       (proxies to configuration_service)
+  - GET /api/v1/devices/{name}                (proxies to configuration_service)
+  - GET /api/v1/devices/{name}/bundle         (proxies to configuration_service)
+  - GET /api/v1/pvs/connected                 (no proxy — uses pv_monitor directly)
 
-Each test uses the ``install_config_http_stub`` fixture (conftest.py) to
-swap the configuration_service-facing httpx client for one backed by an
-``httpx.MockTransport``, so the proxy logic runs end-to-end without a
-live config service.
+The proxy endpoint tests use the ``install_config_http_stub`` fixture
+(conftest.py) to swap the configuration_service-facing httpx client for
+one backed by an ``httpx.MockTransport``, so the proxy logic runs
+end-to-end without a live config service.
 """
 
 import httpx
