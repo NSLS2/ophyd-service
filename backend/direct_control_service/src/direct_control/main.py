@@ -731,18 +731,26 @@ async def enrich_device_paths(
     The endpoint is read-only — it does not write or subscribe — but
     instantiating classic-ophyd compound devices does open EPICS Channel
     Access connections (to fetch type/units/limits during the lazy
-    ``Component`` materialization). Failures are returned per-item; the
-    batch never halts on first error.
+    ``Component`` materialization). Each first-touched device pays a
+    ``wait_for_connection`` of up to a few hundred ms; subsequent items
+    on the cached device are fast. We run the whole batch on a worker
+    thread via ``asyncio.to_thread`` so the event loop stays responsive
+    for other HTTP requests + WebSocket monitor traffic during the wait.
+    Per-device serialization stays inside ``OphydDeviceCache``'s lock,
+    so we don't introduce concurrent first-touches on the same device.
+    Failures are returned per-item; the batch never halts on first error.
     """
-    results: List[EnrichmentResultItem] = [
-        _enrich_one(
-            ophyd_cache,
-            item.device_class_path,
-            item.prefix,
-            item.sub_path,
-        )
-        for item in request.items
-    ]
+    results: List[EnrichmentResultItem] = await asyncio.to_thread(
+        lambda: [
+            _enrich_one(
+                ophyd_cache,
+                item.device_class_path,
+                item.prefix,
+                item.sub_path,
+            )
+            for item in request.items
+        ]
+    )
     return EnrichmentResponse(results=results)
 
 

@@ -115,6 +115,31 @@ def test_enrich_fmt_cpt_with_runtime_placeholder(client):
     assert row["pv_name"] == "IOC:counter"
 
 
+def test_enrich_intermediate_device_returns_not_a_pv_leaf(client):
+    """sub_path landing on an intermediate Device (not a leaf signal)
+    should return NotAPVLeaf — the walked attr exists but exposes neither
+    ``pvname`` (classic ophyd EpicsSignal) nor ``.source`` (ophyd-async
+    Signal), so there's no PV to caput against.
+    """
+    r = client.post(
+        "/api/v1/devices/enrich",
+        json={
+            "items": [
+                {
+                    "device_class_path": f"{__name__}._TestDeviceWithFmtCpt",
+                    "prefix": "IOC:",
+                    "sub_path": "inner",  # lands on the inner Device, not a leaf
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200
+    row = r.json()["results"][0]
+    assert row["ok"] is False
+    assert row["error_type"] == "NotAPVLeaf"
+    assert "not a PV-bearing signal" in row["message"]
+
+
 def test_enrich_unknown_sub_path_returns_no_such_attr(client):
     """A typo'd sub_path should fail per-item with NoSuchAttr."""
     r = client.post(
