@@ -201,6 +201,82 @@ class PVSetBatchResponse(BaseModel):
     results: List[PVSetBatchItemResult]
 
 
+class EnrichmentSpec(BaseModel):
+    """One device-class + sub-path to enrich.
+
+    Sent by configuration_service to direct_control when the
+    configuration_service-side static resolver returns
+    ``needs_enrichment`` (typically an ophyd ``FormattedComponent`` with
+    runtime placeholders like ``{self.parent.prefix}``). Direct-control
+    instantiates the device class once via its ophyd-cache, walks the
+    sub-path with ``operator.attrgetter``, and reports the underlying PV.
+
+    ``sub_path`` is the dotted chain *after* the device name (since
+    direct-control has no registry of its own). For an address like
+    ``m1a.pit.actuate``, the head segment ``m1a`` is consumed by
+    configuration_service for the device lookup; direct-control receives
+    ``sub_path="pit.actuate"`` plus the class path and prefix.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    device_class_path: str = Field(
+        ..., description="Fully qualified import path of the device class."
+    )
+    prefix: str = Field(..., description="EPICS prefix the device is constructed with.")
+    sub_path: str = Field(
+        ...,
+        description=(
+            "Dotted attribute chain to walk on the instantiated device. "
+            "Empty string means the device IS the leaf signal."
+        ),
+    )
+
+
+class EnrichmentRequest(BaseModel):
+    """Batch enrichment request from configuration_service."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: List[EnrichmentSpec] = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Specs to enrich, in caller order. Results match by index.",
+    )
+
+
+class EnrichmentResultItem(BaseModel):
+    """Per-item enrichment outcome.
+
+    Results are returned in the same order as the request items so the
+    caller (configuration_service) can correlate by index — no
+    passthrough identifier needed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    pv_name: Optional[str] = None
+    error_type: Optional[str] = Field(
+        None,
+        description="Short tag identifying the failure category when ok=false.",
+    )
+    message: Optional[str] = None
+
+
+class EnrichmentResponse(BaseModel):
+    """Aggregate enrichment response.
+
+    Per-item results in caller order. Resolution is read-only and never
+    halts — one bad item doesn't fail the others.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    results: List[EnrichmentResultItem]
+
+
 class DeviceCommandRequest(BaseModel):
     """
     Request to execute a device method (High Fidelity Channel).

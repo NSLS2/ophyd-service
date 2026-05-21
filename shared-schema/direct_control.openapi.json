@@ -119,6 +119,45 @@
         }
       }
     },
+    "/api/v1/devices/enrich": {
+      "post": {
+        "summary": "Enrich Device Paths",
+        "description": "Resolve dotted device paths to PV names by live ophyd introspection.\n\nDesigned for configuration_service to call when its static resolver\ncan't fill in an ophyd ``FormattedComponent`` placeholder. For each\n``{device_class_path, prefix, sub_path}`` spec, this endpoint\ninstantiates the device class (cached after the first call) and\nwalks the sub-path to the leaf signal, returning the underlying\nEPICS PV name.\n\nThe endpoint is read-only \u2014 it does not write or subscribe \u2014 but\ninstantiating classic-ophyd compound devices does open EPICS Channel\nAccess connections (to fetch type/units/limits during the lazy\n``Component`` materialization). Failures are returned per-item; the\nbatch never halts on first error.",
+        "operationId": "enrich_device_paths_api_v1_devices_enrich_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrichmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrichmentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/pv/{pv_name}/value": {
       "get": {
         "summary": "Get Pv Value From Controller",
@@ -817,6 +856,122 @@
         ],
         "title": "DeviceCommandResponse",
         "description": "Response from device command execution."
+      },
+      "EnrichmentRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EnrichmentSpec"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Items",
+            "description": "Specs to enrich, in caller order. Results match by index."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "EnrichmentRequest",
+        "description": "Batch enrichment request from configuration_service."
+      },
+      "EnrichmentResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/EnrichmentResultItem"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "title": "EnrichmentResponse",
+        "description": "Aggregate enrichment response.\n\nPer-item results in caller order. Resolution is read-only and never\nhalts \u2014 one bad item doesn't fail the others."
+      },
+      "EnrichmentResultItem": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "pv_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pv Name"
+          },
+          "error_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Type",
+            "description": "Short tag identifying the failure category when ok=false."
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "EnrichmentResultItem",
+        "description": "Per-item enrichment outcome.\n\nResults are returned in the same order as the request items so the\ncaller (configuration_service) can correlate by index \u2014 no\npassthrough identifier needed."
+      },
+      "EnrichmentSpec": {
+        "properties": {
+          "device_class_path": {
+            "type": "string",
+            "title": "Device Class Path",
+            "description": "Fully qualified import path of the device class."
+          },
+          "prefix": {
+            "type": "string",
+            "title": "Prefix",
+            "description": "EPICS prefix the device is constructed with."
+          },
+          "sub_path": {
+            "type": "string",
+            "title": "Sub Path",
+            "description": "Dotted attribute chain to walk on the instantiated device. Empty string means the device IS the leaf signal."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "device_class_path",
+          "prefix",
+          "sub_path"
+        ],
+        "title": "EnrichmentSpec",
+        "description": "One device-class + sub-path to enrich.\n\nSent by configuration_service to direct_control when the\nconfiguration_service-side static resolver returns\n``needs_enrichment`` (typically an ophyd ``FormattedComponent`` with\nruntime placeholders like ``{self.parent.prefix}``). Direct-control\ninstantiates the device class once via its ophyd-cache, walks the\nsub-path with ``operator.attrgetter``, and reports the underlying PV.\n\n``sub_path`` is the dotted chain *after* the device name (since\ndirect-control has no registry of its own). For an address like\n``m1a.pit.actuate``, the head segment ``m1a`` is consumed by\nconfiguration_service for the device lookup; direct-control receives\n``sub_path=\"pit.actuate\"`` plus the class path and prefix."
       },
       "HTTPValidationError": {
         "properties": {
