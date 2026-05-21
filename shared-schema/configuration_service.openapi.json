@@ -2932,10 +2932,11 @@
           "device_not_found",
           "import_failed",
           "no_such_attr",
-          "needs_enrichment"
+          "needs_enrichment",
+          "enrichment_unavailable"
         ],
         "title": "Outcome",
-        "description": "Per-address result kind."
+        "description": "Per-address result kind.\n\n``NEEDS_ENRICHMENT`` and ``ENRICHMENT_UNAVAILABLE`` are distinct: the\nformer means we found a runtime placeholder we can't fill in\nstatically *and* live-enrichment isn't configured for this deploy;\nthe latter means enrichment was attempted (via the direct-control\nclient) and the call failed (network, timeout, 5xx). Frontends can\nbranch \u2014 needs_enrichment is a deploy-config gap while\nenrichment_unavailable is typically transient and worth a retry."
       },
       "PVAccessMode": {
         "type": "string",

@@ -68,6 +68,15 @@ class Settings(BaseSettings):
     # Enable runtime device change history (CRUD endpoints)
     device_change_history_enabled: bool = True
 
+    # Live-enrichment fallback for the path resolver.
+    # When the resolver returns ``needs_enrichment`` (typically a classic
+    # ophyd FormattedComponent with a {placeholder}), configuration_service
+    # asks direct-control to instantiate the device and read the real PV
+    # name. If unset, enrichment is disabled and those paths stay as
+    # ``needs_enrichment`` outcomes (matching pre-feature behavior).
+    direct_control_url: Optional[str] = None
+    direct_control_timeout: float = 10.0
+
     model_config = SettingsConfigDict(
         env_prefix="CONFIG_",
         env_file=".env",

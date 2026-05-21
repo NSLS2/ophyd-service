@@ -231,7 +231,8 @@ which halts on first failure).</p>
 <tr><td class="field">device_not_found</td><td>The head segment (before the first dot) isn't a registered device.</td><td>Frontend bug or stale preset — surface to the operator.</td></tr>
 <tr><td class="field">no_such_attr</td><td>The path is wrong somewhere — typo'd a sub-component, or the device class changed.</td><td>Frontend bug or out-of-date preset against the current device class.</td></tr>
 <tr><td class="field">import_failed</td><td>The device's class can't be imported. Either the class module is missing from the deploy or the happi entry is malformed.</td><td>Deploy issue — surface as an error + alert; operator can't fix it.</td></tr>
-<tr><td class="field">needs_enrichment</td><td>The path hit an ophyd <code>FormattedComponent</code> with a runtime placeholder (e.g. <code>{self.parent.prefix}</code>). Static introspection can't fill that in.</td><td>For now, send the raw PV string for these. A follow-up PR will have direct-control instantiate the device once and report the resolved PV back to config-service — see §8.</td></tr>
+<tr><td class="field">needs_enrichment</td><td>The path hit an ophyd <code>FormattedComponent</code> with a runtime placeholder (e.g. <code>{self.parent.prefix}</code>) and live enrichment isn't configured for this deploy (config-service has no <code>CONFIG_DIRECT_CONTROL_URL</code>). Static introspection can't fill it in alone.</td><td>Either configure live enrichment (point config-service at direct-control), or store a raw PV string for this specific address in the preset table as a fallback.</td></tr>
+<tr><td class="field">enrichment_unavailable</td><td>Live enrichment was attempted but failed — direct-control unreachable (network / timeout / 5xx), or direct-control couldn't instantiate the device (IOC down, missing module). Distinct from <code>needs_enrichment</code>, which means "we never tried".</td><td>Usually transient — retry. Failures are not cached, so the next call will re-attempt. Show the operator a non-blocking "enrichment temporarily unavailable" notice rather than a hard error.</td></tr>
 </table>
 
 <p>Per-item <code>ok</code> is a derived convenience field — it's <code>true</code>
@@ -475,21 +476,6 @@ address the backend can't translate — it usually means the preset is stale
 against the current device registry.</p>
 
 <h2 id="follow-ups">8. Follow-ups (not yet wired up)</h2>
-
-<div class="callout todo">
-<strong>FmtCpt enrichment for paths returning <code>needs_enrichment</code>.</strong>
-Some classic-ophyd device classes use <code>FormattedComponent</code> with
-runtime placeholders like <code>{self.parent.prefix}</code>. The static
-resolver can't fill those in and returns <code>outcome=needs_enrichment</code>.
-The follow-up plan: direct-control instantiates each affected device once
-(no <code>.connect()</code> needed for ophyd-async; classic ophyd needs a
-small instantiate-and-introspect pass), harvests the resolved PV strings,
-and POSTs them back to a new ingestion endpoint on configuration_service.
-The static resolver then checks the cached enrichment data as a fallback.
-Until that ships, the frontend should fall back to a raw PV string for
-those specific addresses (or omit them from the resolve call and store
-the PV directly in the preset table).
-</div>
 
 <div class="callout todo">
 <strong>PV health flags in the device registry.</strong> When a caput fails
