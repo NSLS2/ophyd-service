@@ -277,6 +277,112 @@ def test_device_status_includes_pv_health_for_reported_pvs(client):
     assert pv_health["BL01:SAMPLE:X.RBV"]["state"] == "degraded"
 
 
+# ---------------------------------------------------------------------------
+# Admin endpoints (clear single, clear all, stats)
+# ---------------------------------------------------------------------------
+
+
+def test_delete_pv_health_removes_record(client):
+    """Clearing a PV with a record returns cleared=1; the next GET 404s."""
+    client.post(
+        "/api/v1/pvs/BL01:SAMPLE:X.RBV/failure", json={"message": "ca timeout"}
+    )
+    r = client.delete("/api/v1/pvs/BL01:SAMPLE:X.RBV/health")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"cleared": 1}
+
+    # Record is gone.
+    r = client.get("/api/v1/pvs/BL01:SAMPLE:X.RBV/health")
+    assert r.status_code == 404
+
+
+def test_delete_pv_health_is_idempotent(client):
+    """Clearing a PV with no record returns cleared=0 (not 404). Lets the
+    operator UI fire-and-forget without checking existence first."""
+    r = client.delete("/api/v1/pvs/BL01:SAMPLE:X.RBV/health")
+    assert r.status_code == 200
+    assert r.json() == {"cleared": 0}
+
+
+def test_delete_pv_health_dotted_pv_name(client):
+    """Same routing concern as the POST endpoints — make sure the
+    delete route accepts realistic motor-record PV names."""
+    client.post(
+        "/api/v1/pvs/BL01:SAMPLE:X.VELO/failure", json={"message": "x"}
+    )
+    r = client.delete("/api/v1/pvs/BL01:SAMPLE:X.VELO/health")
+    assert r.status_code == 200
+    assert r.json() == {"cleared": 1}
+
+
+def test_delete_all_pv_health_returns_count(client):
+    """Bulk clear returns the count of removed records."""
+    client.post("/api/v1/pvs/BL01:SAMPLE:X.RBV/failure", json={"message": "a"})
+    client.post("/api/v1/pvs/BL01:SAMPLE:X/failure", json={"message": "b"})
+    client.post("/api/v1/pvs/BL01:DET1:CNT/failure", json={"message": "c"})
+
+    r = client.delete("/api/v1/admin/pv-health")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"cleared": 3}
+
+    # All gone — a follow-up clear-all returns 0.
+    r = client.delete("/api/v1/admin/pv-health")
+    assert r.json() == {"cleared": 0}
+
+
+def test_pv_health_stats_empty(client):
+    """Empty registry returns 0 counts for every state, not missing keys.
+
+    Frontends rely on the per-state keys always being present so they
+    don't have to special-case healthy=missing vs. healthy=0.
+    """
+    r = client.get("/api/v1/admin/pv-health/stats")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tracked_pvs"] == 0
+    assert body["by_state"] == {
+        "healthy": 0,
+        "degraded": 0,
+        "unresponsive": 0,
+    }
+
+
+def test_pv_health_stats_counts_by_state(client):
+    """Stats include all three states and the total matches the sum.
+
+    Uses ``PV_HEALTH_UNRESPONSIVE_THRESHOLD`` rather than hardcoding 3
+    so a future tuning of the threshold doesn't silently shift this
+    test into verifying ``degraded`` instead of ``unresponsive``.
+    """
+    # One degraded (1 failure).
+    client.post("/api/v1/pvs/BL01:SAMPLE:X.RBV/failure", json={})
+    # One unresponsive (threshold-many consecutive failures).
+    for _ in range(PV_HEALTH_UNRESPONSIVE_THRESHOLD):
+        client.post("/api/v1/pvs/BL01:SAMPLE:X/failure", json={})
+    # One previously-failed but now recovered (state=healthy).
+    client.post("/api/v1/pvs/BL01:DET1:CNT/failure", json={})
+    client.post("/api/v1/pvs/BL01:DET1:CNT/success", json={})
+
+    r = client.get("/api/v1/admin/pv-health/stats")
+    body = r.json()
+    assert body["tracked_pvs"] == 3
+    assert body["by_state"] == {
+        "healthy": 1,
+        "degraded": 1,
+        "unresponsive": 1,
+    }
+
+
+def test_delete_pv_health_unregistered_pv_returns_cleared_zero(client):
+    """Unlike POST /failure and POST /success, the DELETE endpoint does
+    NOT gate on registry membership — it's idempotent for any string.
+    Confirms unregistered PVs return 200 with cleared=0 (not 404), so
+    operator UIs don't have to check existence first."""
+    r = client.delete("/api/v1/pvs/IOC:not_registered/health")
+    assert r.status_code == 200
+    assert r.json() == {"cleared": 0}
+
+
 def test_device_status_pv_health_after_failure_then_recovery(client):
     """A failure then a success on the same PV keeps the record (so the
     UI can show 'recovered at <time>') with state flipped to healthy."""

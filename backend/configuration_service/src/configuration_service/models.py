@@ -871,6 +871,68 @@ class PVHealthReport(BaseModel):
     )
 
 
+class PVHealthClearResponse(BaseModel):
+    """Response from the admin clear endpoints.
+
+    ``cleared`` is the count of records actually removed: 0 or 1 for the
+    single-PV endpoint (idempotent on missing records), N for the
+    clear-all endpoint.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    cleared: int = Field(
+        ..., ge=0, description="Number of records removed (never negative)."
+    )
+
+
+class PVHealthStateCounts(BaseModel):
+    """Per-state PV-health record counts.
+
+    Three explicit fields (one per :class:`PVHealthState` value) rather
+    than ``Dict[str, int]`` so the OpenAPI schema actually enforces the
+    "every state is always present" contract — generated SDK clients
+    get proper accessors and can't drift on a future state-machine
+    addition without updating this model in lockstep.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    healthy: int = Field(0, ge=0, description="PVs in the ``healthy`` state.")
+    degraded: int = Field(0, ge=0, description="PVs in the ``degraded`` state.")
+    unresponsive: int = Field(
+        0, ge=0, description="PVs in the ``unresponsive`` state."
+    )
+
+
+class PVHealthStats(BaseModel):
+    """At-a-glance count of PV-health records grouped by state.
+
+    ``tracked_pvs`` is a ``computed_field`` derived from ``by_state``,
+    so the two can never drift out of sync.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    by_state: PVHealthStateCounts = Field(
+        ...,
+        description=(
+            "Count of records grouped by state. All three states are "
+            "always present as fields, zero if no records match."
+        ),
+    )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def tracked_pvs(self) -> int:
+        """Total number of PVs with at least one health record."""
+        return (
+            self.by_state.healthy
+            + self.by_state.degraded
+            + self.by_state.unresponsive
+        )
+
+
 class NestedDeviceComponent(BaseModel):
     """Information about a nested device component."""
 
