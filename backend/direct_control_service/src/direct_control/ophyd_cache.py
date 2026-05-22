@@ -64,29 +64,40 @@ class OphydDeviceCache:
     ) -> CacheEntry:
         """Return the cached device for ``(class_path, prefix)`` or
         instantiate + cache it. Failures are cached too — see module doc.
+
+        Locking discipline: ``_entries`` and ``_key_locks`` are only ever
+        touched under ``_dict_lock``. Instantiation work (the slow,
+        side-effectful part) happens under a per-key lock so two
+        concurrent first-touches on the same key serialize, but
+        first-touches on different keys can proceed in parallel.
         """
         key = CacheKey(device_class_path=device_class_path, prefix=prefix)
 
-        existing = self._entries.get(key)
+        # Fast path: already cached. The dict_lock acquisition is cheap;
+        # we hold it for one dict.get and release immediately.
+        with self._dict_lock:
+            existing = self._entries.get(key)
         if existing is not None:
             return existing
 
-        # Acquire the per-key lock so a second concurrent caller waits
-        # rather than racing the constructor.
+        # Slow path: pick/create the per-key lock and serialize the
+        # actual instantiation.
         with self._dict_lock:
             if key not in self._key_locks:
                 self._key_locks[key] = threading.Lock()
             key_lock = self._key_locks[key]
 
         with key_lock:
-            # Re-check under the lock; another thread may have populated
-            # the entry while we were waiting.
-            existing = self._entries.get(key)
+            # Re-check under the per-key lock; another thread may have
+            # populated the entry while we were waiting.
+            with self._dict_lock:
+                existing = self._entries.get(key)
             if existing is not None:
                 return existing
 
             entry = _instantiate(device_class_path, prefix)
-            self._entries[key] = entry
+            with self._dict_lock:
+                self._entries[key] = entry
             return entry
 
     def evict(self, device_class_path: str, prefix: str) -> bool:

@@ -108,7 +108,27 @@ class DirectControlClient:
                 f"direct-control returned {resp.status_code}: {resp.text[:200]}"
             )
 
-        body = resp.json()
+        # Defend against malformed/garbage responses. A mid-flight wire-
+        # contract drift, a reverse proxy stuffing HTML in front of the
+        # JSON, or a partial response from a flaky network would all
+        # otherwise leave the caller's deferred slots as silent ``None``
+        # placeholders that later get filtered out of the response,
+        # breaking the 1:1 contract with the input addresses.
+        try:
+            body = resp.json()
+            rows = body["results"]
+        except (ValueError, KeyError, TypeError) as e:
+            raise DirectControlUnavailable(
+                f"direct-control returned malformed body: "
+                f"{type(e).__name__}: {e}"
+            ) from e
+
+        if not isinstance(rows, list) or len(rows) != len(specs):
+            raise DirectControlUnavailable(
+                f"direct-control returned {len(rows) if isinstance(rows, list) else type(rows).__name__} "
+                f"results for {len(specs)} requests"
+            )
+
         return [
             EnrichmentResult(
                 ok=row["ok"],
@@ -116,7 +136,7 @@ class DirectControlClient:
                 error_type=row.get("error_type"),
                 message=row.get("message"),
             )
-            for row in body.get("results", [])
+            for row in rows
         ]
 
     async def aclose(self) -> None:
