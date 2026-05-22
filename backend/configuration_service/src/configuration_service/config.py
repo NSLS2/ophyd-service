@@ -68,6 +68,21 @@ class Settings(BaseSettings):
     # Enable runtime device change history (CRUD endpoints)
     device_change_history_enabled: bool = True
 
+    # Live-enrichment fallback for the path resolver.
+    # When the resolver returns ``needs_enrichment`` (typically a classic
+    # ophyd FormattedComponent with a {placeholder}), configuration_service
+    # asks direct-control to instantiate the device and read the real PV
+    # name. If unset, enrichment is disabled and those paths stay as
+    # ``needs_enrichment`` outcomes (matching pre-feature behavior).
+    #
+    # Default timeout 30s budgets for cold-cache batches: per-device
+    # first-touch ≈ 200-500ms (pyepics wait_for_connection), so a 20-
+    # unique-device batch can run several seconds on the first hit.
+    # After warm-up the cache amortizes it; size to your expected
+    # cold batch (unique_devices * 0.5s, with headroom).
+    direct_control_url: Optional[str] = None
+    direct_control_timeout: float = 30.0
+
     model_config = SettingsConfigDict(
         env_prefix="CONFIG_",
         env_file=".env",

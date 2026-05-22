@@ -32,6 +32,9 @@ from .models import (
     DeviceCommandResponse,
     DeviceDisabledError,
     DeviceLockedError,
+    EnrichmentRequest,
+    EnrichmentResponse,
+    EnrichmentResultItem,
     HealthResponse,
     NestedDeviceRequest,
     NestedDeviceResponse,
@@ -44,6 +47,7 @@ from .models import (
     PVSetResponse,
     PVValue,
 )
+from .ophyd_cache import OphydDeviceCache
 from .protocols import CoordinationService, DeviceControl, PVMonitor
 from .registry_client import RegistryClient, RegistryValidationError
 
@@ -123,6 +127,7 @@ async def lifespan(app: FastAPI):
     app.state.pv_monitor = pv_monitor
     app.state.ws_manager = ws_manager
     app.state.device_ws_manager = device_ws_manager
+    app.state.ophyd_cache = OphydDeviceCache()
 
     logger.info(
         "Service initialized",
@@ -195,6 +200,10 @@ def get_ws_manager():
 
 def get_device_ws_manager():
     return app.state.device_ws_manager
+
+
+def get_ophyd_cache() -> OphydDeviceCache:
+    return app.state.ophyd_cache
 
 
 # ----- PV value response builder (tiled-style content negotiation) -----
@@ -620,6 +629,129 @@ async def set_pv_batch(
         requested=len(request.caputs),
         results=results,
     )
+
+
+# ophyd-async Signal.source URIs carry a backend scheme prefix; the
+# downstream PV-write path expects bare PV strings. Listed schemes are
+# the ones ophyd-async ships today; any new transport would need to be
+# added here. (configuration_service uses a regex for the same purpose
+# at a different boundary; the explicit list here makes the supported
+# set visible at direct-control's edge.)
+_SIGNAL_SOURCE_SCHEMES = ("ca://", "pva://", "mock://", "soft://")
+
+
+def _extract_pv_name(leaf) -> Optional[str]:
+    """Read the PV name off a leaf signal, framework-agnostic.
+
+    Returns ``pvname`` for classic-ophyd ``EpicsSignal``-style leaves,
+    the scheme-stripped ``source`` for ophyd-async ``Signal`` leaves, or
+    ``None`` if the object exposes neither (i.e. not a PV-bearing leaf).
+    """
+    pvname = getattr(leaf, "pvname", None)
+    if pvname:
+        return pvname
+    source = getattr(leaf, "source", None)
+    if source:
+        pv = str(source)
+        for scheme in _SIGNAL_SOURCE_SCHEMES:
+            if pv.startswith(scheme):
+                return pv[len(scheme):]
+        return pv
+    return None
+
+
+def _enrich_one(
+    cache: OphydDeviceCache,
+    device_class_path: str,
+    prefix: str,
+    sub_path: str,
+) -> EnrichmentResultItem:
+    """Walk one ``(class, prefix, sub_path)`` to a leaf PV name.
+
+    Live ophyd-cache access opens EPICS connections under the hood (the
+    Component descriptor's lazy ``create_component`` calls
+    ``wait_for_connection``). For an ophyd-async device the source URI
+    appears in ``.source`` once the signal is constructed — no connection
+    needed.
+    """
+    import operator
+
+    cache_entry = cache.get_or_instantiate(device_class_path, prefix)
+    if cache_entry.device is None:
+        return EnrichmentResultItem(
+            ok=False,
+            error_type="InstantiationFailed",
+            message=cache_entry.error,
+        )
+
+    device = cache_entry.device
+    try:
+        leaf = operator.attrgetter(sub_path)(device) if sub_path else device
+    except AttributeError as e:
+        return EnrichmentResultItem(
+            ok=False,
+            error_type="NoSuchAttr",
+            message=f"walking {sub_path!r}: {e}",
+        )
+    except Exception as e:  # noqa: BLE001 — capture EPICS connect failures etc.
+        return EnrichmentResultItem(
+            ok=False,
+            error_type=type(e).__name__,
+            message=str(e),
+        )
+
+    pv_name = _extract_pv_name(leaf)
+    if pv_name:
+        return EnrichmentResultItem(ok=True, pv_name=pv_name)
+
+    return EnrichmentResultItem(
+        ok=False,
+        error_type="NotAPVLeaf",
+        message=(
+            f"leaf at {sub_path!r} has no .pvname (classic ophyd) "
+            f"or .source (ophyd-async); not a PV-bearing signal"
+        ),
+    )
+
+
+@app.post("/api/v1/devices/enrich", response_model=EnrichmentResponse)
+async def enrich_device_paths(
+    request: EnrichmentRequest,
+    ophyd_cache: OphydDeviceCache = Depends(get_ophyd_cache),
+):
+    """Resolve dotted device paths to PV names by live ophyd introspection.
+
+    Designed for configuration_service to call when its static resolver
+    can't fill in an ophyd ``FormattedComponent`` placeholder. For each
+    ``{device_class_path, prefix, sub_path}`` spec, this endpoint
+    instantiates the device class (cached after the first call) and
+    walks the sub-path to the leaf signal, returning the underlying
+    EPICS PV name.
+
+    The endpoint is read-only — it does not write or subscribe — but
+    instantiating classic-ophyd compound devices does open EPICS Channel
+    Access connections (to fetch type/units/limits during the lazy
+    ``Component`` materialization). Each first-touched device pays a
+    ``wait_for_connection`` of up to a few hundred ms; subsequent items
+    on the cached device are fast. We run the whole batch on a worker
+    thread via ``asyncio.to_thread`` so the event loop stays responsive
+    for other HTTP requests + WebSocket monitor traffic during the wait.
+    Per-device serialization stays inside ``OphydDeviceCache``'s lock,
+    so we don't introduce concurrent first-touches on the same device.
+    Failures are returned per-item; the batch never halts on first error.
+    """
+    results: List[EnrichmentResultItem] = await asyncio.to_thread(
+        lambda: [
+            _enrich_one(
+                ophyd_cache,
+                item.device_class_path,
+                item.prefix,
+                item.sub_path,
+            )
+            for item in request.items
+        ]
+    )
+    return EnrichmentResponse(results=results)
 
 
 @app.get("/api/v1/pv/{pv_name}/value")

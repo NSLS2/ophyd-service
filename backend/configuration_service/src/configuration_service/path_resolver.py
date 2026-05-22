@@ -40,13 +40,23 @@ _URI_SCHEME_RE = re.compile(r"^[a-z]+://")
 
 
 class Outcome(str, Enum):
-    """Per-address result kind."""
+    """Per-address result kind.
+
+    ``NEEDS_ENRICHMENT`` and ``ENRICHMENT_UNAVAILABLE`` are distinct: the
+    former means we found a runtime placeholder we can't fill in
+    statically *and* live-enrichment isn't configured for this deploy;
+    the latter means enrichment was attempted (via the direct-control
+    client) and the call failed (network, timeout, 5xx). Frontends can
+    branch — needs_enrichment is a deploy-config gap while
+    enrichment_unavailable is typically transient and worth a retry.
+    """
 
     RESOLVED = "resolved"
     DEVICE_NOT_FOUND = "device_not_found"
     IMPORT_FAILED = "import_failed"
     NO_SUCH_ATTR = "no_such_attr"
     NEEDS_ENRICHMENT = "needs_enrichment"
+    ENRICHMENT_UNAVAILABLE = "enrichment_unavailable"
 
 
 @dataclass(frozen=True)
