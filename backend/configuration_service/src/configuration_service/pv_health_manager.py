@@ -144,3 +144,20 @@ class PVHealthManager:
         """Best-effort record count (no lock). Safe to read under the GIL
         but the result is a point-in-time estimate."""
         return len(self._records)
+
+    async def stats(self) -> Dict[str, int]:
+        """Return a count of records grouped by ``PVHealthState``.
+
+        Used by the admin stats endpoint for an at-a-glance "how many
+        PVs are unhealthy?" view. Every state in :class:`PVHealthState`
+        is present in the result (zero if no records match), so
+        downstream UIs don't have to special-case missing keys.
+        """
+        # Import the enum lazily so this module stays cheap to import.
+        from .models import PVHealthState
+
+        async with self._lock:
+            counts: Dict[str, int] = {s.value: 0 for s in PVHealthState}
+            for record in self._records.values():
+                counts[record.state.value] += 1
+            return counts

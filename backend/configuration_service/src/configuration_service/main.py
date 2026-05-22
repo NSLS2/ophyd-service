@@ -55,8 +55,10 @@ from .models import (
     PathResolveRequest,
     PathResolveResponse,
     PathResolveResultItem,
+    PVHealthClearResponse,
     PVHealthRecord,
     PVHealthReport,
+    PVHealthStats,
 )
 from .path_resolver import Outcome, resolve as resolve_path
 from .direct_control_client import (
@@ -1027,6 +1029,64 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 ),
             )
         return record
+
+    @app.delete(
+        "/api/v1/pvs/{pv_name:path}/health",
+        response_model=PVHealthClearResponse,
+        summary="Clear PV Health Record",
+        description=(
+            "Idempotently drops the in-memory health record for "
+            "``pv_name``. Useful when an operator wants to ack a PV "
+            "that's been marked ``unresponsive`` by past failures so "
+            "the UI no longer shows the warning. Returns "
+            "``cleared: 1`` if a record was actually removed, "
+            "``cleared: 0`` if no record existed (still 200, idempotent)."
+        ),
+        tags=["PV Health"],
+    )
+    async def clear_pv_health(
+        pv_name: str,
+        pv_health: PVHealthDep,
+    ) -> PVHealthClearResponse:
+        removed = await pv_health.clear(pv_name)
+        return PVHealthClearResponse(cleared=1 if removed else 0)
+
+    @app.delete(
+        "/api/v1/admin/pv-health",
+        response_model=PVHealthClearResponse,
+        summary="Clear All PV Health Records",
+        description=(
+            "Wipes every in-memory health record. Returns the count of "
+            "records removed. Intended for ops use (e.g. after IOC "
+            "maintenance) — there's no per-PV gate, so call deliberately."
+        ),
+        tags=["PV Health"],
+    )
+    async def clear_all_pv_health(
+        pv_health: PVHealthDep,
+    ) -> PVHealthClearResponse:
+        return PVHealthClearResponse(cleared=await pv_health.clear_all())
+
+    @app.get(
+        "/api/v1/admin/pv-health/stats",
+        response_model=PVHealthStats,
+        summary="Get PV Health Aggregate Stats",
+        description=(
+            "Returns the total tracked PV count plus a per-state count "
+            "(healthy / degraded / unresponsive). Every state appears as "
+            "a key in ``by_state`` even if its count is zero, so callers "
+            "never have to special-case missing keys."
+        ),
+        tags=["PV Health"],
+    )
+    async def get_pv_health_stats(
+        pv_health: PVHealthDep,
+    ) -> PVHealthStats:
+        by_state = await pv_health.stats()
+        return PVHealthStats(
+            tracked_pvs=sum(by_state.values()),
+            by_state=by_state,
+        )
 
     # ===== Device Enable/Disable Endpoints =====
     # These must be defined before the {device_name} wildcard routes.

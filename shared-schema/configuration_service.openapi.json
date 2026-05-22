@@ -759,6 +759,91 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "PV Health"
+        ],
+        "summary": "Clear PV Health Record",
+        "description": "Idempotently drops the in-memory health record for ``pv_name``. Useful when an operator wants to ack a PV that's been marked ``unresponsive`` by past failures so the UI no longer shows the warning. Returns ``cleared: 1`` if a record was actually removed, ``cleared: 0`` if no record existed (still 200, idempotent).",
+        "operationId": "clear_pv_health_api_v1_pvs__pv_name__health_delete",
+        "parameters": [
+          {
+            "name": "pv_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pv Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PVHealthClearResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/pv-health": {
+      "delete": {
+        "tags": [
+          "PV Health"
+        ],
+        "summary": "Clear All PV Health Records",
+        "description": "Wipes every in-memory health record. Returns the count of records removed. Intended for ops use (e.g. after IOC maintenance) \u2014 there's no per-PV gate, so call deliberately.",
+        "operationId": "clear_all_pv_health_api_v1_admin_pv_health_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PVHealthClearResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/pv-health/stats": {
+      "get": {
+        "tags": [
+          "PV Health"
+        ],
+        "summary": "Get PV Health Aggregate Stats",
+        "description": "Returns the total tracked PV count plus a per-state count (healthy / degraded / unresponsive). Every state appears as a key in ``by_state`` even if its count is zero, so callers never have to special-case missing keys.",
+        "operationId": "get_pv_health_stats_api_v1_admin_pv_health_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PVHealthStats"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/devices/{device_name}/enable": {
@@ -3104,6 +3189,22 @@
         "title": "PVAccessMode",
         "description": "Access mode for standalone PVs."
       },
+      "PVHealthClearResponse": {
+        "properties": {
+          "cleared": {
+            "type": "integer",
+            "title": "Cleared",
+            "description": "Number of records removed."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "cleared"
+        ],
+        "title": "PVHealthClearResponse",
+        "description": "Response from the admin clear endpoints.\n\n``cleared`` is the count of records actually removed: 0 or 1 for the\nsingle-PV endpoint (idempotent on missing records), N for the\nclear-all endpoint."
+      },
       "PVHealthRecord": {
         "properties": {
           "pv_name": {
@@ -3193,6 +3294,31 @@
         ],
         "title": "PVHealthState",
         "description": "Per-PV health state derived from recent caput outcomes.\n\nDirect-control reports each caput's outcome (success or failure) back\nto configuration_service. The state is computed from the consecutive-\nfailure counter so a single successful caput always resets to healthy.\n\nFrontends should color-code by state and surface ``unresponsive`` PVs\nprominently \u2014 they typically mean the IOC is down or a PV has been\ndeleted from it."
+      },
+      "PVHealthStats": {
+        "properties": {
+          "tracked_pvs": {
+            "type": "integer",
+            "title": "Tracked Pvs",
+            "description": "Total number of PVs with at least one health record."
+          },
+          "by_state": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "By State",
+            "description": "Count of records grouped by state: ``healthy / degraded / unresponsive``."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tracked_pvs",
+          "by_state"
+        ],
+        "title": "PVHealthStats",
+        "description": "At-a-glance count of PV-health records grouped by state.\n\nEvery ``PVHealthState`` value is present as a key in ``by_state``\n(zero if no records match), so frontends can render the four-state\ntally without checking for missing keys."
       },
       "PVMetadata": {
         "properties": {

@@ -871,6 +871,41 @@ class PVHealthReport(BaseModel):
     )
 
 
+class PVHealthClearResponse(BaseModel):
+    """Response from the admin clear endpoints.
+
+    ``cleared`` is the count of records actually removed: 0 or 1 for the
+    single-PV endpoint (idempotent on missing records), N for the
+    clear-all endpoint.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    cleared: int = Field(..., description="Number of records removed.")
+
+
+class PVHealthStats(BaseModel):
+    """At-a-glance count of PV-health records grouped by state.
+
+    Every ``PVHealthState`` value is present as a key in ``by_state``
+    (zero if no records match), so frontends can render the four-state
+    tally without checking for missing keys.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tracked_pvs: int = Field(
+        ..., description="Total number of PVs with at least one health record."
+    )
+    by_state: Dict[str, int] = Field(
+        ...,
+        description=(
+            "Count of records grouped by state: "
+            "``healthy / degraded / unresponsive``."
+        ),
+    )
+
+
 class NestedDeviceComponent(BaseModel):
     """Information about a nested device component."""
 
