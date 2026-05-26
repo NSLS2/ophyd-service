@@ -1,0 +1,154 @@
+"""Simulated synApps scaler IOC for the IOS demo.
+
+Serves the PVs at prefix ``XF:23ID2-ES{Sclr:1}.*`` referenced by the IOS
+happi entry ``ios_devs.DodgyEpicsScaler``.
+
+Dynamics:
+    * Writing ``.CNT`` = 1 starts a preset-time count: the IOC clears
+      ``.S1``..``.S4`` and ``.T``, then increments them at simulated rates
+      every TICK_S seconds until ``.T`` reaches ``.TP``. ``.CNT`` then
+      auto-clears to 0 (busy/done semantics).
+    * Writing ``.CNT`` = 0 mid-count aborts; ``.S{N}`` retain their current
+      values, ``.T`` retains current elapsed.
+
+Subset: 4 channels (.S1-.S4 + .NM1-.NM4) — synApps supports 32 but the
+IOS preset only touches the first few. Rates per channel are deterministic
+(no noise) for stable tests.
+
+Phase 3 of the IOS use case (dynamic IOCs).
+"""
+
+import asyncio
+import logging
+
+from caproto.server import PVGroup, ioc_arg_parser, pvproperty, run
+
+
+log = logging.getLogger(__name__)
+
+
+# Simulated clock frequency (Hz). Real synApps scalers often run at 10 MHz.
+CLOCK_FREQ_HZ = 1.0e7
+
+# Background channel count rates (cts/sec). Index 0 = .S1, etc.
+# .S1 is the clock channel (ticks at CLOCK_FREQ_HZ); .S2..S4 are detectors.
+_CHANNEL_RATES = (
+    CLOCK_FREQ_HZ,  # S1: clock
+    50_000.0,       # S2: I0 monitor
+    5_000.0,        # S3: PD
+    1_000.0,        # S4: aumesh
+)
+
+N_CHANNELS = len(_CHANNEL_RATES)
+
+# Tick period for the counting loop (seconds).
+TICK_S = 0.05
+
+
+class ScalerIOC(PVGroup):
+    """synApps scaler at XF:23ID2-ES{Sclr:1}.*"""
+
+    # ─── Acquisition control ─────────────────────────────────────────────
+    # caproto stores integers for our purposes. Real scaler uses bo/bi
+    # records; the IOS exerciser writes 1/0 and reads the value back.
+    CNT = pvproperty(value=0, name=".CNT")
+    CONT = pvproperty(value=0, name=".CONT")  # 0 = One-shot, 1 = AutoCount
+    TP = pvproperty(value=1.0, name=".TP", precision=4, units="s")
+    T = pvproperty(
+        value=0.0, name=".T", read_only=True, precision=4, units="s"
+    )
+    FREQ = pvproperty(
+        value=CLOCK_FREQ_HZ,
+        name=".FREQ",
+        read_only=True,
+        precision=2,
+        units="Hz",
+    )
+
+    # ─── Channel counts (S1-S4) and names (NM1-NM4) ──────────────────────
+    S1 = pvproperty(value=0, name=".S1", read_only=True)
+    S2 = pvproperty(value=0, name=".S2", read_only=True)
+    S3 = pvproperty(value=0, name=".S3", read_only=True)
+    S4 = pvproperty(value=0, name=".S4", read_only=True)
+    NM1 = pvproperty(value="clock", name=".NM1", report_as_string=True, max_length=40)
+    NM2 = pvproperty(value="I0", name=".NM2", report_as_string=True, max_length=40)
+    NM3 = pvproperty(value="PD", name=".NM3", report_as_string=True, max_length=40)
+    NM4 = pvproperty(value="aumesh", name=".NM4", report_as_string=True, max_length=40)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._count_task: asyncio.Task | None = None
+
+    @CNT.putter
+    async def _on_cnt_write(self, _instance, value):
+        if value:
+            # Start a new count. If a previous count is in flight, cancel
+            # it cleanly first.
+            if self._count_task and not self._count_task.done():
+                self._count_task.cancel()
+                try:
+                    await self._count_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            self._count_task = asyncio.create_task(self._run_count())
+            self._count_task.add_done_callback(self._on_count_done)
+        else:
+            # CNT=0 aborts; current S{N} and T values are retained.
+            if self._count_task and not self._count_task.done():
+                self._count_task.cancel()
+
+    def _on_count_done(self, task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.error("scaler count task crashed: %s", exc, exc_info=exc)
+
+    async def _run_count(self):
+        tp = float(self.TP.value)
+        if tp <= 0:
+            raise ValueError(f"TP must be > 0; got {tp}")
+        # Zero the channels and elapsed time.
+        await self.T.write(0.0)
+        await self.S1.write(0)
+        await self.S2.write(0)
+        await self.S3.write(0)
+        await self.S4.write(0)
+        chan_pvs = (self.S1, self.S2, self.S3, self.S4)
+        elapsed = 0.0
+        try:
+            while elapsed < tp:
+                # Sleep first, then update — keeps the asyncio cancellation
+                # point at the start of each iteration.
+                tick = min(TICK_S, tp - elapsed)
+                await asyncio.sleep(tick)
+                elapsed += tick
+                await self.T.write(elapsed)
+                for pv, rate in zip(chan_pvs, _CHANNEL_RATES):
+                    await pv.write(int(rate * elapsed))
+            # Final exact-value pin in case rounding drifted.
+            await self.T.write(tp)
+            for pv, rate in zip(chan_pvs, _CHANNEL_RATES):
+                await pv.write(int(rate * tp))
+        finally:
+            # Auto-clear CNT regardless of how we exited (normal completion
+            # OR external CNT=0 abort that cancelled this task).
+            try:
+                await self.CNT.write(0)
+            except Exception:
+                log.exception("scaler CNT auto-clear failed")
+
+
+def main():
+    # Prefix has matched braces; escape both. After expansion:
+    # XF:23ID2-ES{Sclr:1}. Per-PV names start with '.' (record fields).
+    ioc_options, run_options = ioc_arg_parser(
+        default_prefix="XF:23ID2-ES{{Sclr:1}}",
+        desc="IOS synApps scaler simulation IOC (.CNT/.TP/.S1..S4 preset-time count).",
+    )
+    ioc = ScalerIOC(**ioc_options)
+    run(ioc.pvdb, **run_options)
+
+
+if __name__ == "__main__":
+    main()
