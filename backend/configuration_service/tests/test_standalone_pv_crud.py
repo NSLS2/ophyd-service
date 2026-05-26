@@ -324,21 +324,46 @@ class TestCreateStandalonePVEndpoint:
     @pytest.mark.parametrize(
         "bad_pv_name",
         [
-            " ",          # single space (1 char — passes min_length but no PV)
-            "\t",         # tab
-            "   ",        # multi-space
-            "foo bar",    # embedded space
-            "foo\tbar",   # embedded tab
-            "foo\nbar",   # embedded newline (real risk from exerciser pv_for if jq emits multiple rows)
+            # ── ASCII whitespace (rejected by pattern) ─────────────────
+            " ",         # single space
+            "\t",        # tab
+            "\r",        # carriage return
+            "\n",        # newline
+            "\v",        # vertical tab
+            "\f",        # form feed
+            "   ",       # multi-space
+            "foo bar",   # embedded space
+            "foo\tbar",  # embedded tab
+            "foo\nbar",  # embedded newline (real risk from exerciser pv_for multi-row)
+            "foo\rbar",  # embedded CR
+            # ── ASCII control characters (rejected by pattern) ─────────
+            # NUL is the worst — silently terminates C strings in downstream
+            # consumers (CA name compare, epicsString*), making the PV
+            # present as the substring-before-NUL in some layers and as the
+            # full bytes in others.
+            "foo\x00bar",  # NUL
+            "foo\x07bar",  # BEL
+            "foo\x1bbar",  # ESC
+            "foo\x7fbar",  # DEL (0x7f, just past printable range)
+            # ── Unicode whitespace / zero-width (rejected by pattern) ──
+            "\xa0",          # non-breaking space U+00A0
+            "foo bar",  # NBSP in the middle
+            "foo​bar",  # ZWSP (zero-width space — visually invisible)
+            "foo‌bar",  # ZWNJ
+            "foo‍bar",  # ZWJ
+            "foo﻿bar",  # BOM
+            "　",        # ideographic space
         ],
     )
-    def test_create_pv_whitespace_name_rejected(self, client, bad_pv_name):
-        """Whitespace-only or whitespace-containing pv_names are rejected.
+    def test_create_pv_invalid_chars_rejected(self, client, bad_pv_name):
+        """Reject any pv_name with whitespace, ASCII controls, or non-ASCII.
 
-        EPICS PV names never contain whitespace, and whitespace-containing
-        names reach the same unrecoverable registry-entry failure mode as
-        empty names through a different input shape (URL-encoded space
-        round-trips inconsistently; embedded newlines break monitor packets).
+        All three classes hit the same unrecoverable-registry-entry failure
+        mode as the empty-string case through different input shapes:
+        whitespace round-trips inconsistently through URL encoding; NUL
+        truncates downstream C-string consumers; zero-width Unicode chars
+        render identically to a different name so typed-delete-by-name
+        misses. EPICS PV names are always printable ASCII.
         """
         response = client.post("/api/v1/pvs", json={"pv_name": bad_pv_name})
         assert response.status_code == 422, (
