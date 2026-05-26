@@ -11,11 +11,12 @@
 # Services:
 #   ios_pgm                — caproto PGM IOC (XF:23ID2-OP{Mono prefix), Phase 1
 #   ios_curramp            — three SR570 current amps (XF:23ID2-ES{CurrAmp:1/2/3}), Phase 2
-#   ios_epu                — EPU1 + EPU2 echo (XF:23ID-ID{EPU:1/2}), Phase 2
+#   ios_epu                — EPU1 + EPU2 (XF:23ID-ID{EPU:1/2}, FLT/RLT calc), Phases 2+3
+#   ios_vortex             — Vortex MCA with 8 ROIs (XF:23ID2-ES{Vortex}), Phase 3
+#   ios_scaler             — synApps scaler (XF:23ID2-ES{Sclr:1}, 4 channels), Phase 3
+#   ios_feedback           — M1B1 PID feedback (XF:23ID2-OP{FBck}), Phase 3
 #   configuration_service  — registry, loaded from integration/happi/sites/ios/happi_db.json
 #   direct_control_service — WS/REST PV commanding
-#
-# Later phases will add ios_vortex, ios_scaler, ios_feedback as sibling services.
 #
 # Relative paths assume this file lives at integration/pods/ios/, so
 # `../..` reaches integration/ and `../../..` reaches the ophyd-service root.
@@ -57,6 +58,33 @@ services:
       timeout: 2s
       retries: 10
 
+  ios_vortex:
+    <<: *ioc-base
+    command: ["python", "/app/ioc_ios_vortex.py", "--list-pvs", "--interfaces", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f ioc_ios_vortex > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  ios_scaler:
+    <<: *ioc-base
+    command: ["python", "/app/ioc_ios_scaler.py", "--list-pvs", "--interfaces", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f ioc_ios_scaler > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  ios_feedback:
+    <<: *ioc-base
+    command: ["python", "/app/ioc_ios_feedback.py", "--list-pvs", "--interfaces", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f ioc_ios_feedback > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
   configuration_service:
     build:
       context: ../../../backend/configuration_service
@@ -87,7 +115,7 @@ services:
       # pyepics: point CA search at every IOC service in the pod. AUTO_ADDR_LIST
       # off means no broadcast — explicit list keeps search packets on the
       # compose network.
-      EPICS_CA_ADDR_LIST: "ios_pgm ios_curramp ios_epu"
+      EPICS_CA_ADDR_LIST: "ios_pgm ios_curramp ios_epu ios_vortex ios_scaler ios_feedback"
       EPICS_CA_AUTO_ADDR_LIST: "NO"
     ports:
       - "8003:8003"
@@ -99,4 +127,10 @@ services:
       ios_curramp:
         condition: service_healthy
       ios_epu:
+        condition: service_healthy
+      ios_vortex:
+        condition: service_healthy
+      ios_scaler:
+        condition: service_healthy
+      ios_feedback:
         condition: service_healthy

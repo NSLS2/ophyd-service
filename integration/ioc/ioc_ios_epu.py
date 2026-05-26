@@ -1,13 +1,16 @@
-"""Simulated EPU IOC for the IOS demo — echo-only behavior.
+"""Simulated EPU IOC for the IOS demo.
 
 Serves the PVs at prefix ``XF:23ID-ID{EPU:N}`` (N = 1, 2) that the IOS
 happi entries reference via ``ios_devs.EPU1`` / ``ios_devs.EPU2``. EPU1
 exposes gap, phase, FLT interpolator, RLT interpolator, and table-select;
 EPU2 exposes just gap and phase.
 
-Echo-only: caput stores the new value, no dynamics. FLT calc (output =
-f(input, offset, table)) is deferred to Phase 3 — the Phase 2 fixture
-only needs the periodic-table preset to be applied and read back.
+Phase 2 was echo-only. Phase 3 adds FLT/RLT calc dynamics: writing
+``Val:Inp1-SP`` or ``Val:InpOff1-SP`` recomputes the corresponding
+``Val:Out1-I`` as ``Inp1-SP + InpOff1-SP``. Real-beamline interpolator
+uses a lookup table indexed by the table-select; the linear sum here is
+the simplest dynamic that lets the exerciser verify a non-echo readback
+without standing up the table data.
 
 Reference: ``ios-profile-collection/startup/10-machine.py``::
 
@@ -134,6 +137,27 @@ class IosEpuIOC(PVGroup):
     epu2_phase_i  = _ro_float(":2-Ax:Phase}}Pos-I", initial=0.0, units="mm")
     epu2_phase_sp = _rw_float(":2-Ax:Phase}}Pos-SP", initial=0.0, units="mm")
 
+    # ─── FLT / RLT calc (Phase 3) ────────────────────────────────────────
+    # Writing Inp1-SP or InpOff1-SP recomputes Out1-I = Inp1-SP + InpOff1-SP.
+    # Pure linear sum, not the real lookup-table interpolation. Sufficient
+    # for the exerciser to verify a non-echo output responds to either input.
+
+    @epu1_flt_inp.putter
+    async def _on_flt_inp(self, _instance, value):
+        await self.epu1_flt_out_i.write(float(value) + float(self.epu1_flt_inp_off.value))
+
+    @epu1_flt_inp_off.putter
+    async def _on_flt_off(self, _instance, value):
+        await self.epu1_flt_out_i.write(float(self.epu1_flt_inp.value) + float(value))
+
+    @epu1_rlt_inp.putter
+    async def _on_rlt_inp(self, _instance, value):
+        await self.epu1_rlt_out_i.write(float(value) + float(self.epu1_rlt_inp_off.value))
+
+    @epu1_rlt_inp_off.putter
+    async def _on_rlt_off(self, _instance, value):
+        await self.epu1_rlt_out_i.write(float(self.epu1_rlt_inp.value) + float(value))
+
 
 def main():
     # caproto runs the prefix through str.format() for macro expansion; the
@@ -142,7 +166,7 @@ def main():
     # and the closing brace ("}}" → "}") before its component name.
     ioc_options, run_options = ioc_arg_parser(
         default_prefix="XF:23ID-ID{{EPU",
-        desc="IOS EPU undulator simulation IOC — echo only, no FLT calc dynamics.",
+        desc="IOS EPU undulator simulation IOC — gap/phase echo + FLT/RLT calc.",
     )
     ioc = IosEpuIOC(**ioc_options)
     run(ioc.pvdb, **run_options)
