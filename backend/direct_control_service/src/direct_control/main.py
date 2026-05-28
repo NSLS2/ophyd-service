@@ -1025,10 +1025,18 @@ async def _config_get(
     if response.status_code == 404:
         raise HTTPException(status_code=404, detail=not_found_msg)
     if response.status_code != 200:
-        raise HTTPException(
-            status_code=response.status_code,
-            detail="Failed to fetch from configuration service",
-        )
+        # Surface the upstream detail (e.g. a 422's field-level validation
+        # error for a bad query param) rather than masking every non-200 as a
+        # generic fetch failure — a forwarded 4xx is a client error, not an
+        # outage. Fall back to the generic message for non-JSON bodies.
+        detail: Any = "Failed to fetch from configuration service"
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        if isinstance(body, dict) and "detail" in body:
+            detail = body["detail"]
+        raise HTTPException(status_code=response.status_code, detail=detail)
     return response.json()
 
 

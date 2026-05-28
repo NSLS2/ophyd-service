@@ -107,6 +107,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: |
+            backend/configuration_service/pyproject.toml
+            backend/direct_control_service/pyproject.toml
 
       - name: Install both backends + test deps
         # Both packages share fastapi/ophyd/httpx, so they co-install in one

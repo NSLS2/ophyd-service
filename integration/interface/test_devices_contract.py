@@ -60,25 +60,29 @@ async def test_list_unfiltered_parity(direct_client, config_client):
 
 # ── Filter forwarding + parity ──────────────────────────────────────────
 
-FILTER_QUERIES = [
-    "device_label=motor",
-    "device_label=detector",
-    "ophyd_class=EpicsMotor",
-    "ophyd_class=EpicsScaler",
-    "movable=true",
-    "movable=false",
-    "readable=true",
-    "readable=false",
-    "flyable=true",
-    "flyable=false",
-    "pattern=cam*",
-    "pattern=sample*",
-    "device_label=detector&readable=true",
-    "device_label=motor&movable=true",
+# Single source of truth: (query string, expected sorted name list) against the
+# mock registry. Both the parity test and the narrows test derive from this, so
+# they can't drift apart (a query exercised for parity but never anchored to a
+# concrete result set, or vice versa).
+FILTER_CASES = [
+    ("device_label=motor", ["sample_x"]),
+    ("device_label=detector", ["cam1", "det1"]),
+    ("ophyd_class=EpicsMotor", ["sample_x"]),
+    ("ophyd_class=EpicsScaler", ["det1"]),
+    ("movable=true", ["sample_x"]),
+    ("movable=false", ["cam1", "det1"]),
+    ("readable=true", ALL_DEVICES),
+    ("readable=false", []),
+    ("flyable=true", []),
+    ("flyable=false", ALL_DEVICES),
+    ("pattern=cam*", ["cam1"]),
+    ("pattern=sample*", ["sample_x"]),
+    ("device_label=detector&readable=true", ["cam1", "det1"]),
+    ("device_label=motor&movable=true", ["sample_x"]),
 ]
 
 
-@pytest.mark.parametrize("query", FILTER_QUERIES)
+@pytest.mark.parametrize("query", [q for q, _ in FILTER_CASES])
 async def test_filter_parity_proxy_matches_config(query, direct_client, config_client):
     """Every filter is forwarded; proxy result == configuration-service result.
 
@@ -92,21 +96,7 @@ async def test_filter_parity_proxy_matches_config(query, direct_client, config_c
     assert all(isinstance(n, str) for n in via_proxy)
 
 
-@pytest.mark.parametrize(
-    "query,expected",
-    [
-        ("device_label=motor", ["sample_x"]),
-        ("device_label=detector", ["cam1", "det1"]),
-        ("ophyd_class=EpicsMotor", ["sample_x"]),
-        ("movable=true", ["sample_x"]),
-        ("movable=false", ["cam1", "det1"]),
-        ("readable=true", ALL_DEVICES),
-        ("readable=false", []),
-        ("flyable=true", []),
-        ("pattern=cam*", ["cam1"]),
-        ("device_label=detector&readable=true", ["cam1", "det1"]),
-    ],
-)
+@pytest.mark.parametrize("query,expected", FILTER_CASES)
 async def test_filter_narrows_to_expected_set(query, expected, direct_client):
     """Filtering produces the right device set through the proxy (anchors behaviour).
 
@@ -122,6 +112,18 @@ async def test_unknown_query_param_is_tolerated(direct_client, config_client):
     via_proxy = await _json(direct_client, "/api/v1/devices?bogus=whatever")
     direct = await _json(config_client, "/api/v1/devices?bogus=whatever")
     assert via_proxy == direct == ALL_DEVICES
+
+
+async def test_bad_bool_filter_surfaces_upstream_422(direct_client):
+    """A malformed bool filter is a client error, not an outage.
+
+    configuration_service validates the bool query param and returns a 422
+    with field-level detail; the proxy must forward that status + detail
+    rather than masking it as a generic "Failed to fetch" message.
+    """
+    r = await direct_client.get("/api/v1/devices?readable=notabool")
+    assert r.status_code == 422
+    assert r.json()["detail"] != "Failed to fetch from configuration service"
 
 
 # ── Single-device passthrough ───────────────────────────────────────────
