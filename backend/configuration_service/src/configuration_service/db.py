@@ -12,8 +12,8 @@ Schema notes:
 - ``device_audit_log.id`` is an IDENTITY column: a monotonic, gap-tolerant
   sequence. It is the change-feed cursor that bluesky-queueserver Layer 2 polls
   via ``GET /api/v1/devices/changes?since_version=N`` — never reuse or reset it.
-- ``standalone_pvs.labels`` stays a JSON-encoded TEXT column (parsed in Python)
-  to keep parity with the SQLite shape; JSONB is a possible future tightening.
+- ``standalone_pvs.labels`` is a JSON-encoded TEXT column (parsed in Python) to
+  keep the existing wire/API shape; JSONB is a possible future tightening.
 """
 
 from sqlalchemy import (

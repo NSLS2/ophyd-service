@@ -254,7 +254,9 @@ chown -R xf31id:xf31id /opt/bs_config_svc
 systemctl start bluesky-configuration-service
 ```
 
-Note: the `--exclude='data'` in rsync preserves the existing SQLite database.
+Note: persistent state lives in PostgreSQL, not on this host, so a source sync
+never touches the registry data. Take a `pg_dump` before a risky upgrade if you
+want a restore point.
 
 ## Troubleshooting
 
