@@ -72,11 +72,16 @@ Verify the CLI works:
 
 ## 5. Create the data directory
 
-The service uses SQLite for persistence. Create a directory for the database:
+The service persists to PostgreSQL. Create a database and user, e.g.:
 
 ```bash
-mkdir -p /opt/bs_config_svc/data
+sudo -u postgres psql <<'SQL'
+CREATE USER bluesky WITH PASSWORD 'change-me';
+CREATE DATABASE config_service OWNER bluesky;
+SQL
 ```
+
+The service creates its tables on first startup; no manual schema step is needed.
 
 ## 6. Create the environment file
 
@@ -100,8 +105,8 @@ CONFIG_PROFILE_PATH=/opt/bluesky/profile_collection
 #   auto            - Auto-detect based on files present in profile_path
 CONFIG_LOAD_STRATEGY=empty
 
-# SQLite database location
-CONFIG_DB_PATH=/opt/bs_config_svc/data/config_service.db
+# PostgreSQL connection (SQLAlchemy DSN). Required unless persistence is disabled.
+CONFIG_DATABASE_URL=postgresql+psycopg://bluesky:change-me@localhost:5432/config_service
 
 # Enable device change history (CRUD operations and audit log)
 CONFIG_DEVICE_CHANGE_HISTORY_ENABLED=true
@@ -124,8 +129,8 @@ EOF
 | `CONFIG_LOG_LEVEL` | `info` | Log level (`critical`, `error`, `warning`, `info`, `debug`, `trace`) |
 | `CONFIG_PROFILE_PATH` | — | Path to beamline profile collection |
 | `CONFIG_LOAD_STRATEGY` | `auto` | How to discover devices (see above) |
-| `CONFIG_DB_PATH` | `/var/lib/bluesky/config_service.db` | SQLite database path |
-| `CONFIG_DEVICE_CHANGE_HISTORY_ENABLED` | `true` | Enable persistent storage and CRUD |
+| `CONFIG_DATABASE_URL` | — | PostgreSQL DSN (`postgresql+psycopg://…`); required when persistence is enabled |
+| `CONFIG_DEVICE_CHANGE_HISTORY_ENABLED` | `true` | Enable persistent storage and CRUD (requires `CONFIG_DATABASE_URL`) |
 | `CONFIG_METRICS_ENABLED` | `true` | Enable Prometheus metrics endpoint |
 | `CONFIG_METRICS_PORT` | `9004` | Prometheus metrics port |
 | `CONFIG_CORS_ORIGINS` | `["*"]` | Allowed CORS origins (JSON array) |

@@ -13,15 +13,10 @@ from configuration_service.config import Settings
 
 
 @pytest.fixture
-def tmp_db(tmp_path):
-    return tmp_path / "changes.db"
-
-
-@pytest.fixture
-def client(tmp_db):
+def client(pg_url):
     settings = Settings(
         use_mock_data=True,
-        db_path=tmp_db,
+        database_url=pg_url,
         device_change_history_enabled=True,
     )
     app = create_app(settings)

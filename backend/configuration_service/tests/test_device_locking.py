@@ -9,15 +9,10 @@ from configuration_service.main import create_app
 
 
 @pytest.fixture
-def tmp_db(tmp_path):
-    return str(tmp_path / "test_locking.db")
-
-
-@pytest.fixture
-def client(tmp_db):
+def client(pg_url):
     settings = Settings(
         use_mock_data=True,
-        db_path=tmp_db,
+        database_url=pg_url,
         device_change_history_enabled=True,
     )
     app = create_app(settings)

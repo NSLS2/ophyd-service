@@ -20,8 +20,7 @@ Scope notes:
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
+import os
 
 import schemathesis
 from hypothesis import settings as hypothesis_settings
@@ -31,9 +30,14 @@ from configuration_service.main import create_app
 
 
 # Module-scoped app so `@schema.parametrize()` can decorate at import time.
-# Mock-data mode + tmp sqlite keeps the registry isolated from other tests.
-_db_path = Path(tempfile.mkdtemp(prefix="schemathesis-")) / "test.db"
-_settings = Settings(use_mock_data=True, db_path=_db_path)
+# Mock-data mode against the test PostgreSQL (the lifespan creates tables +
+# seeds on startup). Contract tests only read GET schemas, so any seeded state
+# is fine.
+_database_url = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql+psycopg://bluesky:bluesky@localhost:5432/config_service",
+)
+_settings = Settings(use_mock_data=True, database_url=_database_url)
 _app = create_app(_settings)
 
 schema = schemathesis.openapi.from_asgi("/openapi.json", _app).include(method="GET")
