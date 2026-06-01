@@ -109,6 +109,22 @@ class LockedWS:
                 async with asyncio.timeout(self._send_timeout):
                     await self._ws.send_text(data)
 
+    async def send_bytes(self, data: bytes) -> None:
+        """Send a binary frame through the same serialized, size-capped path.
+
+        Used by the image-streaming sockets (camera/tiff) for JPEG/WebP
+        frames. Shares ``_send_lock`` with ``send_text``/``send_json`` so a
+        broadcast, a heartbeat, and a frame can't interleave at the ASGI
+        layer, and enforces the same byte cap before the frame hits the wire.
+        """
+        self._raise_if_over_limit(len(data))
+        async with self._send_lock:
+            if self._send_timeout is None:
+                await self._ws.send_bytes(data)
+            else:
+                async with asyncio.timeout(self._send_timeout):
+                    await self._ws.send_bytes(data)
+
     def _check_size(self, text: str) -> None:
         limit = self._max_message_bytes
         if limit is None:
@@ -120,8 +136,11 @@ class LockedWS:
         n = len(text)
         if n * 4 <= limit:
             return
-        size = len(text.encode("utf-8"))
-        if size > limit:
+        self._raise_if_over_limit(len(text.encode("utf-8")))
+
+    def _raise_if_over_limit(self, size: int) -> None:
+        limit = self._max_message_bytes
+        if limit is not None and size > limit:
             raise WebSocketResponseTooLarge(
                 f"WS message size {size} bytes exceeds "
                 f"DIRECT_CONTROL_RESPONSE_BYTESIZE_LIMIT ({limit}). "

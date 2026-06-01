@@ -100,6 +100,7 @@ async def lifespan(app: FastAPI):
 
     # Import pyepics-dependent managers after env vars are in place.
     from .monitoring.device_websocket_manager import DeviceWebSocketManager
+    from .monitoring.image_stream_manager import ImageStreamManager
     from .monitoring.pv_monitor import PVMonitorManager
     from .monitoring.websocket_manager import WebSocketManager
 
@@ -119,6 +120,10 @@ async def lifespan(app: FastAPI):
         device_controller=device_controller,
         settings=settings,
     )
+    # Image-streaming sockets (finch camera-socket / tiff-socket). Read-only
+    # EPICS monitors with their own raw-numpy path — see ImageStreamManager.
+    camera_ws_manager = ImageStreamManager(settings=settings, kind="camera")
+    tiff_ws_manager = ImageStreamManager(settings=settings, kind="tiff")
 
     app.state.settings = settings
     app.state.coordination_client = coordination_client
@@ -128,6 +133,8 @@ async def lifespan(app: FastAPI):
     app.state.pv_monitor = pv_monitor
     app.state.ws_manager = ws_manager
     app.state.device_ws_manager = device_ws_manager
+    app.state.camera_ws_manager = camera_ws_manager
+    app.state.tiff_ws_manager = tiff_ws_manager
     app.state.ophyd_cache = OphydDeviceCache()
     app.state.pv_health_reporter = PVHealthReporter(config_http)
 
@@ -147,6 +154,8 @@ async def lifespan(app: FastAPI):
         # shutdown indefinitely.
         await app.state.pv_health_reporter.drain(timeout=5.0)
         await ws_manager.close_all()
+        await camera_ws_manager.close_all()
+        await tiff_ws_manager.close_all()
         await device_ws_manager.cleanup()
         await coordination_client.cleanup()
         await registry_client.cleanup()
@@ -1098,6 +1107,18 @@ async def websocket_pv_socket(websocket: WebSocket):
 async def websocket_device_socket(websocket: WebSocket):
     """Device-level monitoring WebSocket — finch `ophydSocketDevicePath`."""
     await app.state.device_ws_manager.handle_client(websocket)
+
+
+@app.websocket("/api/v1/camera-socket")
+async def websocket_camera_socket(websocket: WebSocket):
+    """AreaDetector image streaming WebSocket — finch `ophydSocketCameraPath`."""
+    await app.state.camera_ws_manager.handle_client(websocket)
+
+
+@app.websocket("/api/v1/tiff-socket")
+async def websocket_tiff_socket(websocket: WebSocket):
+    """TIFF-detector image streaming WebSocket — finch `ophydSocketTIFFPath`."""
+    await app.state.tiff_ws_manager.handle_client(websocket)
 
 
 def create_app() -> FastAPI:
