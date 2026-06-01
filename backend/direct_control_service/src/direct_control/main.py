@@ -122,8 +122,13 @@ async def lifespan(app: FastAPI):
     )
     # Image-streaming sockets (finch camera-socket / tiff-socket). Read-only
     # EPICS monitors with their own raw-numpy path — see ImageStreamManager.
-    camera_ws_manager = ImageStreamManager(settings=settings, kind="camera")
-    tiff_ws_manager = ImageStreamManager(settings=settings, kind="tiff")
+    # registry_client gives them the same PV-existence gate as the other sockets.
+    camera_ws_manager = ImageStreamManager(
+        settings=settings, kind="camera", registry_client=registry_client
+    )
+    tiff_ws_manager = ImageStreamManager(
+        settings=settings, kind="tiff", registry_client=registry_client
+    )
 
     app.state.settings = settings
     app.state.coordination_client = coordination_client

@@ -164,6 +164,24 @@ def test_camera_socket_toggle_log_normalization(client, test_ioc):
         assert reply["logNormalization"] is False
 
 
+def test_camera_socket_rejects_unregistered_pv(client, test_ioc):
+    """Registry gate: a PV not in the registry is refused, same as pv-socket."""
+    from direct_control.registry_client import RegistryValidationError
+
+    class _RejectingRegistry:
+        async def validate_pv(self, pv_name: str) -> None:
+            raise RegistryValidationError(pv_name, "PV")
+
+    client.app.state.camera_ws_manager.registry_client = _RejectingRegistry()
+
+    with client.websocket_connect("/api/v1/camera-socket") as ws:
+        # A real, connectable PV — rejection must come from the registry gate,
+        # not from a connection failure.
+        ws.send_json({"imageArray_PV": "IOC:image1:ArrayData"})
+        err = _recv_json_where(ws, lambda d: d.get("type") == "error")
+        assert "not found" in err["error"].lower()
+
+
 def test_camera_socket_bad_pv_emits_error(client, test_ioc):
     """An unresolvable image PV yields a structured error envelope, not silence."""
     from starlette.websockets import WebSocketDisconnect

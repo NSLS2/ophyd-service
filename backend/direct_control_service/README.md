@@ -218,6 +218,8 @@ Both stream binary **JPEG** frames plus JSON metadata, matching finch's
 - **Client → server (optional):** `{"toggleLogNormalization": true|false}`.
 - **Server → client:** binary JPEG frames; JSON `{"x":int,"y":int,...}` on dimension change; JSON `{"logNormalization":bool}` on toggle. No heartbeat is sent on these sockets (finch interprets any non-`logNormalization` JSON text frame as a dimension message).
 
+Every PV the socket subscribes to (the image array **and** the resolved `cam1:*` settings) is validated against the configuration_service registry before connecting — the same gate as `pv-socket`/`device-socket`. An unregistered PV (or an unreachable config-service) refuses the connection with an `error` envelope.
+
 The wire encoding is pluggable via `DIRECT_CONTROL_IMAGE_ENCODING` (`jpeg`|`png`|`webp`,
 see `monitoring/image_encoders.py`), but stays `jpeg` by default because finch
 decodes frames as `image/jpeg`. TIFF is intentionally **not** an option — browsers

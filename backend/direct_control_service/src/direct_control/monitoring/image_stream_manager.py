@@ -46,6 +46,7 @@ from ophyd import EpicsSignalRO
 from PIL import Image
 
 from ..config import Settings
+from ..registry_client import RegistryClient, RegistryValidationError
 from ._envelopes import (
     LockedWS,
     close_connections,
@@ -112,11 +113,17 @@ class _StreamState:
 class ImageStreamManager:
     """Serves one image-streaming socket kind (``camera`` or ``tiff``)."""
 
-    def __init__(self, settings: Settings, kind: str) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        kind: str,
+        registry_client: Optional[RegistryClient] = None,
+    ) -> None:
         if kind not in ("camera", "tiff"):
             raise ValueError(f"ImageStreamManager kind must be camera|tiff, got {kind!r}")
         self.settings = settings
         self.kind = kind
+        self.registry_client = registry_client
         self._encoder: ImageEncoder = make_encoder(
             settings.image_encoding, jpeg_quality=settings.image_jpeg_quality
         )
@@ -148,7 +155,14 @@ class ImageStreamManager:
                 return
             image_array_pv, setting_pvs = self._resolve_pvs(message)
 
-            # 2. Connect signals (blocking CA work off-loop).
+            # 2. Registry gate — every PV reaching EPICS must exist in the
+            # authoritative registry, same as pv-socket/device-socket. All of
+            # the array + setting PVs are required to stream, so any one
+            # failing refuses the whole connection.
+            if not await self._validate_pvs(ws, [image_array_pv, *setting_pvs.values()]):
+                return
+
+            # 3. Connect signals (blocking CA work off-loop).
             try:
                 array_signal = await asyncio.to_thread(
                     _connect_signal, image_array_pv, "array_signal"
@@ -361,8 +375,33 @@ class ImageStreamManager:
         await close_connections(sockets)
 
     # ------------------------------------------------------------------ #
-    # PV resolution
+    # Registry validation + PV resolution
     # ------------------------------------------------------------------ #
+    async def _validate_pvs(self, ws: LockedWS, pv_names: list[str]) -> bool:
+        """Confirm every PV exists in the registry, same gate as pv-socket.
+
+        Mirrors ``WebSocketManager._validate_pvs`` but is all-or-nothing: an
+        image stream needs the array PV *and* every setting PV, so any one
+        failing refuses the whole connection. Returns True when all are valid
+        (or no registry is configured). On failure emits a per-PV error
+        envelope and returns False. A ``RuntimeError`` (config-service down)
+        also fails closed — no streaming from an unvalidated PV.
+        """
+        if self.registry_client is None:
+            return True
+        results = await asyncio.gather(
+            *(self.registry_client.validate_pv(pv) for pv in pv_names),
+            return_exceptions=True,
+        )
+        ok = True
+        for pv_name, result in zip(pv_names, results):
+            if isinstance(result, (RegistryValidationError, RuntimeError)):
+                await send_error(ws, str(result), pv=pv_name)
+                ok = False
+            elif isinstance(result, Exception):
+                raise result
+        return ok
+
     def _resolve_pvs(self, message: dict) -> tuple[str, dict[str, str]]:
         """Resolve the subscribe message to (image_array_pv, {name: pv}).
 
