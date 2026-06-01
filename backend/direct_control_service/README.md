@@ -200,9 +200,30 @@ lock state) but does not re-expose it as HTTP endpoints.
 | WS | `/api/v1/pv-socket` | PV monitoring (ophyd-websocket compatible) |
 | WS | `/api/v1/device-socket` | Device-level monitoring (ophyd-websocket compatible) |
 | WS | `/api/v1/control-socket` | Combined PV + device control |
+| WS | `/api/v1/camera-socket` | AreaDetector image streaming (finch `ophydSocketCameraPath`) |
+| WS | `/api/v1/tiff-socket` | TIFF-detector image streaming (finch `ophydSocketTIFFPath`) |
 
 All write actions over WebSocket (`set`, `stop`) route through `DeviceControl`
-and inherit the A4 coordination check.
+and inherit the A4 coordination check. The image sockets are read-only EPICS
+monitors (no writes, no coordination check).
+
+### Image streaming (`camera-socket` / `tiff-socket`)
+
+Both stream binary **JPEG** frames plus JSON metadata, matching finch's
+`useCameraCanvas` / `useTIFFCanvas` hooks:
+
+- **Client → server (subscribe):**
+  - camera: `{"imageArray_PV": "...", "startX": "...", "sizeX": "...", "colorMode": "...", "dataType": "...", ...}` — any omitted setting PV is inferred from the `imageArray_PV` prefix (`<prefix>:cam1:<suffix>`); an omitted `imageArray_PV` falls back to `DIRECT_CONTROL_CAMERA_DEFAULT_IMAGE_ARRAY_PV`.
+  - tiff: `{"prefix": "13PIL1"}` — expands to `<prefix>:image1:ArrayData` + `<prefix>:cam1:*` (tiff is camera-with-prefix-inference).
+- **Client → server (optional):** `{"toggleLogNormalization": true|false}`.
+- **Server → client:** binary JPEG frames; JSON `{"x":int,"y":int,...}` on dimension change; JSON `{"logNormalization":bool}` on toggle. No heartbeat is sent on these sockets (finch interprets any non-`logNormalization` JSON text frame as a dimension message).
+
+The **image array PV** is validated against the configuration_service registry before connecting — the same gate as `pv-socket`/`device-socket`. An unregistered array PV (or an unreachable config-service) refuses the connection with an `error` envelope. The `cam1:*` setting PVs are *not* registry-validated: AreaDetector devices register the image-data PV but not each scalar setting as a standalone registry entry, and the settings ride on the same validated detector prefix.
+
+The wire encoding is pluggable via `DIRECT_CONTROL_IMAGE_ENCODING` (`jpeg`|`png`|`webp`,
+see `monitoring/image_encoders.py`), but stays `jpeg` by default because finch
+decodes frames as `image/jpeg`. TIFF is intentionally **not** an option — browsers
+cannot decode TIFF; "TIFF" names the detector class, not the wire format.
 
 ## Example curl Commands
 

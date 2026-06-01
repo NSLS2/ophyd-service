@@ -68,6 +68,30 @@ class Settings(BaseSettings):
     # Oversized arrays return 400 with a "slice or raise the limit" message.
     response_bytesize_limit: int = 100_000_000  # 100 MB
 
+    # Image streaming (camera-socket / tiff-socket).
+    # Per-connection frame queue. The image-array CA callback pushes RAW (un-
+    # encoded) NDArray frames here; the streaming loop drains + encodes.
+    # Drop-oldest on overflow so a fast detector can't outrun a slow client.
+    # Keep this small: each queued frame is a full raw image (megabytes at
+    # detector sizes), and for a live view a deep queue only adds latency by
+    # showing stale frames. A handful is enough to absorb bursts.
+    image_frame_queue_size: int = 8
+    # Downsample any frame wider/taller than this (LANCZOS) before encoding,
+    # to cap per-frame wire size and browser decode cost.
+    image_max_dimension: int = 2500
+    # Wire encoding for image frames. The ImageEncoder Protocol makes this
+    # pluggable, but the consumer (finch) currently only decodes JPEG reliably
+    # via createImageBitmap — keep "jpeg" unless the frontend negotiates more.
+    image_encoding: str = "jpeg"  # jpeg | png | webp
+    image_jpeg_quality: int = 100
+    # Default normalization on connect; client can flip via toggleLogNormalization.
+    image_log_normalization_default: bool = True
+    # PV resolution defaults. camera-socket falls back to the ADSimDetector
+    # image array; tiff-socket expands a bare {prefix} to {prefix}:image1:ArrayData
+    # plus {prefix}:cam1:* settings (same suffixes as camera).
+    camera_default_image_array_pv: str = "13SIM1:image1:ArrayData"
+    tiff_default_prefix: str = "13PIL1"
+
     # Observability
     enable_metrics: bool = True
     metrics_port: int = 9003

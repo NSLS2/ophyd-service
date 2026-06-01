@@ -203,6 +203,9 @@ def client(app):
         app.state.registry_client = stub_registry
         if hasattr(app.state, "ws_manager"):
             app.state.ws_manager.registry_client = stub_registry
+        for image_mgr in ("camera_ws_manager", "tiff_ws_manager"):
+            if hasattr(app.state, image_mgr):
+                getattr(app.state, image_mgr).registry_client = stub_registry
         if hasattr(app.state, "device_controller"):
             # device_controller owns a registry_client for the PV→owning-device
             # lookup that drives the disabled/locked gate on PV-keyed writes.
