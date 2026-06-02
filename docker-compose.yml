@@ -61,7 +61,7 @@ services:
       # Happi is the canonical seeder — same mechanism the integration pod uses.
       CONFIG_LOAD_STRATEGY: "happi"
       CONFIG_PROFILE_PATH: "/profile"
-      # PostgreSQL persistence (configuration_service is Postgres-only).
+      # PostgreSQL persistence (config_service also supports SQLite; this stack uses Postgres).
       CONFIG_DATABASE_URL: "postgresql+psycopg://bluesky:bluesky@postgres:5432/config_service"
       # The happi DB references compound device classes (localdevs.Det,
       # .Spot). Loader walks them at registry-load time to index sub-PVs;
