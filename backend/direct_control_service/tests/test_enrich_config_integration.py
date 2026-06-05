@@ -61,9 +61,14 @@ async def dc_enrich_client(client) -> AsyncIterator[DirectControlClient]:
     """
     dc = DirectControlClient(base_url="http://direct-control")
     await dc.aclose()
+    # timeout matches DirectControlClient's own default (10s). The injected client
+    # otherwise falls back to httpx's 5s default, which is too tight for the first
+    # enrich call: it does live ophyd wait_for_connection against the IOC on a cold
+    # cache, which can exceed 5s on slow CI and flake.
     dc._client = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=client.app),
         base_url="http://direct-control",
+        timeout=10.0,
     )
     try:
         yield dc
