@@ -661,13 +661,13 @@ class HealthResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    status: Literal["healthy", "unhealthy", "degraded"] = "healthy"
+    status: Literal["healthy", "unhealthy"] = "healthy"
     timestamp: datetime
     coordination_service_available: bool
     coordination_service_detail: Optional[str] = None
-    # Set when running degraded/standalone (auto fell back to the file registry,
-    # coordination off) so the downgrade is visible rather than reported healthy.
-    degraded_detail: Optional[str] = None
+    # Running mode, so a file-backed / read-only deployment is always visible.
+    registry_backend: str = "http"  # http | file (auto resolves to one of these)
+    read_only: bool = False
     active_subscriptions: int = 0
     connected_pvs: int = 0
     websocket_connections: int = 0

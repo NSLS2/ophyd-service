@@ -157,7 +157,7 @@ async def test_auto_uses_http_when_config_service_up(tmp_path):
     resolution = await _resolve_registry_backend(settings, client)
     assert isinstance(resolution.provider, RegistryClient)
     assert resolution.coordination_enabled is True
-    assert resolution.degraded_reason is None
+    assert resolution.effective_backend == "http"
     await client.aclose()
 
 
@@ -178,7 +178,7 @@ async def test_auto_falls_back_to_file_and_disables_coordination(tmp_path):
     resolution = await _resolve_registry_backend(settings, client)
     assert isinstance(resolution.provider, FileRegistryProvider)
     assert resolution.coordination_enabled is False
-    assert resolution.degraded_reason is not None
+    assert resolution.effective_backend == "file"
     # resolve does not mutate settings — the caller applies the decision.
     assert settings.coordination_check_enabled is True
     await client.aclose()

@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from ._array_metadata import describe_array
-from .config import Settings
+from .config import READ_ONLY_MESSAGE, Settings
 from .coordination_client import CoordinationClient
 from .device_controller import DeviceController
 from .models import (
@@ -191,16 +191,16 @@ async def _probe_configuration_service(settings: Settings, config_http: httpx.As
 class RegistryResolution(NamedTuple):
     """Outcome of choosing the registry backend at startup.
 
-    ``coordination_enabled`` is the effective device-lock coordination decision
-    (auto-fallback forces it off). ``degraded_reason`` is None in normal
-    operation, or a human-readable string when the service is running in a
-    degraded/standalone mode (auto fell back to the file registry) — surfaced
-    by /health so the downgrade is never silent.
+    ``effective_backend`` is the resolved choice ("http" or "file"); for auto it
+    reflects which one actually got picked. ``coordination_enabled`` is the
+    effective device-lock coordination decision — off in file/standalone mode,
+    where there is no configuration_service to read lock state from. Both are
+    surfaced via /health and /api/v1/stats so the running mode is always visible.
     """
 
     provider: RegistryProvider
     coordination_enabled: bool
-    degraded_reason: Optional[str]
+    effective_backend: str
 
 
 async def _resolve_registry_backend(
@@ -208,33 +208,32 @@ async def _resolve_registry_backend(
 ) -> RegistryResolution:
     """Pick the registry backend, gating startup on config-service as needed.
 
-    - http: probe config-service (raises if down), use the HTTP registry.
-    - file: probe config-service only if coordination is on, use the file.
-    - auto: prefer config-service; if unreachable, fall back to the file
-      registry with coordination DISABLED (logged loudly + reported via
-      /health), or raise if no file is configured.
+    - http: probe config-service (raises if down), use the HTTP registry with
+      coordination as configured.
+    - file: fully-featured standalone mode on the local registry file. No
+      config-service, so the lock-coordination check is turned off (access is
+      governed by global_read_only instead).
+    - auto: prefer config-service; if unreachable, run the same fully-featured
+      standalone mode on the file registry, or raise if no file is configured.
 
-    Returns the decision explicitly — including the effective coordination flag
-    — rather than mutating settings, so the caller applies it at one visible
-    point.
+    Returns the decision explicitly (effective backend + coordination flag)
+    rather than mutating settings, so the caller applies it at one visible point.
     """
     backend = settings.registry_backend
-    coordination_enabled = settings.coordination_check_enabled
 
     if backend == "http":
         await _probe_configuration_service(settings, config_http)
-        return RegistryResolution(RegistryClient(settings), coordination_enabled, None)
+        return RegistryResolution(
+            RegistryClient(settings), settings.coordination_check_enabled, "http"
+        )
 
     if backend == "file":
-        await _probe_configuration_service(settings, config_http)
         logger.info(
             "registry_backend_file",
             path=settings.registry_file_path,
-            note="standalone registry; configuration_service not used for validation",
+            note="standalone mode: file registry, configuration_service not used",
         )
-        return RegistryResolution(
-            FileRegistryProvider(settings.registry_file_path), coordination_enabled, None
-        )
+        return RegistryResolution(FileRegistryProvider(settings.registry_file_path), False, "file")
 
     # auto
     logger.info("registry_backend_auto_probing", url=settings.configuration_service_url)
@@ -251,23 +250,22 @@ async def _resolve_registry_backend(
 
     if detail is None:
         logger.info("registry_backend_auto_resolved", choice="http")
-        return RegistryResolution(RegistryClient(settings), coordination_enabled, None)
+        return RegistryResolution(
+            RegistryClient(settings), settings.coordination_check_enabled, "http"
+        )
 
     if settings.registry_file_path:
-        degraded_reason = (
-            f"configuration_service unreachable ({detail}); using file registry "
-            f"with device-lock coordination DISABLED — direct writes are NOT "
-            f"gated against plan locks"
-        )
         logger.warning(
-            "registry_backend_auto_fallback_to_file",
+            "registry_backend_auto_using_file",
             path=settings.registry_file_path,
             config_service_detail=detail,
-            note=degraded_reason,
+            note=(
+                "configuration_service unreachable; running fully-featured "
+                "standalone on the file registry (lock coordination off, "
+                "access governed by global_read_only)"
+            ),
         )
-        return RegistryResolution(
-            FileRegistryProvider(settings.registry_file_path), False, degraded_reason
-        )
+        return RegistryResolution(FileRegistryProvider(settings.registry_file_path), False, "file")
 
     raise RuntimeError(
         f"registry_backend=auto: configuration_service at "
@@ -345,9 +343,9 @@ async def lifespan(app: FastAPI):
     app.state.tiff_ws_manager = tiff_ws_manager
     app.state.ophyd_cache = OphydDeviceCache()
     app.state.pv_health_reporter = PVHealthReporter(config_http)
-    # Non-None when auto fell back to the file registry (running standalone with
-    # coordination off). Surfaced by /health so the downgrade isn't silent.
-    app.state.degraded_reason = resolution.degraded_reason
+    # The resolved registry backend ("http" | "file"). Surfaced by /health and
+    # /api/v1/stats so the running mode (incl. auto's choice) is always visible.
+    app.state.effective_registry_backend = resolution.effective_backend
 
     logger.info(
         "Service initialized",
@@ -437,10 +435,19 @@ def get_pv_health_reporter() -> PVHealthReporter:
     return app.state.pv_health_reporter
 
 
-def get_degraded_reason() -> Optional[str]:
-    """Reason string when running degraded/standalone (auto fell back to file),
-    else None. ``getattr`` default covers fixtures that don't run lifespan."""
-    return getattr(app.state, "degraded_reason", None)
+def get_effective_registry_backend() -> str:
+    """The resolved registry backend ("http" | "file"). ``getattr`` default
+    covers fixtures that don't run lifespan."""
+    return getattr(app.state, "effective_registry_backend", "http")
+
+
+def require_writable(settings: Settings = Depends(get_settings)) -> None:
+    """Reject the request with 403 when the deployment is read-only.
+
+    Applied to every control/write REST endpoint. The WebSocket set/stop
+    handlers enforce the same gate inline."""
+    if settings.global_read_only:
+        raise HTTPException(status_code=403, detail=READ_ONLY_MESSAGE)
 
 
 # ----- PV value response builder (tiled-style content negotiation) -----
@@ -617,47 +624,36 @@ def _raise_http_501_not_implemented(
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check(
+    settings: Settings = Depends(get_settings),
     coordination_client: CoordinationService = Depends(get_coordination_client),
     pv_monitor: PVMonitor = Depends(get_pv_monitor),
     ws_manager=Depends(get_ws_manager),
-    degraded_reason: Optional[str] = Depends(get_degraded_reason),
+    registry_backend: str = Depends(get_effective_registry_backend),
 ):
     """Combined health check: coordination availability and monitoring stats.
 
-    Returns 503 when configuration_service is unreachable so LB readiness
-    probes can route away. ``coordination_service_detail`` carries the
-    structured reason (timeout / connect-refused / non-2xx).
-
-    When running degraded/standalone (registry_backend=auto fell back to the
-    file registry, coordination off), status is reported as "degraded" with
-    ``degraded_detail`` set — so the downgrade is visible and never reads as a
-    plain "healthy". Still returns 200: the node is intentionally serving its
-    standalone role, just without lock gating.
+    Returns 503 when a REQUIRED configuration_service (http backend) is
+    unreachable so LB readiness probes can route away;
+    ``coordination_service_detail`` carries the structured reason. In
+    file/standalone mode there is no config-service requirement, so the node is
+    healthy. ``registry_backend`` and ``read_only`` report the running mode so
+    a file-backed or read-only deployment is always visible, never silent.
     """
     coord = await coordination_client.is_service_available()
     stats = ws_manager.get_stats()
 
-    if degraded_reason is not None:
-        status = "degraded"
-    elif coord.available:
-        status = "healthy"
-    else:
-        status = "unhealthy"
-
     body = HealthResponse(
-        status=status,
+        status="healthy" if coord.available else "unhealthy",
         timestamp=datetime.now(),
         coordination_service_available=coord.available,
         coordination_service_detail=coord.detail,
-        degraded_detail=degraded_reason,
+        registry_backend=registry_backend,
+        read_only=settings.global_read_only,
         active_subscriptions=len(pv_monitor.get_connected_pvs()),
         connected_pvs=stats["connected_pvs"],
         websocket_connections=stats["active_connections"],
     )
-    # 503 only when a REQUIRED config-service is unreachable. In degraded
-    # standalone mode config-service is intentionally absent, so the node is
-    # up (200) but flagged degraded.
-    if status == "unhealthy":
+    if not coord.available:
         return JSONResponse(status_code=503, content=body.model_dump(mode="json"))
     return body
 
@@ -668,6 +664,7 @@ async def get_stats(
     coordination_client: CoordinationService = Depends(get_coordination_client),
     ws_manager=Depends(get_ws_manager),
     device_ws_manager=Depends(get_device_ws_manager),
+    registry_backend: str = Depends(get_effective_registry_backend),
 ):
     coord = await coordination_client.is_service_available()
     pv_stats = ws_manager.get_stats()
@@ -676,6 +673,8 @@ async def get_stats(
     return {
         "service": "direct_control",
         "timestamp": datetime.now().isoformat(),
+        "registry_backend": registry_backend,
+        "read_only": settings.global_read_only,
         "coordination_enabled": settings.coordination_check_enabled,
         "coordination_service_available": coord.available,
         "coordination_service_detail": coord.detail,
@@ -695,7 +694,11 @@ async def get_stats(
     }
 
 
-@app.post("/api/v1/pv/set", response_model=PVSetResponse)
+@app.post(
+    "/api/v1/pv/set",
+    response_model=PVSetResponse,
+    dependencies=[Depends(require_writable)],
+)
 async def set_pv(
     request: PVSetRequest,
     device_controller: DeviceControl = Depends(get_device_controller),
@@ -777,7 +780,11 @@ def _batch_failure_result(
     )
 
 
-@app.post("/api/v1/pv/set/batch", response_model=PVSetBatchResponse)
+@app.post(
+    "/api/v1/pv/set/batch",
+    response_model=PVSetBatchResponse,
+    dependencies=[Depends(require_writable)],
+)
 async def set_pv_batch(
     request: PVSetBatchRequest,
     device_controller: DeviceControl = Depends(get_device_controller),
@@ -1172,7 +1179,11 @@ async def get_connected_pvs(pv_monitor: PVMonitor = Depends(get_pv_monitor)):
     return pv_monitor.get_connected_pvs()
 
 
-@app.post("/api/v1/device/execute", response_model=DeviceCommandResponse)
+@app.post(
+    "/api/v1/device/execute",
+    response_model=DeviceCommandResponse,
+    dependencies=[Depends(require_writable)],
+)
 async def execute_device_method(
     request: DeviceCommandRequest,
     device_controller: DeviceControl = Depends(get_device_controller),
@@ -1212,7 +1223,11 @@ async def execute_device_method(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/v1/device/{device_name}/stop", response_model=DeviceCommandResponse)
+@app.post(
+    "/api/v1/device/{device_name}/stop",
+    response_model=DeviceCommandResponse,
+    dependencies=[Depends(require_writable)],
+)
 async def stop_device(
     device_name: str,
     device_controller: DeviceControl = Depends(get_device_controller),
@@ -1246,25 +1261,33 @@ async def stop_device(
 async def access_nested_device(
     device_path: str,
     request: Optional[NestedDeviceRequest] = None,
+    settings: Settings = Depends(get_settings),
     device_controller: DeviceControl = Depends(get_device_controller),
     registry_client: RegistryClient = Depends(get_registry_client),
 ):
     """
     Access nested device component (e.g. motor1.user_readback).
 
-    Coordination-checked for writes; 404/423/503/500 on failure modes.
+    Reads are always allowed; write methods are coordination-checked and
+    rejected with 403 in read-only mode. 404/423/503/500 on failure modes.
     """
     device_name = device_path.split(".")[0]
+
+    method = request.method if request else "read"
+    value = request.value if request else None
+    timeout = request.timeout if request else None
+
+    # Read-only gate: only the write methods are blocked; component reads stay
+    # available for monitoring. (Mirrors device_controller's write-method set.)
+    if settings.global_read_only and method in ("set", "put", "write", "trigger", "stop"):
+        raise HTTPException(status_code=403, detail=READ_ONLY_MESSAGE)
+
     try:
         await registry_client.validate_device(device_name)
     except RegistryValidationError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
-
-    method = request.method if request else "read"
-    value = request.value if request else None
-    timeout = request.timeout if request else None
 
     try:
         result = await device_controller.access_nested_device(

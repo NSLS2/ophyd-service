@@ -24,21 +24,13 @@ def test_health_endpoint_returns_200(client):
     assert body["coordination_service_available"] is True
 
 
-def test_health_reports_degraded_in_standalone_fallback(client, app):
-    """Auto-fallback (file registry, coordination off) must surface as 'degraded'.
-
-    The downgrade must never read as a plain 'healthy' — otherwise an LB sees
-    green on a node no longer gating writes against plan locks.
-    """
-    app.state.degraded_reason = "configuration_service unreachable; file registry"
-    try:
-        r = client.get("/health")
-        assert r.status_code == 200  # intentionally serving its standalone role
-        body = r.json()
-        assert body["status"] == "degraded"
-        assert "configuration_service unreachable" in body["degraded_detail"]
-    finally:
-        app.state.degraded_reason = None
+def test_health_reports_running_mode(client):
+    """/health surfaces the registry backend + read_only so the mode is visible."""
+    r = client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["registry_backend"] in ("http", "file")
+    assert body["read_only"] is False  # conftest enables control for the suite
 
 
 def test_stats_endpoint_returns_200(client):

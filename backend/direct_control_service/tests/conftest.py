@@ -103,6 +103,10 @@ def _epics_env(test_ioc):
     # would block then fail. Integration tests that want the real probe drive
     # is_service_available() directly instead of booting the app.
     os.environ["DIRECT_CONTROL_CONFIG_SERVICE_STARTUP_PROBE"] = "false"
+    # Enable control: read-only defaults to true, but the suite exercises the
+    # write paths (PV set, device execute, WS set/stop). The read-only gate has
+    # its own dedicated tests that flip this on explicitly.
+    os.environ["DIRECT_CONTROL_GLOBAL_READ_ONLY"] = "false"
     yield
 
 

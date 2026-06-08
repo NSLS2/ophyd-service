@@ -14,7 +14,7 @@ from typing import Callable, Dict, Optional, Set, TYPE_CHECKING
 import structlog
 from fastapi import WebSocket, WebSocketDisconnect
 
-from ..config import Settings
+from ..config import READ_ONLY_MESSAGE, Settings
 from ..models import (
     DeviceCommandRequest,
     DeviceLockedError,
@@ -465,6 +465,10 @@ class WebSocketManager:
 
     async def _handle_set(self, client_id: str, websocket: WebSocket, data: dict):
         """Set PV value via DeviceControl (inherits coordination check)."""
+        if self.settings.global_read_only:
+            await send_error(websocket, READ_ONLY_MESSAGE)
+            return
+
         pv = data.get("pv")
         value = data.get("value")
         timeout = data.get("timeout")
@@ -498,6 +502,10 @@ class WebSocketManager:
 
     async def _handle_stop(self, websocket: WebSocket, data: dict):
         """Stop a device via DeviceControl (inherits coordination check)."""
+        if self.settings.global_read_only:
+            await send_error(websocket, READ_ONLY_MESSAGE)
+            return
+
         device = data.get("device")
 
         if not device:
