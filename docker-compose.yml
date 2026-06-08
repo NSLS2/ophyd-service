@@ -85,3 +85,14 @@ services:
         condition: service_healthy
       ioc:
         condition: service_healthy
+
+  presets_service:
+    build:
+      context: ./backend/presets_service
+    environment:
+      PRESETS_DB_PATH: "/tmp/presets.db"
+      PRESETS_SEED_PATH: "/seed"
+    volumes:
+      - ./integration/presets:/seed:ro
+    ports:
+      - "8005:8005"

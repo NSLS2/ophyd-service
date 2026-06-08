@@ -126,6 +126,30 @@ services:
       ioc_motor:
         condition: service_healthy
 
+  presets_service:
+    build:
+      context: ../../../backend/presets_service
+    command:
+      - python
+      - -m
+      - uvicorn
+      - presets_service.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8005"
+      - --reload
+      - --reload-dir
+      - /app/src
+    environment:
+      PRESETS_DB_PATH: "/tmp/presets.db"
+      PRESETS_SEED_PATH: "/seed"
+    volumes:
+      - ../../../backend/presets_service/src:/app/src
+      - ../../../integration/presets:/seed:ro
+    ports:
+      - "8005:8005"
+
   frontend:
     image: node:20-bookworm-slim
     working_dir: /app

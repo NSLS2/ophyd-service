@@ -1,16 +1,23 @@
-import './App.css'
-import DeviceMotorController from './components/DeviceMotorController'
-import DeviceBrowser from './components/DeviceBrowser'
-import { SignalMonitorPlotPV } from '@blueskyproject/finch'
+import { HubAppLayout, RouteItem } from '@blueskyproject/finch'
+import { Atom } from '@phosphor-icons/react'
+import IosScan from './pages/IosScan'
 
 function App() {
+  const routes: RouteItem[] = [
+    {
+      path: '/',
+      label: 'IOS Scan',
+      element: <IosScan />,
+      icon: <Atom size={28} />,
+      isBackgroundTransparent: true,
+    },
+  ]
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', padding: '1rem' }}>      <DeviceBrowser />
-      {/* <MotorController /> */}
-      <DeviceMotorController />
-      <SignalMonitorPlotPV pv="mini:current" />
-    </div>
+    <HubAppLayout
+      routes={routes}
+      headerTitle="IOS Scan"
+    />
   )
 }
 

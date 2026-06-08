@@ -134,3 +134,13 @@ services:
         condition: service_healthy
       ios_feedback:
         condition: service_healthy
+
+  frontend:
+    build:
+      context: ../../../frontend
+      target: dev
+    ports:
+      - "5173:5173"
+    depends_on:
+      - configuration_service
+      - direct_control_service
