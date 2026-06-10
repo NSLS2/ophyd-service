@@ -33,6 +33,14 @@ breaking the api package breaks the service too.) Internal divergence — new en
 new config sections, manager internals — is fine; changing or removing what
 bluesky-queueserver-api consumes is not.
 
+Two install-level consequences of that contract (see the notes in `pyproject.toml`
+and `bluesky_queueserver/__init__.py`): the **distribution** is named
+`bluesky-queueserver` so the api client's `Requires-Dist: bluesky-queueserver`
+resolves to this package instead of pulling the upstream dist (which would shadow
+the console scripts), and a one-module `bluesky_queueserver` package re-exports
+the legacy top-level names the client imports. The import namespace for all code
+in this repo is `queueserver_service`.
+
 Enforced in CI: the `with-queueserver` integration job installs
 `bluesky-queueserver-api` from PyPI and drives the running service over both
 transports (`integration/exercise/queueserver_api_compat.py`).

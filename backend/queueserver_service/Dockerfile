@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY pyproject.toml README.md requirements.txt ./
 COPY queueserver_service ./queueserver_service/
+# One-module legacy import surface for bluesky-queueserver-api (see its docstring)
+COPY bluesky_queueserver ./bluesky_queueserver/
 
 # Extra deps the editable install doesn't pull but the service needs at runtime:
 #   pandas     -- imported unconditionally by manager/conversions.py (spreadsheet->plan)
