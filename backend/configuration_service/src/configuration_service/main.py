@@ -209,7 +209,7 @@ def _apply_standalone_pvs(registry, pv_store: StandalonePVStore, log) -> None:
 
     applied = 0
     for pv in pvs:
-        registry.pvs[pv.pv_name] = PVMetadata(pv=pv.pv_name, device_name=None)
+        registry.add_standalone_pv(pv.pv_name)
         applied += 1
 
     log.info("standalone_pvs_applied", count=applied)
@@ -1405,10 +1405,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 detail=f"Device already exists: {device_name}",
             )
 
-        # Add to in-memory registry
-        state.registry.add_device(request.metadata, request.instantiation_spec)
-
-        # Persist to DB
+        # Persist FIRST, then mutate memory: if the DB write fails the
+        # request 500s with the registry unchanged, so the client's retry
+        # succeeds instead of 409ing on a phantom device that would vanish
+        # at the next restart.
         registry_store.save_device(
             name=device_name,
             metadata=request.metadata,
@@ -1419,6 +1419,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "ophyd_class": request.metadata.ophyd_class,
             },
         )
+        state.registry.add_device(request.metadata, request.instantiation_spec)
 
         logger.info("device_created", device_name=device_name)
 
@@ -1515,10 +1516,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 ]
             )
 
-        # Update in-memory registry
-        state.registry.update_device(merged_metadata, merged_spec)
-
-        # Persist to DB
+        # Persist FIRST, then mutate memory (see create_device).
         registry_store.save_device(
             name=device_name,
             metadata=merged_metadata,
@@ -1526,6 +1524,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             operation="update",
             details={"changed_fields": changed_fields} if changed_fields else None,
         )
+        state.registry.update_device(merged_metadata, merged_spec)
 
         logger.info("device_updated", device_name=device_name)
 
@@ -1562,10 +1561,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 detail=f"Device not found: {device_name}",
             )
 
-        # Remove from in-memory registry
-        state.registry.remove_device(device_name)
-
-        # Remove from DB (also appends audit log entry)
+        # Persist FIRST, then mutate memory (see create_device): a failed
+        # DB delete leaves the device fully present instead of a memory/DB
+        # split that resurrects it at the next restart.
         registry_store.delete_device(
             device_name,
             details={
@@ -1573,6 +1571,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "device_label": existing_device.device_label,
             },
         )
+        state.registry.remove_device(device_name)
 
         logger.info("device_deleted", device_name=device_name)
 
@@ -1730,10 +1729,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 detail=f"Standalone PV already registered: {pv_name}",
             )
 
-        # Add to in-memory registry
-        state.registry.pvs[pv_name] = PVMetadata(pv=pv_name, device_name=None)
-
-        # Persist to store
+        # Persist FIRST, then mutate memory (see create_device).
         pv_store.save_pv(
             pv_name=pv_name,
             description=request.description,
@@ -1743,6 +1739,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             source="runtime",
             created_by=None,
         )
+        state.registry.add_standalone_pv(pv_name)
 
         logger.info("standalone_pv_created", pv_name=pv_name)
 
@@ -1862,8 +1859,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # Remove from persistent store
         pv_store.delete_pv(pv_name)
 
-        # Remove from in-memory registry
-        state.registry.pvs.pop(pv_name, None)
+        # Remove from in-memory registry (keeps the entry if a device owns
+        # the PV — deleting it would destroy the device's registration).
+        state.registry.remove_standalone_pv(pv_name)
 
         logger.info("standalone_pv_deleted", pv_name=pv_name)
 
