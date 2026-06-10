@@ -12,7 +12,10 @@ Three co-equal services, each with its own Dockerfile and README:
 (imported from the `merge/httpserver` unification work) and is maintained
 in-tree as an independent service — it does not track the upstream
 bluesky-queueserver repo, and changes here are not merged back. Upstream
-remains the community package; this service is free to diverge.
+remains the community package; this service is free to diverge, with one
+exception: the wire contracts consumed by the **bluesky-queueserver-api**
+client library (0MQ protocol + HTTP/WS API) stay compatible — see the
+service README.
 
 All three run together in `integration/pods/with-queueserver/`. The root
 `docker-compose.yml` inner loop runs only the first two.

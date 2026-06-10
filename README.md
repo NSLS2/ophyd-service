@@ -1,6 +1,6 @@
 # ophyd-service
 
-Monorepo for the Bluesky ophyd-service. Two FastAPI backends + a caproto
+Monorepo for the Bluesky ophyd-service. Three backend services + a caproto
 simulated IOC, wired together for a local backend inner loop via
 `docker compose`. The React/Vite frontend lives here too but is run
 separately (see below).
@@ -11,6 +11,7 @@ separately (see below).
 |---|---|
 | `backend/configuration_service/` | Device/PV registry. REST on port 8004. Optional persistence to PostgreSQL or SQLite (see below). |
 | `backend/direct_control_service/` | Device commanding + PV monitoring. REST + WS on port 8003. |
+| `backend/queueserver_service/` | Plan queueing + execution, based on bluesky-queueserver + bluesky-httpserver, run in unified mode (one process serves 0MQ on 60615/60625 and HTTP + WS on 60610). Maintained in-tree; see its README. Runs in `integration/pods/with-queueserver/`, not the inner-loop compose. |
 | `frontend/` | React + Vite UI (not part of `docker-compose.yml`). |
 | `integration/` | Richer multi-service pods (`pods/{minimal,full,dev}/`), the caproto IOC image (`ioc/`), happi seed data (`happi/`), and local device classes (`localdevs/`). |
 | `shared-schema/` | OpenAPI schemas published by the backends. |
