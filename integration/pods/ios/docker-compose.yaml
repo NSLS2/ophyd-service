@@ -135,12 +135,34 @@ services:
       ios_feedback:
         condition: service_healthy
 
+  presets_service:
+    build:
+      context: ../../../backend/presets_service
+    environment:
+      PRESETS_DB_PATH: "/data/presets.db"
+      PRESETS_SEED_PATH: "/seed"
+    volumes:
+      - ../../presets:/seed:ro
+      - presets_data:/data
+    ports:
+      - "8005:8005"
+
   frontend:
     build:
       context: ../../../frontend
       target: dev
+    environment:
+      # Inside the container, localhost is the container itself — point the Vite
+      # dev-server proxy at sibling services by their compose service names.
+      VITE_PRESETS_TARGET: http://presets_service:8005
+      VITE_CONFIG_TARGET: http://configuration_service:8004
+      VITE_CONTROL_TARGET: http://direct_control_service:8003
     ports:
       - "5173:5173"
     depends_on:
       - configuration_service
       - direct_control_service
+      - presets_service
+
+volumes:
+  presets_data:

@@ -1,0 +1,43 @@
+/* ── NumberInput ──────────────────────────────────────────────── */
+
+.number-input {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.25rem;
+  border-bottom: 1px solid #e3e8ec;
+}
+
+.number-input__label {
+  font-size: 0.9rem;
+  color: #1f2937;
+  white-space: nowrap;
+}
+
+.number-input__field {
+  width: 70px;
+  padding: 0.3rem 0.6rem;
+  background: #ffffff;
+  border: 1px solid #9fc8d8;
+  border-radius: 999px;
+  color: #1f2937;
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-family: inherit;
+  outline: none;
+  -moz-appearance: textfield;
+}
+
+.number-input__field::-webkit-outer-spin-button,
+.number-input__field::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.number-input__field:focus {
+  border-color: #00addc;
+  box-shadow: 0 0 0 2px rgba(0, 173, 220, 0.25);
+}

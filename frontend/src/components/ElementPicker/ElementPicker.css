@@ -1,0 +1,121 @@
+/* ── ElementPicker — self-contained styles (no Tailwind) ── */
+
+.element-picker {
+  --ep-alkali-metal:      #a5d6a7;
+  --ep-alkaline-earth:    #c5e1a5;
+  --ep-transition-metal:  #fff59d;
+  --ep-post-transition:   #80cbc4;
+  --ep-metalloid:         #80deea;
+  --ep-nonmetal:          #90caf9;
+  --ep-halogen:           #81d4fa;
+  --ep-noble-gas:         #f48fb1;
+  --ep-lanthanide:        #ce93d8;
+  --ep-actinide:          #ef9a9a;
+  --ep-unknown:           #e0e0e0;
+
+  width: 100%;
+  overflow-x: auto;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+/* ── 18-column grid ── */
+.element-picker__grid {
+  display: grid;
+  grid-template-columns: repeat(18, minmax(52px, 1fr));
+  grid-template-rows: repeat(7, auto) 12px repeat(2, auto); /* row 8 = gap */
+  gap: 2px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* ── Individual cell ── */
+.element-picker__cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 72px;
+  padding: 16px 4px 6px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: filter 0.12s, box-shadow 0.12s;
+  box-sizing: border-box;
+}
+
+.element-picker__cell:hover {
+  filter: brightness(0.92);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25);
+}
+
+.element-picker__cell:focus-visible {
+  outline: 2px solid #1976d2;
+  outline-offset: 1px;
+}
+
+.element-picker__cell--selected {
+  box-shadow: 0 0 0 2.5px #1976d2;
+  filter: brightness(0.88);
+}
+
+.element-picker__cell--no-data {
+  opacity: 0.35;
+  filter: grayscale(60%);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.element-picker__cell:disabled {
+  pointer-events: none;
+}
+
+/* ── Text layers ── */
+.element-picker__number {
+  position: absolute;
+  top: 3px;
+  left: 5px;
+  font-size: 0.65rem;
+  font-weight: 500;
+  line-height: 1;
+  color: rgba(0, 0, 0, 0.7);
+}
+
+.element-picker__symbol {
+  font-size: 1.3rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #111;
+}
+
+.element-picker__name {
+  font-size: 0.6rem;
+  font-weight: 500;
+  line-height: 1.3;
+  color: #222;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.element-picker__mass {
+  font-size: 0.6rem;
+  line-height: 1.3;
+  color: rgba(0, 0, 0, 0.65);
+}
+
+/* ── Category colors ── */
+.element-picker__cell--alkali-metal      { background: var(--ep-alkali-metal); }
+.element-picker__cell--alkaline-earth    { background: var(--ep-alkaline-earth); }
+.element-picker__cell--transition-metal  { background: var(--ep-transition-metal); }
+.element-picker__cell--post-transition   { background: var(--ep-post-transition); }
+.element-picker__cell--metalloid         { background: var(--ep-metalloid); }
+.element-picker__cell--nonmetal          { background: var(--ep-nonmetal); }
+.element-picker__cell--halogen           { background: var(--ep-halogen); }
+.element-picker__cell--noble-gas         { background: var(--ep-noble-gas); }
+.element-picker__cell--lanthanide        { background: var(--ep-lanthanide); }
+.element-picker__cell--actinide          { background: var(--ep-actinide); }
+.element-picker__cell--unknown           { background: var(--ep-unknown); }

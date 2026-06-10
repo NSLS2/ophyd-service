@@ -1,0 +1,19 @@
+{
+  "Na_K": {"start": 1065, "stop": 1130, "velocity": 0.1, "deadband": 5, "epu1offset": 2, "epu_table": 4, "scan_count": 1, "intervals": 0, "au_mesh": -130.2, "e_align": 1080, "m1b1_sp": 373},
+  "C_K":  {"start": 275, "stop": 320, "velocity": 0.1, "deadband": 10.5, "epu1offset": -0.2, "epu_table": 4, "scan_count": 1, "intervals": 0.2, "au_mesh": -80, "e_align": 293, "m1b1_sp": 425},
+  "N_K":  {"start": 390, "stop": 430, "velocity": 0.1, "deadband": 6.5, "epu1offset": -1.6, "epu_table": 4, "scan_count": 5, "intervals": 0, "au_mesh": -130.2, "e_align": 407, "m1b1_sp": 407},
+  "F_K":  {"start": 678, "stop": 720, "velocity": 0.1, "deadband": 6.5, "epu1offset": -0.6, "epu_table": 4, "scan_count": 1, "intervals": 0, "au_mesh": -130.2, "e_align": 700, "m1b1_sp": 385},
+  "La_M": {"start": 820, "stop": 870, "velocity": 0.1, "deadband": 8, "epu1offset": 4.1, "epu_table": 4, "scan_count": 3, "intervals": 0, "au_mesh": -130.2, "e_align": 853, "m1b1_sp": 385},
+  "Ti_L": {"start": 450, "stop": 485, "velocity": 0.1, "deadband": 8.5, "epu1offset": -1, "epu_table": 4, "scan_count": 3, "intervals": 0, "au_mesh": -130.2, "e_align": 466, "m1b1_sp": 405},
+  "Mg_K": {"start": 1295, "stop": 1360, "velocity": 0.1, "deadband": 5.5, "epu1offset": 3.2, "epu_table": 4, "scan_count": 2, "intervals": 0.1, "au_mesh": -130.2, "e_align": 1320, "m1b1_sp": 383},
+  "Ni_L": {"start": 840, "stop": 885, "velocity": 0.1, "deadband": 6.5, "epu1offset": 0.2, "epu_table": 4, "scan_count": 1, "intervals": 0, "au_mesh": -130.2, "e_align": 853, "m1b1_sp": 378},
+  "Mn_L": {"start": 635, "stop": 670, "velocity": 0.1, "deadband": 6.5, "epu1offset": 0, "epu_table": 4, "scan_count": 2, "intervals": 0, "au_mesh": -130.2, "e_align": 642, "m1b1_sp": 387},
+  "Fe_L": {"start": 698, "stop": 740, "velocity": 0.1, "deadband": 8.5, "epu1offset": -0.2, "epu_table": 4, "scan_count": 8, "intervals": 0, "au_mesh": -130.2, "e_align": 709, "m1b1_sp": 386},
+  "Cr_L": {"start": 570, "stop": 605, "velocity": 0.1, "deadband": 6.5, "epu1offset": 0, "epu_table": 4, "scan_count": 1, "intervals": 0, "au_mesh": -130.2, "e_align": 578, "m1b1_sp": 405},
+  "Co_L": {"start": 770, "stop": 810, "velocity": 0.1, "deadband": 6.5, "epu1offset": -0.4, "epu_table": 4, "scan_count": 1, "intervals": 0.2, "au_mesh": -130.2, "e_align": 780, "m1b1_sp": 379},
+  "Cu_L": {"start": 925, "stop": 975, "velocity": 0.1, "deadband": 6.5, "epu1offset": 1.2, "epu_table": 4, "scan_count": 2, "intervals": 0, "au_mesh": -130.2, "e_align": 932, "m1b1_sp": 378},
+  "O_K":  {"start": 520, "stop": 575, "velocity": 0.1, "deadband": 7.5, "epu1offset": -0.6, "epu_table": 4, "scan_count": 5, "intervals": 0, "au_mesh": -80, "e_align": 540, "m1b1_sp": 389},
+  "Al_K": {"start": 1550, "stop": 1600, "velocity": 0.1, "deadband": 5, "epu1offset": 5, "epu_table": 5, "scan_count": 5, "intervals": 0, "au_mesh": -130.2, "e_align": 1560, "m1b1_sp": 435},
+  "Zn_L": {"start": 1015, "stop": 1065, "velocity": 0.1, "deadband": 10, "epu1offset": 7, "epu_table": 4, "scan_count": 1, "intervals": 0, "au_mesh": -130.2, "e_align": 1035, "m1b1_sp": 380},
+  "Ce_M": {"start": 870, "stop": 930, "velocity": 0.1, "deadband": 7, "epu1offset": 1, "epu_table": 4, "scan_count": 3, "intervals": 0, "au_mesh": -130.2, "e_align": 900, "m1b1_sp": 370}
+}

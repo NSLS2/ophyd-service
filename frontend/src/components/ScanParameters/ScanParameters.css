@@ -1,0 +1,101 @@
+/* ── ScanParameters panel ─────────────────────────────────────── */
+
+.scan-parameters {
+  --sp-primary: #105c78;
+  --sp-secondary: #00addc;
+
+  background: #ffffff;
+  border: 1px solid #d6dde1;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(16, 92, 120, 0.08);
+}
+
+/* ── Header banner ─────────────────────────────────────────────── */
+
+.scan-parameters__header {
+  background: var(--sp-primary);
+  color: #ffffff;
+  text-align: center;
+  padding: 0.7rem 1rem;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* ── Body ──────────────────────────────────────────────────────── */
+
+.scan-parameters__body {
+  display: flex;
+  flex-direction: column;
+  padding: 0.75rem 1rem 1rem;
+}
+
+/* ── Scrollable field list (≈5 rows visible) ───────────────────── */
+
+.scan-parameters__fields {
+  display: flex;
+  flex-direction: column;
+  max-height: 14.5rem;
+  overflow-y: auto;
+  padding-right: 0.4rem;
+}
+
+.scan-parameters__fields::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scan-parameters__fields::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scan-parameters__fields::-webkit-scrollbar-thumb {
+  background: #c2ccd2;
+  border-radius: 4px;
+}
+
+.scan-parameters__fields::-webkit-scrollbar-thumb:hover {
+  background: var(--sp-secondary);
+}
+
+/* Remove separator under the last visible row */
+.scan-parameters__fields .number-input:last-child {
+  border-bottom: none;
+}
+
+/* ── Advanced toggle button ────────────────────────────────────── */
+
+.scan-parameters__advanced-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 0.85rem;
+  padding: 0.6rem 1rem;
+  background: var(--sp-primary);
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.scan-parameters__advanced-toggle:hover {
+  background: var(--sp-secondary);
+}
+
+.scan-parameters__chevron {
+  font-size: 0.7rem;
+  margin-left: 0.5rem;
+}
+
+/* ── Advanced fields ───────────────────────────────────────────── */
+
+.scan-parameters__advanced-fields {
+  display: flex;
+  flex-direction: column;
+  padding-top: 0.5rem;
+}
