@@ -11,6 +11,11 @@
 # in the same commit. Runtime installs (requirements.txt) stay unpinned.
 bluesky==1.14.6
 ophyd-async==0.17
+# numpy 2.4 refuses to load its C extension twice in one process
+# ("cannot load module more than once per process"), which breaks every
+# code path that re-loads startup scripts/modules in-process
+# (qserver-list-plans-devices, RE worker startup).
+numpy==2.3.5
 black!=25.11.0
 coverage
 flake8

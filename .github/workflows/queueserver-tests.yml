@@ -99,8 +99,11 @@ jobs:
         # names bluesky-configuration-service, which is NOT on PyPI — the
         # sibling editable install is what satisfies it; dropping it from this
         # command makes the whole install fail (loudly, by design).
+        # numpy is NOT pre-upgraded here: requirements-dev.txt pins it (and
+        # bluesky / ophyd-async) to keep the suite's committed expectations
+        # stable — see the comment block at the top of that file.
         run: |
-          python -m pip install --upgrade pip setuptools numpy
+          python -m pip install --upgrade pip setuptools
           pip install -e . -e ../configuration_service -r requirements-dev.txt
 
       - name: Run pytest (group ${{ matrix.group }}/3)
