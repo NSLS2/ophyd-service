@@ -385,6 +385,12 @@ class RunEngineManager(Process):
         # Stable for the manager's lifetime; used as item_id on every lock/unlock.
         self._config_service_lock_item_id = f"env:{_generate_uid()}"
         self._config_service_locked_devices: list = []
+        # True when an unlock failed and config-service may still hold our
+        # locks. The next env-open sync reconciles (releases the stale set)
+        # before locking for the new environment — without this flag a failed
+        # unlock would leave _config_service_locked_devices populated and
+        # silently disable locking for every later environment.
+        self._config_service_unlock_failed = False
         # Registry snapshot (``{name: spec}``) fetched at the start of env-open.
         # ``None`` means "not fetched this env-cycle" and is distinct from the
         # known-empty ``{}`` case — so a disabled/errored prefetch does not
@@ -1144,6 +1150,23 @@ class RunEngineManager(Process):
             device_data=self._config_service_device_data,
             prefetched_info=self._config_service_prefetched_info,
         )
+        if self._config_service_unlock_failed and self._config_service_locked_devices:
+            # A previous environment's unlock failed, so config-service may
+            # still hold our locks (same item_id — it is manager-lifetime).
+            # Release the stale set before locking for this environment;
+            # errors propagate so env-open fails loudly rather than running
+            # an unprotected environment. Unlocking already-released devices
+            # is a no-op on the server, so this is safe after a
+            # config-service restart cleared the locks for us.
+            stale = list(self._config_service_locked_devices)
+            await client.unlock_devices(stale, item_id=self._config_service_lock_item_id)
+            self._config_service_locked_devices = []
+            self._config_service_unlock_failed = False
+            logger.info(
+                "config-service released %d stale device lock(s) left by a "
+                "failed unlock (item_id=%s)",
+                len(stale), self._config_service_lock_item_id,
+            )
         if not self._config_service_locked_devices and device_names:
             await client.lock_devices(
                 device_names,
@@ -1221,14 +1244,24 @@ class RunEngineManager(Process):
                 devices, item_id=self._config_service_lock_item_id
             )
         except Exception:
+            # Keep the locked-device list and mark the failure: the server
+            # may still hold these locks, and the next env-open sync uses
+            # the list + flag to release them before locking again. Clearing
+            # the list here would orphan the server-side locks (the next
+            # lock attempt would 409); leaving it WITHOUT the flag would
+            # make env-open skip locking entirely.
+            self._config_service_unlock_failed = True
             if not suppress_errors:
                 raise
             logger.exception(
-                "config-service unlock failed during env-destroy; "
-                "locks for item_id=%s may persist until config-service restart",
+                "config-service unlock failed during env-destroy; stale "
+                "locks for item_id=%s will be reconciled at the next "
+                "environment open",
                 self._config_service_lock_item_id,
             )
+            return
         self._config_service_locked_devices = []
+        self._config_service_unlock_failed = False
 
     async def _load_task_results_from_worker(self):
         """
