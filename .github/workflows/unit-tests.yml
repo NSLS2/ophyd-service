@@ -6,9 +6,9 @@
 # The third job covers the Side-B edge (queueserver <-> configuration_service):
 # it runs the queueserver's config-service client tests against the REAL
 # config-service app booted in-process — NOT the full ~2868-test queueserver
-# suite, which needs redis + LDAP. queueserver_service is a hard fork
-# maintained in-tree (no upstream CI), so its full suite needs its own job
-# here; until that lands, only this edge slice runs per PR.
+# suite, which needs redis + LDAP — that runs in the path-filtered
+# queueserver-tests workflow. This edge slice stays here so EVERY PR checks
+# the cross-service contract, not just queueserver-touching ones.
 #
 # Triggers:
 #   - every PR
