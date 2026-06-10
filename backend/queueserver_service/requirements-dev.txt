@@ -1,5 +1,16 @@
 # These are required for developing the package (running the tests, building
 # the documentation) but not necessarily required for _using_ it.
+#
+# bluesky + ophyd-async are pinned EXACTLY: the suite compares generated
+# plan/device descriptions against committed expectations
+# (profile_collection_sim's existing_plans_and_devices.yaml, the
+# test_prepare_devices_1 tables in test_profile_ops.py), and those artifacts
+# change shape with these packages (bluesky 1.15 renders `X | None` where
+# 1.14 rendered `typing.Optional[X]`; ophyd-async 0.18 changed SimMotor's
+# component set). Bump the pins deliberately and regenerate the expectations
+# in the same commit. Runtime installs (requirements.txt) stay unpinned.
+bluesky==1.14.6
+ophyd-async==0.17
 black!=25.11.0
 coverage
 flake8
@@ -28,10 +39,9 @@ pandas
 pyarrow
 matplotlib # Needed for BEC, should be factored out
 scikit-image # Needed for BEC/other stuff to run, factor out
-# Dependencies of ophyd-async
+# Dependencies of ophyd-async (the package itself is pinned at the top)
 h5py
 aioca
-ophyd-async
 # Required by the Layer 2.8 config-service integration tests
 # (bluesky_queueserver/manager/tests/test_config_service_integration.py).
 # The test module boots configuration_service.main.create_app in-process
