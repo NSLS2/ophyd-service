@@ -57,7 +57,7 @@ queueserver_service = ["profile_collection_sim/*"]
 testpaths = ["tests"]
 norecursedirs = [".git", "build", "dist", "*.egg-info"]
 markers = [
-    "slow: recorded duration >= the QS_SLOW_TEST_THRESHOLD (default 2s); applied automatically from .test_durations in tests/conftest.py",
+    "slow: recorded duration >= the QS_SLOW_TEST_THRESHOLD (default 1s); applied automatically from .test_durations in tests/conftest.py",
 ]
 
 [tool.black]

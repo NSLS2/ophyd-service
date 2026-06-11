@@ -77,12 +77,12 @@ One `pytest` run from this directory collects both suites (needs a local redis;
 the LDAP authenticator tests also want `docker compose -f
 docker-configs/ldap-docker-compose.yml up -d`).
 
-The full suite boots real manager/worker/server processes and takes ~1.5 h, so
-tests with a recorded duration ≥ 2 s are auto-marked `slow` from the committed
+The full suite boots real manager/worker/server processes and takes ~2 h, so
+tests with a recorded duration ≥ 1 s are auto-marked `slow` from the committed
 `.test_durations` (see `tests/conftest.py`):
 
 ```bash
-pytest -m "not slow"     # development loop: ~2/3 of the tests in ~15 min
+pytest -m "not slow"     # development loop: ~2100 of the tests in ~7 min
 pytest                   # everything
 USE_IPYKERNEL=true pytest   # run the worker in IPython-kernel mode; required
                             # by the tests that skip otherwise

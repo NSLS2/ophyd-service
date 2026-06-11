@@ -16,10 +16,10 @@ os.environ["PYTHONPATH"] = os.pathsep.join(
 )
 
 # Tests at or above this recorded duration get the ``slow`` marker, so
-# ``pytest -m "not slow"`` is a fast development loop (~12 min vs ~1.5 h for
-# the full suite at the default 2 s). Durations come from the committed
+# ``pytest -m "not slow"`` is a fast development loop (~7 min vs ~2 h for
+# the full suite at the default 1 s). Durations come from the committed
 # pytest-split data; tests without a recorded duration count as fast.
-_SLOW_THRESHOLD_S = float(os.environ.get("QS_SLOW_TEST_THRESHOLD", "2"))
+_SLOW_THRESHOLD_S = float(os.environ.get("QS_SLOW_TEST_THRESHOLD", "1"))
 _DURATIONS_FILE = _service_root / ".test_durations"
 
 
