@@ -1130,7 +1130,9 @@ async def re_metadata(payload: dict = {}, principal=Security(get_current_princip
     Run Engine: download the metadata of the currently running plan.
     """
     try:
-        msg = await SR.RM.re_metadata(**payload)
+        # send_request: re_metadata is an in-tree manager method that the
+        # released bluesky-queueserver-api client does not expose yet.
+        msg = await SR.RM.send_request(method="re_metadata", params=payload)
     except Exception:
         process_exception()
     return msg

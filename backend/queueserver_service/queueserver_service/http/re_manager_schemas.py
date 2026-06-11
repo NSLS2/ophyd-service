@@ -67,15 +67,15 @@ class QueueItem(RMResponse):
     user: Optional[str] = None
     user_group: Optional[str] = None
     properties: Optional[dict] = None
+    # Queue items carry ``result`` too, not just history items: a halted,
+    # aborted or failed plan is pushed back to the queue WITH its execution
+    # result block. Free-form in this first cut (tightening it to a typed
+    # model is a noted follow-up).
+    result: Optional[dict] = None
 
 
 class HistoryItem(QueueItem):
-    """A history item: a queue item plus the execution ``result`` block.
-
-    ``result`` is kept free-form in this first cut (tightening it to a typed model is a
-    noted follow-up)."""
-
-    result: Optional[dict] = None
+    """A history item: same shape as a queue item, ``result`` always populated."""
 
 
 # --------------------------------------------------------------------------------------

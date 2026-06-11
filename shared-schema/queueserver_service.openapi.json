@@ -4923,7 +4923,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "HistoryItem",
-        "description": "A history item: a queue item plus the execution ``result`` block.\n\n``result`` is kept free-form in this first cut (tightening it to a typed model is a\nnoted follow-up)."
+        "description": "A history item: same shape as a queue item, ``result`` always populated."
       },
       "Identity": {
         "properties": {
@@ -5612,6 +5612,18 @@
               }
             ],
             "title": "Properties"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
           }
         },
         "additionalProperties": false,
