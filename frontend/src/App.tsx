@@ -11,21 +11,21 @@ function App() {
       label: 'IOS Scan',
       element: <IosScan />,
       icon: <Atom size={28} />,
-      isBackgroundTransparent: true,
+      isBackgroundTransparent: false,
     },
     {
       path: '/settings',
       label: 'Scan Settings',
       element: <ScanSettings />,
       icon: <SlidersHorizontal size={28} />,
-      isBackgroundTransparent: true,
+      isBackgroundTransparent: false,
     },
     {
       path: '/presets-admin',
       label: 'Presets Admin',
       element: <PresetsAdmin />,
       icon: <Table size={28} />,
-      isBackgroundTransparent: true,
+      isBackgroundTransparent: false,
     },
   ]
 

@@ -13,36 +13,39 @@ export interface ElementPickerProps {
 export function ElementPicker({ onSelect, selectedSymbol, highlightSymbols, className }: ElementPickerProps) {
   return (
     <div className={['element-picker', className].filter(Boolean).join(' ')}>
-      <div className="element-picker__grid">
-        {elements.map((el) => {
-          const isSelected = selectedSymbol === el.symbol
-          const hasData = highlightSymbols?.(el.symbol) ?? true
-          const isDisabled = highlightSymbols !== undefined && !hasData
-          const cls = [
-            'element-picker__cell',
-            `element-picker__cell--${el.category}`,
-            isSelected && 'element-picker__cell--selected',
-            isDisabled && 'element-picker__cell--no-data',
-          ]
-            .filter(Boolean)
-            .join(' ')
+      <div className="element-picker__inner">
+        <h1 className="element-picker__heading">Pick an Element</h1>
+        <div className="element-picker__grid">
+          {elements.map((el) => {
+            const isSelected = selectedSymbol === el.symbol
+            const hasData = highlightSymbols?.(el.symbol) ?? true
+            const isDisabled = highlightSymbols !== undefined && !hasData
+            const cls = [
+              'element-picker__cell',
+              `element-picker__cell--${el.category}`,
+              isSelected && 'element-picker__cell--selected',
+              isDisabled && 'element-picker__cell--no-data',
+            ]
+              .filter(Boolean)
+              .join(' ')
 
-          return (
-            <button
-              key={el.number}
-              className={cls}
-              style={{ gridRow: el.row, gridColumn: el.col }}
-              onClick={() => onSelect?.(el)}
-              disabled={isDisabled}
-              aria-label={`${el.name} (${el.symbol})`}
-            >
-              <span className="element-picker__number">{el.number}</span>
-              <span className="element-picker__symbol">{el.symbol}</span>
-              <span className="element-picker__name">{el.name}</span>
-              <span className="element-picker__mass">{el.mass}</span>
-            </button>
-          )
-        })}
+            return (
+              <button
+                key={el.number}
+                className={cls}
+                style={{ gridRow: el.row, gridColumn: el.col }}
+                onClick={() => onSelect?.(el)}
+                disabled={isDisabled}
+                aria-label={`${el.name} (${el.symbol})`}
+              >
+                <span className="element-picker__number">{el.number}</span>
+                <span className="element-picker__symbol">{el.symbol}</span>
+                <span className="element-picker__name">{el.name}</span>
+                <span className="element-picker__mass">{el.mass}</span>
+              </button>
+            )
+          })}
+        </div>
       </div>
     </div>
   )
