@@ -145,8 +145,8 @@ is created with the sole purpose of demonstrating different types of name patter
         - ":^motor\\d+$:?.*"  # Same for all numbered motors, such as 'motor2' or 'motor256'
 
 It is recommended that new projects are started using the sample file
-`user_group_permissions.yaml <https://github.com/bluesky/bluesky-queueserver/blob/main/queueserver_service/profile_collection_sim/user_group_permissions.yaml>`_,
-which could be copied to the directory containing startup files and then modified according
+``queueserver_service/profile_collection_sim/user_group_permissions.yaml`` shipped with
+this package, which could be copied to the directory containing startup files and then modified according
 to the project needs.
 
 
