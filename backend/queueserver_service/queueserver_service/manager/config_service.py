@@ -420,7 +420,7 @@ async def _bootstrap_with_retry(
     client: "ConfigServiceClient",
     device_data: Dict[str, Dict[str, Any]],
 ) -> None:
-    """Upsert every device into an empty registry; retry survivors once.
+    """Upsert every device into an empty registry; retry failures once.
 
     The first env-open against an empty registry has to insert every
     device the worker knows about. A bare ``asyncio.gather`` over those
@@ -434,16 +434,24 @@ async def _bootstrap_with_retry(
     exactly the names that failed (once), and raise loudly if anything
     is still missing. The retry is bounded so a genuinely broken
     upstream surfaces immediately rather than looping; the loud raise
-    upholds the no-silent-fallback rule.
+    upholds the no-silent-fallback rule. The first underlying error is
+    chained onto the raised ``ConfigServiceError`` (``__cause__``) so a
+    debugger landing on the raise site still has the original traceback.
 
     Names are upserted in sorted order in both passes so the per-attempt
     log line is reproducible.
+
+    Only ``Exception`` subclasses are counted as per-device failures.
+    ``asyncio.CancelledError``, ``KeyboardInterrupt``, and
+    ``SystemExit`` (the non-``Exception`` ``BaseException`` subclasses)
+    are propagated immediately so cancellation and process shutdown
+    behave normally instead of being aggregated into a bootstrap error.
     """
     entries = sorted(device_data.items())  # [(name, payload), ...]
 
     async def _attempt(
         targets: List[Tuple[str, Dict[str, Any]]],
-    ) -> Dict[str, BaseException]:
+    ) -> Dict[str, Exception]:
         results = await asyncio.gather(
             *(
                 client.upsert_device(payload["metadata"], payload["spec"])
@@ -451,11 +459,16 @@ async def _bootstrap_with_retry(
             ),
             return_exceptions=True,
         )
-        return {
-            name: result
-            for (name, _), result in zip(targets, results)
-            if isinstance(result, BaseException)
-        }
+        failures: Dict[str, Exception] = {}
+        for (name, _), result in zip(targets, results):
+            if isinstance(result, Exception):
+                failures[name] = result
+            elif isinstance(result, BaseException):
+                # CancelledError / KeyboardInterrupt / SystemExit — these
+                # are not per-device failures; propagate so cancellation
+                # and shutdown work as the caller expects.
+                raise result
+        return failures
 
     failures = await _attempt(entries)
     if failures:
@@ -469,14 +482,18 @@ async def _bootstrap_with_retry(
         failures = await _attempt(retry_entries)
 
     if failures:
+        ordered = sorted(failures.items())
         detail = ", ".join(
-            f"{name}: {type(exc).__name__}: {exc}"
-            for name, exc in sorted(failures.items())
+            f"{name}: {type(exc).__name__}: {exc}" for name, exc in ordered
         )
+        # Chain the first remaining failure as __cause__ so a debugger
+        # landing on the raise site has the original traceback even
+        # when several devices failed.
+        first_cause = ordered[0][1]
         raise ConfigServiceError(
             "config-service bootstrap failed after retry for "
             f"{len(failures)} device(s): {detail}"
-        )
+        ) from first_cause
 
 
 async def sync_devices_on_env_open(

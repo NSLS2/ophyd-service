@@ -514,9 +514,9 @@ async def test_sync_raises_if_introspection_missed_a_device():
 async def test_sync_propagates_bootstrap_failure():
     # Bootstrap retries each failed device once before raising. A device
     # that fails on both attempts surfaces as a ConfigServiceError that
-    # names the device and wraps the underlying exception so operators
-    # have something to act on; ``ConfigServiceHTTPError`` from the
-    # individual POST is intentionally NOT what escapes.
+    # names the device and chains the underlying exception as __cause__
+    # so operators have something to act on; ``ConfigServiceHTTPError``
+    # from the individual POST is intentionally NOT what escapes.
     handlers = [
         _json_response(200, {}),                       # empty
         _json_response(500, {"detail": "db gone"}),    # POST m1 (1st attempt)
@@ -524,12 +524,13 @@ async def test_sync_propagates_bootstrap_failure():
     ]
     client, _ = await _aclient(handlers)
     async with client:
-        with pytest.raises(ConfigServiceError, match=r"bootstrap failed after retry.*m1"):
+        with pytest.raises(ConfigServiceError, match=r"bootstrap failed after retry.*m1") as excinfo:
             await sync_devices_on_env_open(
                 client,
                 expected_device_names=["m1"],
                 device_data={"m1": _device_payload("m1")},
             )
+    assert isinstance(excinfo.value.__cause__, ConfigServiceHTTPError)
 
 
 @pytest.mark.asyncio
