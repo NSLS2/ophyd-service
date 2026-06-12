@@ -3,6 +3,21 @@
 The bluesky **queueserver + httpserver** as a co-equal ophyd-service backend, alongside
 `configuration_service` and `direct_control_service`.
 
+## Package layout
+
+One cohesive Python package, `queueserver_service` (based on bluesky-queueserver and
+bluesky-httpserver, maintained here independently):
+
+- `queueserver_service/manager/` — the RE manager, worker, CLI and plan/profile machinery
+  (formerly `bluesky_queueserver.manager`);
+- `queueserver_service/http/` — the FastAPI HTTP/WebSocket API server
+  (formerly the `bluesky_httpserver` package);
+- `queueserver_service/common/` — the 0MQ/JSON-RPC comms layer and logging glue shared by
+  both halves (`comms`, `json_rpc`, `logging_setup`);
+- `queueserver_service/profile_collection_sim/` — the simulated startup profile;
+- `tests/manager/`, `tests/http/` — both test suites, collected by a single `pytest` run
+  (the http fixtures build on the manager test harness in `tests/manager/common.py`).
+
 ## Compatibility contract
 
 This service is maintained independently of upstream bluesky-queueserver, but the
@@ -13,10 +28,18 @@ contracts and MUST keep working with it:
   `REManagerAPI` and its console/system-info monitors speak;
 - the HTTP REST + WebSocket API that the api package's HTTP transport targets.
 
-(The httpserver half of this service itself imports `bluesky_queueserver_api`, so
+(The http half of this service itself imports `bluesky_queueserver_api`, so
 breaking the api package breaks the service too.) Internal divergence — new endpoints,
 new config sections, manager internals — is fine; changing or removing what
 bluesky-queueserver-api consumes is not.
+
+Two install-level consequences of that contract (see the notes in `pyproject.toml`
+and `bluesky_queueserver/__init__.py`): the **distribution** is named
+`bluesky-queueserver` so the api client's `Requires-Dist: bluesky-queueserver`
+resolves to this package instead of pulling the upstream dist (which would shadow
+the console scripts), and a one-module `bluesky_queueserver` package re-exports
+the legacy top-level names the client imports. The import namespace for all code
+in this repo is `queueserver_service`.
 
 Enforced in CI: the `with-queueserver` integration job installs
 `bluesky-queueserver-api` from PyPI and drives the running service over both
@@ -24,12 +47,11 @@ transports (`integration/exercise/queueserver_api_compat.py`).
 
 ## How the image is built
 
-The `Dockerfile` builds from the **in-tree source** in this directory. The service is based
-on the merged bluesky-queueserver + bluesky-httpserver (the `merge/httpserver` unification
-work) and is maintained here independently — it does not track upstream. A single editable
-`pip install -e .` installs both packages (the merged `setup.py` registers
-`start-re-manager` and `start-bluesky-httpserver`). Nothing is pulled from an external git
-ref at build time.
+The `Dockerfile` builds from the **in-tree source** in this directory — it does not track
+upstream, and nothing is pulled from an external git ref at build time. A single editable
+`pip install -e .` installs the `queueserver_service` package and registers the console
+scripts (`start-re-manager`, `qserver`, `start-bluesky-httpserver`, ...). The console-script
+names are kept from upstream so existing deployments and docs keep working.
 
 A few runtime deps the install doesn't pull are added explicitly: `pandas`
 (`manager/conversions.py`), `matplotlib` (the shipped `profile_collection_sim` startup), and
@@ -48,3 +70,35 @@ a manager-config YAML pointing `config_service.url` at the configuration_service
 
 See `integration/pods/with-queueserver/` for the full pod (redis + the three backends + an IOC)
 and the manager-config YAML.
+
+**Queue storage** is pluggable (`queueserver_service/manager/queue_store.py`): redis is the
+default; `--queue-store-uri` (or `QSERVER_QUEUE_STORE_URI`, or the `network/queue_store_uri`
+config key) selects a SQL backend instead — `sqlite+aiosqlite:///...` or
+`postgresql+psycopg://...`, mirroring configuration_service's dual-backend pattern. The
+plan-queue test suite runs against both backends.
+
+## Running the tests
+
+One `pytest` run from this directory collects both suites (needs a local redis;
+the LDAP authenticator tests also want `docker compose -f
+docker-configs/ldap-docker-compose.yml up -d`).
+
+The full suite boots real manager/worker/server processes and takes ~2 h, so
+tests with a recorded duration ≥ 1 s are auto-marked `slow` from the committed
+`.test_durations` (see `tests/conftest.py`):
+
+```bash
+pytest -m "not slow"     # development loop: ~2100 of the tests in ~7 min
+pytest                   # everything
+USE_IPYKERNEL=true pytest   # run the worker in IPython-kernel mode; required
+                            # by the tests that skip otherwise
+```
+
+The IPython-kernel mode is a second test dimension: without `USE_IPYKERNEL`
+the kernel-only tests skip (they are most of the skip count in a default run).
+
+Refresh the durations data after the suite's shape changes significantly:
+
+```bash
+USE_IPYKERNEL=true pytest --store-durations
+```

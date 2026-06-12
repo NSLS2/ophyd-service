@@ -172,14 +172,13 @@ jobs:
       - name: Run Side-B edge tests
         run: |
           pytest -v \
-            bluesky_queueserver/manager/tests/test_config_service.py \
-            bluesky_queueserver/manager/tests/test_config_service_integration.py
+            tests/manager/test_config_service.py \
+            tests/manager/test_config_service_integration.py
 
       - name: Check shared-schema OpenAPI drift
-        # Guards shared-schema/queueserver_service.openapi.json (and the
-        # subproject's openapi.json) against the live routers — the same
-        # protection config-service and direct-control get from their
-        # test_openapi_drift.py in the jobs above.
+        # Guards shared-schema/queueserver_service.openapi.json against the
+        # live routers — the same protection config-service and direct-control
+        # get from their test_openapi_drift.py in the jobs above.
         run: |
           pytest -v \
-            subprojects/bluesky-httpserver/bluesky_httpserver/tests/test_openapi_drift.py
+            tests/http/test_openapi_drift.py

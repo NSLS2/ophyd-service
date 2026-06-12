@@ -1,35 +1,41 @@
-from ._version import get_versions
+"""
+Legacy import surface required by the PyPI ``bluesky-queueserver-api`` client.
 
-__version__ = get_versions()["version"]
-del get_versions
+The api client (a hard runtime dependency of ``queueserver_service.http``)
+imports these names from ``bluesky_queueserver``; this distribution is also
+named ``bluesky-queueserver`` so the client's ``Requires-Dist`` resolves to
+this package instead of pulling the upstream distribution (which would shadow
+the qserver/start-re-manager console scripts).
 
-from .manager.annotation_decorator import parameter_annotation_decorator  # noqa: E402, F401
-from .manager.comms import (  # noqa: E402, F401
+This module is ONLY the top-level legacy API. The implementation — and the
+import path for all new code — is ``queueserver_service``; legacy subpaths
+such as ``bluesky_queueserver.manager`` intentionally do not exist.
+"""
+
+from queueserver_service import __version__  # noqa: F401
+from queueserver_service import (  # noqa: F401
     CommTimeoutError,
-    ZMQCommSendAsync,
-    ZMQCommSendThreads,
-    generate_zmq_keys,
-    generate_zmq_public_key,
-    validate_zmq_key,
-)
-from .manager.gen_lists import gen_list_of_plans_and_devices  # noqa: E402, F401
-from .manager.output_streaming import (  # noqa: E402, F401
     ReceiveConsoleOutput,
     ReceiveConsoleOutputAsync,
     ReceiveSystemInfo,
     ReceiveSystemInfoAsync,
-)
-from .manager.profile_ops import bind_plan_arguments  # noqa: E402, F401
-from .manager.profile_ops import construct_parameters  # noqa: E402, F401
-from .manager.profile_ops import format_text_descriptions  # noqa: E402, F401
-from .manager.profile_ops import register_device  # noqa: E402, F401
-from .manager.profile_ops import register_plan  # noqa: E402, F401
-from .manager.profile_ops import validate_plan  # noqa: E402, F401
-from .manager.profile_tools import is_ipython_mode  # noqa: E402, F401
-from .manager.profile_tools import is_re_worker_active  # noqa: E402, F401
-from .manager.profile_tools import (  # noqa: E402, F401
+    ZMQCommSendAsync,
+    ZMQCommSendThreads,
+    bind_plan_arguments,
     clear_ipython_mode,
     clear_re_worker_active,
+    construct_parameters,
+    format_text_descriptions,
+    gen_list_of_plans_and_devices,
+    generate_zmq_keys,
+    generate_zmq_public_key,
+    is_ipython_mode,
+    is_re_worker_active,
+    parameter_annotation_decorator,
+    register_device,
+    register_plan,
     set_ipython_mode,
     set_re_worker_active,
+    validate_plan,
+    validate_zmq_key,
 )
