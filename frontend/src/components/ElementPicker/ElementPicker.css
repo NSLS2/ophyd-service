@@ -33,13 +33,95 @@
   align-items: center;
 }
 
-.element-picker__heading {
+.element-picker__heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(6px, 0.8vw, 12px);
   margin: 0 0 clamp(12px, 2vw, 24px);
+}
+
+.element-picker__heading {
+  margin: 0;
   font-size: clamp(1.4rem, 2.6vw, 2.1rem);
   font-weight: 700;
   color: #0b3a4d;
   text-align: center;
   letter-spacing: 0.01em;
+}
+
+/* ── Help tooltip next to the heading ── */
+.element-picker__help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.element-picker__help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: clamp(18px, 1.6vw, 24px);
+  height: clamp(18px, 1.6vw, 24px);
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #0b3a4d;
+  color: #fff;
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-weight: 700;
+  font-size: clamp(0.7rem, 1vw, 0.9rem);
+  line-height: 1;
+  cursor: help;
+  transition: background 0.12s;
+}
+
+.element-picker__help-icon:hover {
+  background: #1976d2;
+}
+
+.element-picker__help-icon:focus-visible {
+  outline: 2px solid #1976d2;
+  outline-offset: 2px;
+}
+
+.element-picker__help-tip {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  width: max-content;
+  max-width: min(280px, 80vw);
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #0b3a4d;
+  color: #f2fafd;
+  font-size: clamp(0.72rem, 0.9vw, 0.9rem);
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s, visibility 0.12s;
+}
+
+.element-picker__help-tip::before {
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-bottom-color: #0b3a4d;
+}
+
+.element-picker__help:hover .element-picker__help-tip,
+.element-picker__help-icon:focus-visible + .element-picker__help-tip {
+  opacity: 1;
+  visibility: visible;
 }
 
 /* ── 18-column grid — columns shrink to fit the viewport ── */

@@ -14,7 +14,27 @@ export function ElementPicker({ onSelect, selectedSymbol, highlightSymbols, clas
   return (
     <div className={['element-picker', className].filter(Boolean).join(' ')}>
       <div className="element-picker__inner">
-        <h1 className="element-picker__heading">Pick an Element</h1>
+        <div className="element-picker__heading-row">
+          <h1 className="element-picker__heading">Pick an Element</h1>
+          <span className="element-picker__help">
+            <button
+              type="button"
+              className="element-picker__help-icon"
+              aria-label="How to use this page"
+              aria-describedby="element-picker-help-tip"
+            >
+              i
+            </button>
+            <span
+              id="element-picker-help-tip"
+              role="tooltip"
+              className="element-picker__help-tip"
+            >
+              Choose an element to set up a scan. Colored elements have ready-made
+              presets; greyed-out elements aren&rsquo;t available yet.
+            </span>
+          </span>
+        </div>
         <div className="element-picker__grid">
           {elements.map((el) => {
             const isSelected = selectedSymbol === el.symbol

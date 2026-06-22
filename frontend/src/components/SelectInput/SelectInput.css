@@ -1,0 +1,32 @@
+/* ── SelectInput (label + dropdown) ───────────────────────────── */
+
+.select-input {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.select-input__label {
+  font-size: 0.9rem;
+  color: #1f2937;
+  white-space: nowrap;
+}
+
+.select-input__field {
+  padding: 0.3rem 0.6rem;
+  background: #ffffff;
+  border: 1px solid #9fc8d8;            /* Light blue border */
+  border-radius: 999px;                 /* Pill-shaped */
+  color: #1f2937;
+  font-size: 0.85rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+}
+
+/* Focus state: light cyan glow */
+.select-input__field:focus {
+  border-color: #00addc;
+  box-shadow: 0 0 0 2px rgba(0, 173, 220, 0.25);
+}

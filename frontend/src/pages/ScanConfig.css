@@ -5,7 +5,9 @@
   flex-direction: column;
   gap: 1.25rem;
   padding: 1.5rem;
-  max-width: 1200px;
+  /* Two panels (44 + 48rem) plus a 1.5rem gap = 93.5rem content, plus 3rem
+     page padding. */
+  max-width: 96.5rem;
 }
 
 /* ── Header ────────────────────────────────────────────────────── */
@@ -108,15 +110,68 @@
   text-align: center;
 }
 
-/* ── Panels grid ───────────────────────────────────────────────── */
-
-.scan-config__panels {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 1rem;
+.scan-config__layout {
+  display: flex;
+  flex-direction: column;
+  gap: 1.55rem;
 }
 
+/* ── Panels row (Scan Parameters | Detector Settings) ──────────── */
+
+/* Desktop-first: the two panels keep the figma 643:706 width ratio and cap at
+   their exact px via max-width. flex-basis:0 + grow makes them fluid — they
+   shrink proportionally as the viewport narrows, then stack (media query). */
+.scan-config__panels {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+
+.scan-config__bottom-row {
+  display: flex;
+  gap: 0.35rem;
+  align-items: flex-start;
+}
+
+.scan-config__spectrum {
+  flex: 1 1 auto;
+  min-height: 20.125rem;
+  background: #ffffff;
+  border: 1px solid #d6dde1;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(16, 92, 120, 0.08);
+}
+
+.scan-config__spectrum-header {
+  background: #105c78;
+  color: #ffffff;
+  text-align: center;
+  padding: 0.66rem 1rem;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.scan-config__spectrum-body {
+  padding: 0.8rem 1rem 1rem;
+}
+
+.scan-config__spectrum-canvas {
+  height: 16.25rem;
+  border-radius: 0.4rem;
+  border: 1px solid #d9e0e5;
+  background:
+    repeating-linear-gradient(0deg, #f6f8fa 0, #f6f8fa 1px, transparent 1px, transparent 2rem),
+    repeating-linear-gradient(90deg, #f6f8fa 0, #f6f8fa 1px, transparent 1px, transparent 2rem),
+    linear-gradient(180deg, #ffffff, #fbfdff);
+}
+
+/* Fallback Scan Parameters panel (shown when scan data is missing) occupies
+   the same slot as the real ScanParameters component. */
 .scan-config__panel {
+  flex: 643 1 0;
+  max-width: 44rem;
   background: #111827;
   border: 1px solid #1f2937;
   border-radius: 0.5rem;
@@ -162,4 +217,40 @@
   font-size: 0.85rem;
   font-style: italic;
   margin: 0;
+}
+
+/* ── Responsive: stack the panels on narrower screens ──────────── */
+
+@media (max-width: 820px) {
+  .scan-config__layout {
+    gap: 1.1rem;
+  }
+
+  .scan-config__panels {
+    flex-direction: column;
+  }
+
+  .scan-config__bottom-row {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .scan-config__spectrum {
+    width: 100%;
+    min-height: auto;
+  }
+
+  .scan-config__spectrum-canvas {
+    height: 12rem;
+  }
+
+  .scan-config__panel,
+  .scan-parameters,
+  .detector-settings,
+  .controls-panel {
+    flex: none;
+    width: 100%;
+    max-width: none;
+    height: auto;
+  }
 }

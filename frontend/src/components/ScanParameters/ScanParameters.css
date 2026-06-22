@@ -4,6 +4,14 @@
   --sp-primary: #105c78;
   --sp-secondary: #00addc;
 
+  /* Figma: 643 × 427 (≈ 40.2 × 26.7rem), bumped a few rem so inner cards
+     don't clip. Fluid via flex ratio, capped at max-width. */
+  flex: 643 1 0;
+  max-width: 44rem;
+  height: 31rem;
+
+  display: flex;
+  flex-direction: column;
   background: #ffffff;
   border: 1px solid #d6dde1;
   border-radius: 0.75rem;
@@ -28,6 +36,7 @@
 .scan-parameters__body {
   display: flex;
   flex-direction: column;
+  flex: 1;
   padding: 0.75rem 1rem 1rem;
 }
 

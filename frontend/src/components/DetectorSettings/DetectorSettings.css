@@ -1,0 +1,152 @@
+/* ── DetectorSettings panel ───────────────────────────────────── */
+
+.detector-settings {
+  --ds-primary: #105c78;      /* Dark teal */
+  --ds-secondary: #00addc;    /* Light cyan accent */
+
+  /* Figma: 706 × 442 (≈ 44.1 × 27.6rem), widened so Scalar Settings can be a
+     fixed 26.25rem (420px) and Vortex Settings keeps its room. Fluid via flex
+     ratio, capped at max-width. */
+  flex: 706 1 0;
+  max-width: 53rem;
+  height: 32rem;
+
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid #d6dde1;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(16, 92, 120, 0.08);
+}
+
+/* ── Header banner (dark teal) ─────────────────────────────────── */
+
+.detector-settings__header {
+  background: var(--ds-primary);
+  color: #ffffff;
+  text-align: center;
+  padding: 0.7rem 1rem;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* ── Body: two sub-cards, side-by-side then wrapping ───────────── */
+
+.detector-settings__body {
+  display: grid;
+  /* Scalar Settings fixed at 26.25rem (420px); Vortex Settings takes the rest. */
+  grid-template-columns: 26.25rem 1fr;
+  gap: 0.75rem;  flex: 1;  padding: 0.75rem 1rem 1rem;
+}
+
+/* ── Sub-card (Scalar / Vortex) ────────────────────────────────── */
+
+.detector-settings__card {
+  background: #ffffff;
+  border: 1px solid #d6dde1;
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.detector-settings__card-header {
+  background: var(--ds-primary);
+  color: #ffffff;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.detector-settings__card-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0.75rem 0.75rem;
+}
+
+/* Remove separator under the last row of a sub-card */
+.detector-settings__card-body .number-input:last-child {
+  border-bottom: none;
+}
+
+/* ── Gain row (label + two dropdowns) ──────────────────────────── */
+
+.detector-settings__gain-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.25rem;
+  border-bottom: 1px solid #e3e8ec;
+}
+
+.detector-settings__gain-label {
+  font-size: 0.9rem;
+  color: #1f2937;
+  white-space: nowrap;
+}
+
+.detector-settings__gain-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.detector-settings__gain-x {
+  color: #6b7280;
+  font-size: 0.85rem;
+}
+
+/* ── Range row (PFY / IPFY: start + size) ──────────────────────── */
+
+.detector-settings__range-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.25rem;
+  border-bottom: 1px solid #e3e8ec;
+}
+
+.detector-settings__range-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #1f2937;
+  white-space: nowrap;
+}
+
+.detector-settings__range-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.detector-settings__range-controls .number-input {
+  padding: 0;
+  border-bottom: none;
+}
+
+.detector-settings__range-sub {
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+
+/* ── Counter button ────────────────────────────────────────────── */
+
+.detector-settings__erase-start {
+  margin-top: 0.75rem;
+  padding: 0.55rem 1rem;
+  background: var(--ds-secondary);
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.detector-settings__erase-start:hover {
+  background: var(--ds-primary);
+}

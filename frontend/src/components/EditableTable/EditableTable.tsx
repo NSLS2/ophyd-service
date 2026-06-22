@@ -44,7 +44,7 @@ export function EditableTable<T extends { edge_index: string }>({
   const [deletedKeys, setDeletedKeys] = useState<string[]>([])
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
   const [confirming, setConfirming] = useState(false)
   const [successSummary, setSuccessSummary] = useState('')
   const [successDetails, setSuccessDetails] = useState<

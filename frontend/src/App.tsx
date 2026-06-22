@@ -15,7 +15,7 @@ function App() {
     },
     {
       path: '/settings',
-      label: 'Scan Settings',
+      label: 'Component Testing',
       element: <ScanSettings />,
       icon: <SlidersHorizontal size={28} />,
       isBackgroundTransparent: false,

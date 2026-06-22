@@ -3,6 +3,8 @@ import type { ElementData } from '../components/ElementPicker'
 import { useFullPreset, type EdgeFullPreset, type ScanPresetEntry } from '../api/presets'
 import { getEdgesForElement } from '../api/edgeMapping'
 import { ScanParameters } from '../components/ScanParameters'
+import { DetectorSettings } from '../components/DetectorSettings'
+import { ControlsPanel } from '../components/ControlsPanel'
 import './ScanConfig.css'
 
 interface ScanConfigProps {
@@ -72,52 +74,34 @@ function PresetPanels({ data }: { data: EdgeFullPreset }) {
   const [scanData, setScanData] = useState<Omit<ScanPresetEntry, 'edge_index'> | null>(data.scan)
 
   return (
-    <div className="scan-config__panels">
-      {/* Scan Presets — interactive component */}
-      {scanData ? (
-        <ScanParameters
-          data={scanData}
-          onChange={(patch) => setScanData((prev) => prev ? { ...prev, ...patch } : prev)}
-        />
-      ) : (
-        <section className="scan-config__panel">
-          <h2 className="scan-config__panel-title">Scan Parameters</h2>
-          <p className="scan-config__no-data">Not configured</p>
-        </section>
-      )}
-
-      {/* Detector Presets */}
-      <section className="scan-config__panel">
-        <h2 className="scan-config__panel-title">Detector Settings</h2>
-        {data.detector ? (
-          <dl className="scan-config__fields">
-            <Field label="Sample Gain" value={data.detector.samplegain} />
-            <Field label="Sample Decade" value={data.detector.sampledecade} />
-            <Field label="Au Mesh Gain" value={data.detector.aumeshgain} />
-            <Field label="Au Mesh Decade" value={data.detector.aumeshdecade} />
-            <Field label="PD Gain" value={data.detector.pd_gain} />
-            <Field label="PD Decade" value={data.detector.pd_decade} />
-            <Field label="Vortex Low" value={data.detector.vortex_low} />
-            <Field label="Vortex High" value={data.detector.vortex_high} />
-            <Field label="IPFY Low" value={data.detector.ipfy_low} />
-            <Field label="IPFY High" value={data.detector.ipfy_high} />
-            <Field label="Vortex Pos" value={data.detector.vortex_pos} />
-            <Field label="Vortex Time (s)" value={data.detector.vortex_time} />
-            <Field label="Scaler Time (s)" value={data.detector.sclr_time} />
-          </dl>
+    <div className="scan-config__layout">
+      <div className="scan-config__panels">
+        {/* Scan Presets — interactive component */}
+        {scanData ? (
+          <ScanParameters
+            data={scanData}
+            onChange={(patch) => setScanData((prev) => prev ? { ...prev, ...patch } : prev)}
+          />
         ) : (
-          <p className="scan-config__no-data">Not configured</p>
+          <section className="scan-config__panel">
+            <h2 className="scan-config__panel-title">Scan Parameters</h2>
+            <p className="scan-config__no-data">Not configured</p>
+          </section>
         )}
-      </section>
-    </div>
-  )
-}
 
-function Field({ label, value }: { label: string; value: string | number }) {
-  return (
-    <>
-      <dt className="scan-config__field-label">{label}</dt>
-      <dd className="scan-config__field-value">{value}</dd>
-    </>
+        {/* Detector Presets — interactive component */}
+        <DetectorSettings />
+      </div>
+
+      <div className="scan-config__bottom-row">
+        <section className="scan-config__spectrum" aria-label="Live Spectrum">
+          <div className="scan-config__spectrum-header">Live Spectrum (Vortex MCA)</div>
+          <div className="scan-config__spectrum-body">
+            <div className="scan-config__spectrum-canvas" />
+          </div>
+        </section>
+        <ControlsPanel />
+      </div>
+    </div>
   )
 }
