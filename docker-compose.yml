@@ -27,6 +27,9 @@ services:
   ioc:
     build:
       context: ./integration/ioc
+      platforms:
+      - linux/amd64
+    platform: linux/amd64
     # EPICS gateway clients need beacons/search on 5064/udp. Publish only to the
     # compose network by default; uncomment to expose to the host for
     # `caget`/`caput` from your workstation.
@@ -56,6 +59,9 @@ services:
   configuration_service:
     build:
       context: ./backend/configuration_service
+      platforms:
+      - linux/amd64
+    platform: linux/amd64
     environment:
       OPHYD_SERVICE_OPENAPI_EXPORT_PATH: "/app/openapi/configuration_service.openapi.json"
       # Happi is the canonical seeder — same mechanism the integration pod uses.
@@ -81,6 +87,9 @@ services:
   direct_control_service:
     build:
       context: ./backend/direct_control_service
+      platforms:
+      - linux/amd64
+    platform: linux/amd64
     environment:
       OPHYD_SERVICE_OPENAPI_EXPORT_PATH: /app/openapi/direct_control.openapi.json
       DIRECT_CONTROL_CONFIGURATION_SERVICE_URL: http://configuration_service:8004
@@ -103,6 +112,9 @@ services:
   presets_service:
     build:
       context: ./backend/presets_service
+      platforms:
+      - linux/amd64
+    platform: linux/amd64
     environment:
       PRESETS_DB_PATH: "/tmp/presets.db"
       PRESETS_SEED_PATH: "/seed"
