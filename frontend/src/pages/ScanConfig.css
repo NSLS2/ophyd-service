@@ -3,11 +3,11 @@
 .scan-config {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
-  padding: 1.5rem;
-  /* Two panels (44 + 48rem) plus a 1.5rem gap = 93.5rem content, plus 3rem
-     page padding. */
-  max-width: 96.5rem;
+  gap: var(--space-5);
+  padding: var(--space-6);
+  /* Cap the layout at a true 1440px desktop; panels scale down fluidly below
+     this via their flex ratios and the laptop/small-laptop breakpoints. */
+  max-width: var(--app-max-width);
 }
 
 /* ── Header ────────────────────────────────────────────────────── */
@@ -219,9 +219,44 @@
   margin: 0;
 }
 
+/* ── Responsive: laptop (≤1200px) ──────────────────────────────
+   Keep the two-panel row, just tighten gaps and let the panels/controls
+   shrink toward their min sizes so nothing overflows. */
+@media (max-width: 1200px) {
+  .scan-config {
+    padding: var(--space-5);
+  }
+
+  .scan-config__panels {
+    gap: var(--space-4);
+  }
+
+  .scan-config__layout {
+    gap: var(--space-4);
+  }
+}
+
+/* ── Responsive: small laptop (≤1024px) ────────────────────────
+   The panels still sit side-by-side, but the bottom row stacks so the
+   spectrum and controls each get full width instead of cramping. */
+@media (max-width: 1024px) {
+  .scan-config__bottom-row {
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .scan-config__spectrum {
+    width: 100%;
+  }
+
+  .scan-config__panels {
+    gap: var(--space-3);
+  }
+}
+
 /* ── Responsive: stack the panels on narrower screens ──────────── */
 
-@media (max-width: 820px) {
+@media (max-width: 1399px) {
   .scan-config__layout {
     gap: 1.1rem;
   }

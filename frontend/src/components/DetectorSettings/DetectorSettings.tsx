@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { NumberInput } from '../NumberInput'
 import { SelectInput } from '../SelectInput'
-import './DetectorSettings.css'
 
 // Dummy dropdown options — replace with values from presets_service later.
 const GAIN_OPTIONS = ['Low', 'Med', 'High']
@@ -63,14 +62,26 @@ export function DetectorSettings() {
   const patchVortex = (patch: Partial<VortexState>) =>
     setVortex((prev) => ({ ...prev, ...patch }))
 
+  const gainRow = 'flex items-center justify-between gap-2 py-[0.55rem] px-1 border-b border-[#e3e8ec]'
+  const gainLabel = 'text-[0.9rem] text-brand-slate whitespace-nowrap'
+  const gainControls = 'flex items-center gap-[0.35rem]'
+  const gainX = 'text-[#6b7280] text-[0.85rem]'
+  const rangeRow = 'flex items-center justify-between gap-2 py-[0.55rem] px-1 border-b border-[#e3e8ec]'
+  const rangeLabel = 'text-[0.9rem] font-semibold text-brand-slate whitespace-nowrap'
+  const rangeControls = 'flex items-center gap-[0.3rem] [&>div]:p-0 [&>div]:gap-1 [&>div]:border-b-0 [&_input]:w-[58px]'
+  const rangeSub = 'text-[0.8rem] text-[#6b7280]'
+  const card = 'bg-white border border-panel-border rounded-lg overflow-hidden'
+  const cardHeader = 'bg-brand-teal text-white px-3 py-[0.45rem] text-[0.85rem] font-bold'
+  const cardBody = 'flex flex-col px-3 pt-2 pb-3'
+
   return (
-    <section className="detector-settings">
-      <div className="detector-settings__header">Detector Settings</div>
-      <div className="detector-settings__body">
+    <section className="detector-settings flex-[1100_1_0] max-w-[60rem] min-h-[32rem] flex flex-col bg-white border border-panel-border rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(16,92,120,0.08)]">
+      <div className="bg-brand-teal text-white text-center px-4 py-[0.7rem] text-base font-bold tracking-[0.02em]">Detector Settings</div>
+      <div className="grid grid-cols-[2fr_1fr] gap-3 flex-1 px-4 pt-3 pb-4">
         {/* ── Scalar Settings ─────────────────────────────────── */}
-        <div className="detector-settings__card">
-          <div className="detector-settings__card-header">Scalar Settings</div>
-          <div className="detector-settings__card-body">
+        <div className={card}>
+          <div className={cardHeader}>Scalar Settings</div>
+          <div className={cardBody}>
             <NumberInput
               label="Dwell Time"
               value={scalar.dwellTime}
@@ -81,15 +92,15 @@ export function DetectorSettings() {
               value={scalar.pd}
               onChange={(v) => patchScalar({ pd: v })}
             />
-            <div className="detector-settings__gain-row">
-              <span className="detector-settings__gain-label">pd gain</span>
-              <div className="detector-settings__gain-controls">
+            <div className={gainRow}>
+              <span className={gainLabel}>pd gain</span>
+              <div className={gainControls}>
                 <SelectInput
                   value={scalar.pdGain}
                   options={GAIN_OPTIONS}
                   onChange={(v) => patchScalar({ pdGain: v })}
                 />
-                <span className="detector-settings__gain-x">×</span>
+                <span className={gainX}>×</span>
                 <SelectInput
                   value={scalar.pdDecade}
                   options={DECADE_OPTIONS}
@@ -102,15 +113,15 @@ export function DetectorSettings() {
               value={scalar.aumesh}
               onChange={(v) => patchScalar({ aumesh: v })}
             />
-            <div className="detector-settings__gain-row">
-              <span className="detector-settings__gain-label">aumesh gain</span>
-              <div className="detector-settings__gain-controls">
+            <div className={gainRow}>
+              <span className={gainLabel}>aumesh gain</span>
+              <div className={gainControls}>
                 <SelectInput
                   value={scalar.aumeshGain}
                   options={GAIN_OPTIONS}
                   onChange={(v) => patchScalar({ aumeshGain: v })}
                 />
-                <span className="detector-settings__gain-x">×</span>
+                <span className={gainX}>×</span>
                 <SelectInput
                   value={scalar.aumeshDecade}
                   options={DECADE_OPTIONS}
@@ -123,15 +134,15 @@ export function DetectorSettings() {
               value={scalar.sample}
               onChange={(v) => patchScalar({ sample: v })}
             />
-            <div className="detector-settings__gain-row">
-              <span className="detector-settings__gain-label">sample gain</span>
-              <div className="detector-settings__gain-controls">
+            <div className={gainRow}>
+              <span className={gainLabel}>sample gain</span>
+              <div className={gainControls}>
                 <SelectInput
                   value={scalar.sampleGain}
                   options={GAIN_OPTIONS}
                   onChange={(v) => patchScalar({ sampleGain: v })}
                 />
-                <span className="detector-settings__gain-x">×</span>
+                <span className={gainX}>×</span>
                 <SelectInput
                   value={scalar.sampleDecade}
                   options={DECADE_OPTIONS}
@@ -143,24 +154,24 @@ export function DetectorSettings() {
         </div>
 
         {/* ── Vortex Settings ─────────────────────────────────── */}
-        <div className="detector-settings__card">
-          <div className="detector-settings__card-header">Vortex Settings</div>
-          <div className="detector-settings__card-body">
+        <div className={card}>
+          <div className={cardHeader}>Vortex Settings</div>
+          <div className={cardBody}>
             <NumberInput
               label="vortex time"
               value={vortex.vortexTime}
               onChange={(v) => patchVortex({ vortexTime: v })}
             />
-            <div className="detector-settings__range-row">
-              <span className="detector-settings__range-label">PFY</span>
-              <div className="detector-settings__range-controls">
-                <span className="detector-settings__range-sub">start</span>
+            <div className={rangeRow}>
+              <span className={rangeLabel}>PFY</span>
+              <div className={rangeControls}>
+                <span className={rangeSub}>start</span>
                 <NumberInput
                   label=""
                   value={vortex.pfyStart}
                   onChange={(v) => patchVortex({ pfyStart: v })}
                 />
-                <span className="detector-settings__range-sub">size</span>
+                <span className={rangeSub}>size</span>
                 <NumberInput
                   label=""
                   value={vortex.pfySize}
@@ -173,16 +184,16 @@ export function DetectorSettings() {
               value={vortex.pfyCounts}
               onChange={(v) => patchVortex({ pfyCounts: v })}
             />
-            <div className="detector-settings__range-row">
-              <span className="detector-settings__range-label">IPFY</span>
-              <div className="detector-settings__range-controls">
-                <span className="detector-settings__range-sub">start</span>
+            <div className={rangeRow}>
+              <span className={rangeLabel}>IPFY</span>
+              <div className={rangeControls}>
+                <span className={rangeSub}>start</span>
                 <NumberInput
                   label=""
                   value={vortex.ipfyStart}
                   onChange={(v) => patchVortex({ ipfyStart: v })}
                 />
-                <span className="detector-settings__range-sub">size</span>
+                <span className={rangeSub}>size</span>
                 <NumberInput
                   label=""
                   value={vortex.ipfySize}
@@ -195,7 +206,10 @@ export function DetectorSettings() {
               value={vortex.ipfyCounts}
               onChange={(v) => patchVortex({ ipfyCounts: v })}
             />
-            <button className="detector-settings__erase-start" type="button">
+            <button
+              className="mt-3 px-4 py-[0.55rem] bg-brand-cyan text-white rounded-md text-[0.9rem] font-semibold cursor-pointer transition-colors hover:bg-brand-teal"
+              type="button"
+            >
               Counter
             </button>
           </div>

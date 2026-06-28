@@ -1,0 +1,139 @@
+# IOS demo — BACKENDS ONLY.
+#
+# Same stack as docker-compose.yaml but WITHOUT the frontend service, so you
+# can run the UI yourself (e.g. `npm run dev` from ../../../frontend) and have
+# it talk to these backends.
+#
+# The three backend services publish their ports on the host:
+#   configuration_service  -> localhost:8004
+#   direct_control_service -> localhost:8003
+#   presets_service        -> localhost:8005
+#
+# Vite's dev-server proxy already defaults to those localhost targets
+# (frontend/vite.config.ts), so a host-side `npm run dev` will reach them with
+# no extra env. The 6 simulated IOCs are included so direct_control has live
+# PVs for the IOS round-trip.
+#
+# Relative paths assume this file lives at integration/pods/ios/, so
+# `../..` reaches integration/ and `../../..` reaches the ophyd-service root.
+#
+# Usage (from this directory):
+#   docker compose -f docker-compose-backend.yaml up --build
+#   docker compose -f docker-compose-backend.yaml down
+#   docker compose -f docker-compose-backend.yaml logs -f direct_control_service
+#
+# Then, in a separate shell:
+#   cd ../../../frontend && npm run dev
+
+x-ioc-base: &ioc-base
+  build:
+    context: ../../ioc
+
+services:
+  ios_pgm:
+    <<: *ioc-base
+    command: ["python", "/app/ioc_ios_pgm.py", "--list-pvs", "--interfaces", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f ioc_ios_pgm > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  ios_curramp:
+    <<: *ioc-base
+    command: ["python", "/app/ioc_ios_curramp.py", "--list-pvs", "--interfaces", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f ioc_ios_curramp > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  ios_epu:
+    <<: *ioc-base
+    command: ["python", "/app/ioc_ios_epu.py", "--list-pvs", "--interfaces", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f ioc_ios_epu > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  ios_vortex:
+    <<: *ioc-base
+    command: ["python", "/app/ioc_ios_vortex.py", "--list-pvs", "--interfaces", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f ioc_ios_vortex > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  ios_scaler:
+    <<: *ioc-base
+    command: ["python", "/app/ioc_ios_scaler.py", "--list-pvs", "--interfaces", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f ioc_ios_scaler > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  ios_feedback:
+    <<: *ioc-base
+    command: ["python", "/app/ioc_ios_feedback.py", "--list-pvs", "--interfaces", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f ioc_ios_feedback > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  configuration_service:
+    build:
+      context: ../../../backend/configuration_service
+    environment:
+      CONFIG_LOAD_STRATEGY: "happi"
+      CONFIG_PROFILE_PATH: "/profile"
+      CONFIG_DATABASE_URL: "sqlite+pysqlite:////tmp/config_service.db"
+      PYTHONPATH: "/profile"
+    volumes:
+      - ../../happi/sites/ios:/profile:ro
+    ports:
+      - "8004:8004"
+
+  direct_control_service:
+    build:
+      context: ../../../backend/direct_control_service
+    environment:
+      DIRECT_CONTROL_CONFIGURATION_SERVICE_URL: http://configuration_service:8004
+      DIRECT_CONTROL_COORDINATION_CHECK_ENABLED: "false"
+      EPICS_CA_ADDR_LIST: "ios_pgm ios_curramp ios_epu ios_vortex ios_scaler ios_feedback"
+      EPICS_CA_AUTO_ADDR_LIST: "NO"
+    ports:
+      - "8003:8003"
+    depends_on:
+      configuration_service:
+        condition: service_healthy
+      ios_pgm:
+        condition: service_healthy
+      ios_curramp:
+        condition: service_healthy
+      ios_epu:
+        condition: service_healthy
+      ios_vortex:
+        condition: service_healthy
+      ios_scaler:
+        condition: service_healthy
+      ios_feedback:
+        condition: service_healthy
+
+  presets_service:
+    build:
+      context: ../../../backend/presets_service
+    environment:
+      PRESETS_DB_PATH: "/data/presets.db"
+      PRESETS_SEED_PATH: "/seed"
+    volumes:
+      - ../../presets:/seed:ro
+      - presets_data:/data
+    ports:
+      - "8005:8005"
+
+volumes:
+  presets_data:

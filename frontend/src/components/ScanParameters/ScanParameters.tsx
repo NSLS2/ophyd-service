@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import type { ScanPresetEntry } from '../../api/presets'
 import { NumberInput } from '../NumberInput'
-import './ScanParameters.css'
 
 export interface ScanParametersProps {
   data: Omit<ScanPresetEntry, 'edge_index'>
@@ -21,10 +20,10 @@ export function ScanParameters({ data, onChange }: ScanParametersProps) {
   )
 
   return (
-    <section className="scan-parameters">
-      <div className="scan-parameters__header">Scan Parameters</div>
-      <div className="scan-parameters__body">
-        <div className="scan-parameters__fields">
+    <section className="scan-parameters flex-[643_1_0] max-w-[44rem] min-h-[31rem] flex flex-col bg-white border border-panel-border rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(16,92,120,0.08)]">
+      <div className="bg-brand-teal text-white text-center px-4 py-[0.7rem] text-base font-bold tracking-[0.02em]">Scan Parameters</div>
+      <div className="flex flex-col flex-1 px-4 pt-3 pb-4">
+        <div className="flex flex-col max-h-[14.5rem] overflow-y-auto pr-[0.4rem] [&>div:last-child]:border-b-0 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#c2ccd2] [&::-webkit-scrollbar-thumb]:rounded [&::-webkit-scrollbar-thumb:hover]:bg-brand-cyan">
           {field('start', 'start')}
           {field('stop', 'stop')}
           {field('velocity', 'velocity')}
@@ -36,15 +35,15 @@ export function ScanParameters({ data, onChange }: ScanParametersProps) {
         </div>
 
         <button
-          className={`scan-parameters__advanced-toggle ${advancedOpen ? 'scan-parameters__advanced-toggle--open' : ''}`}
+          className="flex items-center justify-between w-full mt-[0.85rem] px-4 py-[0.6rem] bg-brand-teal text-white rounded-md text-[0.9rem] font-semibold cursor-pointer transition-colors hover:bg-brand-cyan"
           onClick={() => setAdvancedOpen(!advancedOpen)}
         >
           Advanced Settings
-          <span className="scan-parameters__chevron">{advancedOpen ? '▲' : '▼'}</span>
+          <span className="text-[0.7rem] ml-2">{advancedOpen ? '▲' : '▼'}</span>
         </button>
 
         {advancedOpen && (
-          <div className="scan-parameters__advanced-fields">
+          <div className="flex flex-col pt-2">
             {field('epu_table', 'epu table')}
             {field('intervals', 'intervals')}
             {field('au_mesh', 'au mesh')}

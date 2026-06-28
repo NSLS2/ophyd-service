@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Global design tokens ─────────────────────────────────────────
+   Desktop-first. Base styles target large desktops; `max-width` media
+   queries scale the UI down to laptops and small laptops.
+
+   Breakpoint convention (CSS media conditions can't read custom
+   properties, so these values are reused literally in component CSS):
+     --bp-laptop        : 1200px   (laptop)
+     --bp-small-laptop  : 1024px   (small laptop / split-screen)
+     --bp-stack         :  820px   (collapse to single column)
+   ----------------------------------------------------------------- */
+:root {
+  /* Page container — caps the widest layout at a true 1440px desktop. */
+  --app-max-width: 90rem; /* 1440px */
+
+  /* Spacing scale (used for layout gaps/padding). */
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+}

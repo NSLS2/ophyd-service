@@ -6,7 +6,10 @@
   --cp-stop: #e50000;
   --cp-stop-hover: #cc0000;
 
-  width: 18rem;
+  /* Prefer 18rem, but allow shrinking down to 14rem on laptops before the
+     820px breakpoint stretches it full-width. */
+  flex: 0 1 18rem;
+  min-width: 14rem;
   min-height: 333px;
   background: #ffffff;
   border: 1px solid #d6dde1;
@@ -81,7 +84,9 @@
 
 @media (max-width: 820px) {
   .controls-panel {
+    flex: none;
     width: 100%;
+    min-width: 0;
   }
 
   .controls-panel__body {
