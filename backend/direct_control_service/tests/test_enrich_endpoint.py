@@ -11,8 +11,9 @@ by ``__module__ + __qualname__`` (the cache uses ``importlib.import_module``).
 
 from __future__ import annotations
 
-from ophyd import Component as Cpt, Device, EpicsSignal, FormattedComponent as FmtCpt
-
+from ophyd import Component as Cpt
+from ophyd import Device, EpicsSignal
+from ophyd import FormattedComponent as FmtCpt
 
 # ---------------------------------------------------------------------------
 # Test ophyd classes wired to the caproto test IOC PVs

@@ -2,8 +2,6 @@
 Configuration settings for Direct Device Control Service.
 """
 
-from typing import Optional
-
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -45,7 +43,7 @@ class Settings(BaseSettings):
     # fails startup if it is unset there, instead of silently pointing at
     # localhost:8004. Optional ONLY in standalone mode (registry_backend=
     # file), which has no configuration_service at all.
-    configuration_service_url: Optional[str] = None
+    configuration_service_url: str | None = None
 
     # Registry backend:
     #   "http" (default) — validate PV/device existence against
@@ -68,7 +66,7 @@ class Settings(BaseSettings):
     registry_backend: str = "http"  # http | file | auto
     # Path to the JSON/YAML registry file. Required when registry_backend=file;
     # optional for "auto" (no file => auto is http-or-fail).
-    registry_file_path: Optional[str] = None
+    registry_file_path: str | None = None
 
     # Deployment-wide control switch. When true (the DEFAULT), the service is
     # MONITOR-ONLY: every control/write operation (PV set, batch set, device
@@ -81,7 +79,7 @@ class Settings(BaseSettings):
     global_read_only: bool = True
 
     # EPICS configuration
-    epics_ca_addr_list: Optional[str] = None
+    epics_ca_addr_list: str | None = None
     epics_ca_auto_addr_list: bool = True
     epics_ca_max_array_bytes: int = 1000000
 
@@ -177,3 +175,45 @@ class Settings(BaseSettings):
                 f"(DIRECT_CONTROL_REGISTRY_BACKEND=file) runs without it."
             )
         return self
+
+
+class _CorsSettings(BaseSettings):
+    """CORS configuration, read at import time for the module-level app.
+
+    Kept separate from ``Settings`` because the main settings object (with its
+    registry-backend validators and EPICS-env coupling) is intentionally
+    deferred to the app lifespan, whereas the CORS policy must be known when the
+    module-level ``CORSMiddleware`` is added at import. Same ``DIRECT_CONTROL_``
+    env prefix:
+      - DIRECT_CONTROL_CORS_ORIGINS — JSON list, e.g. '["https://ui.example"]'
+        (defaults to '["*"]' for the dev inner-loop)
+      - DIRECT_CONTROL_CORS_ALLOW_CREDENTIALS — bool (default false)
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="DIRECT_CONTROL_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    cors_origins: list[str] = ["*"]
+    cors_allow_credentials: bool = False
+
+
+def resolve_cors_config() -> tuple[list[str], bool]:
+    """Return ``(allow_origins, allow_credentials)`` for the CORS middleware.
+
+    Credentials are force-disabled whenever a wildcard origin is configured:
+    ``allow_origins=["*"]`` + ``allow_credentials=True`` makes Starlette reflect
+    the caller's Origin and echo ``Access-Control-Allow-Credentials``, which lets
+    any site drive credentialed cross-origin requests. Auth here is upstream via
+    bearer headers (not cookies), so credentials stay off unless an explicit
+    origin allowlist is set.
+    """
+    cfg = _CorsSettings()
+    allow_credentials = cfg.cors_allow_credentials
+    if allow_credentials and "*" in cfg.cors_origins:
+        allow_credentials = False
+    return cfg.cors_origins, allow_credentials

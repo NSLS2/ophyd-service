@@ -8,8 +8,9 @@ Write/stop operations are routed through DeviceControl for coordination checks.
 
 import asyncio
 import uuid
+from collections.abc import Callable
 from functools import partial
-from typing import Callable, Dict, List, Literal, Optional, Set, TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import httpx
 import structlog
@@ -25,7 +26,6 @@ from ..models import (
     PVUpdate,
     WebSocketAction,
 )
-
 
 FetchDeviceReason = Literal["not_found", "upstream_error", "upstream_unreachable"]
 SubscribeReason = Literal[
@@ -59,11 +59,11 @@ class SubscribeOutcome(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     ok: bool
-    reason: Optional[SubscribeReason] = None
-    failed_pvs: List[FailedPV] = []
+    reason: SubscribeReason | None = None
+    failed_pvs: list[FailedPV] = []
 
 
-from ._envelopes import (
+from ._envelopes import (  # noqa: E402  (defined below dataclasses to avoid a circular import)
     LockedWS,
     close_connections,
     fanout_error,
@@ -73,7 +73,7 @@ from ._envelopes import (
     send_event,
     send_payload_or_size_error,
 )
-from .websocket_manager import SUB_TYPE_META
+from .websocket_manager import SUB_TYPE_META  # noqa: E402  (see import note above)
 
 if TYPE_CHECKING:
     from ..protocols import DeviceControl, PVMonitor
@@ -110,30 +110,30 @@ class DeviceWebSocketManager:
         self.pv_monitor = pv_monitor
         self.device_controller = device_controller
         self.settings = settings
-        self._connections: Dict[str, LockedWS] = {}
-        self._device_subscriptions: Dict[str, Set[str]] = {}
-        self._device_pvs: Dict[str, Dict[str, str]] = {}
+        self._connections: dict[str, LockedWS] = {}
+        self._device_subscriptions: dict[str, set[str]] = {}
+        self._device_pvs: dict[str, dict[str, str]] = {}
         # Components whose CA subscribe failed, keyed by device. Drives the
         # retry-on-next-subscribe behavior and SubscribeOutcome.failed_pvs;
         # cleared on last-client teardown.
-        self._device_pv_failures: Dict[str, Dict[str, FailedPV]] = {}
+        self._device_pv_failures: dict[str, dict[str, FailedPV]] = {}
         # Per-device subscribe serialization. Locks are intentionally kept
         # for the lifetime of the manager — popping them on last-client
         # teardown races with any in-flight subscribe still holding the
         # lock and lets the next subscriber create a fresh one, breaking
         # serialization. Memory cost is bounded by total devices ever seen.
-        self._device_subscribe_locks: Dict[str, asyncio.Lock] = {}
+        self._device_subscribe_locks: dict[str, asyncio.Lock] = {}
         # Keyed by (device, pv), NOT pv alone: two devices may legitimately
         # share a PV, and each holds its own callback on pv_monitor. A
         # pv-only key let the second device overwrite the first's entry, so
         # teardown unsubscribed the WRONG callback (the survivor went silent
         # and the dead device's callback leaked).
-        self._pv_callbacks: Dict[tuple, Callable[[PVUpdate], None]] = {}
-        self._device_clients: Dict[str, Set[str]] = {}
-        self._heartbeat_tasks: Dict[str, asyncio.Task] = {}
+        self._pv_callbacks: dict[tuple, Callable[[PVUpdate], None]] = {}
+        self._device_clients: dict[str, set[str]] = {}
+        self._heartbeat_tasks: dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._http_client: httpx.AsyncClient | None = None
 
     async def _get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
@@ -153,7 +153,7 @@ class DeviceWebSocketManager:
 
     async def _fetch_device_info(
         self, device_name: str
-    ) -> tuple[Optional[DeviceInfo], Optional[FetchDeviceReason]]:
+    ) -> tuple[DeviceInfo | None, FetchDeviceReason | None]:
         """Fetch device info from configuration_service.
 
         Returns (info, reason). On success: (DeviceInfo, None). On failure
@@ -348,7 +348,7 @@ class DeviceWebSocketManager:
             )
             succeeded: list[tuple[str, str, Callable[[PVUpdate], None]]] = []
             failed: list[FailedPV] = []
-            for entry, result in zip(new_subscriptions, results):
+            for entry, result in zip(new_subscriptions, results, strict=True):
                 component, pv_name, callback, _on_error = entry
                 if isinstance(result, Exception):
                     logger.error("device_pv_subscribe_failed", pv=pv_name, error=str(result))
@@ -402,7 +402,7 @@ class DeviceWebSocketManager:
         return SubscribeOutcome(ok=True, failed_pvs=currently_failed)
 
     async def unsubscribe_device(self, client_id: str, device_name: str):
-        released_pvs: Dict[str, str] = {}
+        released_pvs: dict[str, str] = {}
         async with self._lock:
             if client_id not in self._device_subscriptions:
                 return
@@ -507,7 +507,7 @@ class DeviceWebSocketManager:
         self,
         client_id: str,
         update: DeviceUpdate,
-        websocket: Optional[LockedWS] = None,
+        websocket: LockedWS | None = None,
     ):
         if websocket is None:
             async with self._lock:
@@ -541,7 +541,7 @@ class DeviceWebSocketManager:
             *(asyncio.to_thread(self.pv_monitor.get_value, pv_name) for _, pv_name in components),
             return_exceptions=True,
         )
-        for (component, _), value in zip(components, values):
+        for (component, _), value in zip(components, values, strict=True):
             if isinstance(value, BaseException) or value is None:
                 continue
             update = DeviceUpdate(
@@ -564,7 +564,7 @@ class DeviceWebSocketManager:
         device_name: str,
         component: str,
         value,
-        websocket: Optional[LockedWS] = None,
+        websocket: LockedWS | None = None,
     ) -> None:
         """Send a finch-compatible ``sub_type: meta`` envelope on the device socket.
 
@@ -660,11 +660,11 @@ class DeviceWebSocketManager:
             await self.disconnect(client_id)
 
     async def _send_subscribe_error(
-        self, websocket, device_name: str, reason: Optional[SubscribeReason]
+        self, websocket, device_name: str, reason: SubscribeReason | None
     ) -> None:
         """Map a subscribe_device failure reason to an actionable WS error."""
         cap = self.settings.max_subscriptions_per_client
-        messages: Dict[SubscribeReason, str] = {
+        messages: dict[SubscribeReason, str] = {
             "unknown_client": "Client not registered; reconnect and retry.",
             "cap_exceeded": f"Subscribe would exceed max_subscriptions_per_client (cap={cap}).",
             "not_found": f"Device '{device_name}' not found in configuration service",
@@ -870,6 +870,11 @@ class DeviceWebSocketManager:
         except Exception as e:  # noqa: BLE001
             logger.error("device_stop_error", device=device_name, error=str(e))
             await send_error(websocket, str(e), device=device_name)
+
+    @property
+    def connection_count(self) -> int:
+        """Currently-connected clients. Summed across managers for the global cap."""
+        return len(self._connections)
 
     def get_stats(self) -> dict:
         return {

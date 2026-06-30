@@ -20,12 +20,12 @@ Cache invariants:
 - A failed instantiation is *also* cached, as the failure reason, so we
   don't repeatedly pay the import + ctor cost for a class that's broken.
 """
+
 from __future__ import annotations
 
 import importlib
 import threading
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -38,8 +38,8 @@ class CacheKey:
 class CacheEntry:
     """Successful entry has ``device`` set; failed entry has ``error``."""
 
-    device: Optional[object] = None
-    error: Optional[str] = None
+    device: object | None = None
+    error: str | None = None
 
 
 class OphydDeviceCache:
@@ -59,9 +59,7 @@ class OphydDeviceCache:
         self._key_locks: dict[CacheKey, threading.Lock] = {}
         self._dict_lock = threading.Lock()
 
-    def get_or_instantiate(
-        self, device_class_path: str, prefix: str
-    ) -> CacheEntry:
+    def get_or_instantiate(self, device_class_path: str, prefix: str) -> CacheEntry:
         """Return the cached device for ``(class_path, prefix)`` or
         instantiate + cache it. Failures are cached too — see module doc.
 
@@ -128,9 +126,7 @@ def _instantiate(device_class_path: str, prefix: str) -> CacheEntry:
     cache can short-circuit subsequent identical requests.
     """
     if "." not in device_class_path:
-        return CacheEntry(
-            error=f"device_class '{device_class_path}' has no module prefix"
-        )
+        return CacheEntry(error=f"device_class '{device_class_path}' has no module prefix")
     module_name, class_name = device_class_path.rsplit(".", 1)
     try:
         module = importlib.import_module(module_name)
@@ -139,9 +135,7 @@ def _instantiate(device_class_path: str, prefix: str) -> CacheEntry:
 
     cls = getattr(module, class_name, None)
     if cls is None:
-        return CacheEntry(
-            error=f"module {module_name!r} has no attribute {class_name!r}"
-        )
+        return CacheEntry(error=f"module {module_name!r} has no attribute {class_name!r}")
 
     # The "_enrich" name is a sentinel — it's purely cosmetic on the
     # device object for logs; ophyd uses it in some error messages.

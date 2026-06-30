@@ -8,8 +8,9 @@ so they inherit coordination (A4) checks.
 
 import asyncio
 import uuid
+from collections.abc import Callable
 from functools import partial
-from typing import Callable, Dict, Optional, Set, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import structlog
 from fastapi import WebSocket, WebSocketDisconnect
@@ -33,7 +34,6 @@ from ._envelopes import (
     send_event,
     send_payload_or_size_error,
 )
-
 
 SUB_TYPE_META = "meta"
 
@@ -63,19 +63,19 @@ class WebSocketManager:
         pv_monitor: "PVMonitor",
         device_controller: "DeviceControl",
         settings: Settings,
-        registry_client: "Optional[RegistryProvider]" = None,
+        registry_client: "RegistryProvider | None" = None,
     ):
         self.pv_monitor = pv_monitor
         self.device_controller = device_controller
         self.settings = settings
         self.registry_client = registry_client
-        self._connections: Dict[str, LockedWS] = {}
-        self._subscriptions: Dict[str, Set[str]] = {}
-        self._pv_clients: Dict[str, Set[str]] = {}
-        self._pv_callbacks: Dict[str, Callable[[PVUpdate], None]] = {}
-        self._heartbeat_tasks: Dict[str, asyncio.Task] = {}
+        self._connections: dict[str, LockedWS] = {}
+        self._subscriptions: dict[str, set[str]] = {}
+        self._pv_clients: dict[str, set[str]] = {}
+        self._pv_callbacks: dict[str, Callable[[PVUpdate], None]] = {}
+        self._heartbeat_tasks: dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     async def connect(self, websocket: WebSocket) -> tuple[str, LockedWS]:
         """Accept the WS, wrap it for serialized sends, and register the client."""
@@ -102,7 +102,7 @@ class WebSocketManager:
         return client_id, wrapped
 
     async def disconnect(self, client_id: str):
-        to_teardown: list[tuple[str, Optional[Callable]]] = []
+        to_teardown: list[tuple[str, Callable | None]] = []
         async with self._lock:
             self._connections.pop(client_id, None)
             pv_names = self._subscriptions.pop(client_id, set())
@@ -196,7 +196,7 @@ class WebSocketManager:
         logger.info("client_subscribed", client_id=client_id, pv_count=len(pv_names))
 
     async def unsubscribe_pvs(self, client_id: str, pv_names: list[str]):
-        to_teardown: list[tuple[str, Optional[Callable]]] = []
+        to_teardown: list[tuple[str, Callable | None]] = []
         async with self._lock:
             if client_id not in self._subscriptions:
                 return
@@ -272,7 +272,7 @@ class WebSocketManager:
         )
 
     async def _send_to_client(
-        self, client_id: str, update: PVUpdate, websocket: Optional[LockedWS] = None
+        self, client_id: str, update: PVUpdate, websocket: LockedWS | None = None
     ):
         if websocket is None:
             async with self._lock:
@@ -290,7 +290,7 @@ class WebSocketManager:
         )
 
     async def _send_meta_to_client(
-        self, client_id: str, value, websocket: Optional[LockedWS] = None
+        self, client_id: str, value, websocket: LockedWS | None = None
     ) -> None:
         """Send a finch-compatible ``sub_type: meta`` message.
 
@@ -543,7 +543,7 @@ class WebSocketManager:
             return_exceptions=True,
         )
         valid: list[str] = []
-        for pv_name, result in zip(pv_names, results):
+        for pv_name, result in zip(pv_names, results, strict=True):
             if isinstance(result, (RegistryValidationError, RuntimeError)):
                 await send_error(websocket, str(result), pv=pv_name)
             elif isinstance(result, Exception):
@@ -561,6 +561,11 @@ class WebSocketManager:
         except (RegistryValidationError, RuntimeError) as e:
             await send_error(websocket, str(e), pv=pv)
             return False
+
+    @property
+    def connection_count(self) -> int:
+        """Currently-connected clients. Summed across managers for the global cap."""
+        return len(self._connections)
 
     def get_stats(self) -> dict:
         return {

@@ -6,19 +6,19 @@ as well as direct registry store persistence, audit log, reset, and export.
 """
 
 import json
+
 import pytest
 from fastapi.testclient import TestClient
 
-from configuration_service.main import create_app
 from configuration_service.config import Settings
-from configuration_service.models import (
-    DeviceMetadata,
-    DeviceInstantiationSpec,
-    DeviceRegistry,
-    DeviceLabel,
-)
 from configuration_service.device_registry_store import DeviceRegistryStore
-
+from configuration_service.main import create_app
+from configuration_service.models import (
+    DeviceInstantiationSpec,
+    DeviceLabel,
+    DeviceMetadata,
+    DeviceRegistry,
+)
 
 # ===== Fixtures =====
 
@@ -452,14 +452,11 @@ class TestDeviceRegistryStore:
         with db_engine.begin() as conn:
             conn.execute(
                 text(
-                    "DELETE FROM device_audit_log "
-                    "WHERE id = (SELECT max(id) FROM device_audit_log)"
+                    "DELETE FROM device_audit_log WHERE id = (SELECT max(id) FROM device_audit_log)"
                 )
             )
             conn.execute(
-                device_audit_log.insert().values(
-                    device_name="d", operation="add", timestamp=2.0
-                )
+                device_audit_log.insert().values(device_name="d", operation="add", timestamp=2.0)
             )
         with db_engine.connect() as conn:
             ids = [

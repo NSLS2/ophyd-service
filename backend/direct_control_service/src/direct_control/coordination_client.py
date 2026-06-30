@@ -9,26 +9,23 @@ of that contract:
     direct_control    --GET  /api/v1/devices/{name}/status-->  configuration_service
 """
 
+from datetime import datetime
+
 import httpx
 import structlog
-from datetime import datetime
-from typing import Optional
 
+from .config import Settings
 from .models import (
     CoordinationCheckError,
     CoordinationStatus,
     DeviceLockStatus,
     ServiceAvailability,
 )
-from .config import Settings
-
 
 logger = structlog.get_logger(__name__)
 
 
-def _map_lock_status(
-    available: bool, enabled: bool, lock_status: str
-) -> DeviceLockStatus:
+def _map_lock_status(available: bool, enabled: bool, lock_status: str) -> DeviceLockStatus:
     """Map configuration_service's status fields to DeviceLockStatus.
 
     Precedence: DISABLED beats LOCKED beats AVAILABLE. A disabled device
@@ -57,7 +54,7 @@ class CoordinationClient:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.base_url = settings.configuration_service_url
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -215,10 +212,7 @@ class CoordinationClient:
         )
         return ServiceAvailability(
             available=False,
-            detail=(
-                f"configuration_service /health returned HTTP "
-                f"{response.status_code}"
-            ),
+            detail=(f"configuration_service /health returned HTTP {response.status_code}"),
         )
 
     async def cleanup(self) -> None:

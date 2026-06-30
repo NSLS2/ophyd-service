@@ -6,8 +6,9 @@ Tests the REST API implementation with dependency injection.
 
 import pytest
 from fastapi.testclient import TestClient
-from configuration_service.main import create_app
+
 from configuration_service.config import Settings
+from configuration_service.main import create_app
 from configuration_service.models import DeviceLabel
 
 
@@ -471,9 +472,7 @@ class TestCorsOriginsRespectsSettings:
                 headers={"Origin": "http://allowed.example"},
             )
             assert resp.status_code == 200
-            assert (
-                resp.headers.get("access-control-allow-origin") == "http://allowed.example"
-            )
+            assert resp.headers.get("access-control-allow-origin") == "http://allowed.example"
 
     def test_disallowed_origin_gets_no_cors_header(self, db_url):
         with self._client(db_url, ["http://allowed.example"]) as client:
@@ -484,9 +483,7 @@ class TestCorsOriginsRespectsSettings:
             # Endpoint still responds (CORS is browser-enforced), but the
             # ACA-Origin header is absent so a browser would block the read.
             assert resp.status_code == 200
-            assert "access-control-allow-origin" not in {
-                k.lower() for k in resp.headers.keys()
-            }
+            assert "access-control-allow-origin" not in {k.lower() for k in resp.headers.keys()}
 
 
 class TestHealthEndpointDbProbe:
@@ -550,9 +547,7 @@ class TestM3StandalonePVStoreInitFailureFailsStartup:
             with TestClient(app):
                 pass  # Entering the with-block runs lifespan; we expect it to raise.
 
-    def test_lifespan_succeeds_when_flag_disabled_and_init_would_fail(
-        self, monkeypatch
-    ):
+    def test_lifespan_succeeds_when_flag_disabled_and_init_would_fail(self, monkeypatch):
         """When the flag is OFF the broken initializer must never run.
 
         Pins the gate so an unrelated init breakage can't affect deployments

@@ -13,7 +13,6 @@ override the coordination client per-test to return DISABLED / LOCKED.
 """
 
 from datetime import datetime
-from typing import Optional
 
 from direct_control.models import CoordinationStatus, DeviceLockStatus, ServiceAvailability
 
@@ -25,7 +24,7 @@ class _CoordStub:
     so the coord-gate fires.
     """
 
-    def __init__(self, status: DeviceLockStatus, locked_by: Optional[str] = None):
+    def __init__(self, status: DeviceLockStatus, locked_by: str | None = None):
         self.status = status
         self.locked_by = locked_by
 

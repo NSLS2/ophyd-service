@@ -13,14 +13,15 @@ These protocols enable:
 - Clear interface boundaries between components
 """
 
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, List, Optional, Protocol, runtime_checkable
+from typing import Any, Optional, Protocol, runtime_checkable
 
 import structlog
 
 logger = structlog.get_logger(__name__)
 
-from .models import (
+from .models import (  # noqa: E402  (imported after logger to avoid a circular import)
     CoordinationStatus,
     DeviceCommandRequest,
     DeviceCommandResponse,
@@ -105,7 +106,7 @@ class RegistryProvider(Protocol):
         """Raise RegistryValidationError if the device is not registered."""
         ...
 
-    async def get_owning_device(self, pv_name: str) -> Optional[str]:
+    async def get_owning_device(self, pv_name: str) -> str | None:
         """Return the device owning this PV, or None for standalone/unknown PVs."""
         ...
 
@@ -176,13 +177,13 @@ class DeviceControl(Protocol):
         pv_name: str,
         *,
         as_string: bool = False,
-        count: Optional[int] = None,
+        count: int | None = None,
         as_numpy: bool = True,
         use_monitor: bool = True,
         timeout: float = 5.0,
         connection_timeout: float = 5.0,
-        ftype: Optional[int] = None,
-    ) -> Optional[Any]:
+        ftype: int | None = None,
+    ) -> Any | None:
         """
         Get current PV value (read-only, no coordination check).
 
@@ -194,8 +195,8 @@ class DeviceControl(Protocol):
         self,
         device_path: str,
         method: str = "read",
-        value: Optional[Any] = None,
-        timeout: Optional[float] = None,
+        value: Any | None = None,
+        timeout: float | None = None,
     ) -> Any:
         """
         Access nested device component (ophyd-websocket compatible).
@@ -280,9 +281,9 @@ class PVMonitor(Protocol):
     def subscribe(
         self,
         pv_name: str,
-        callback: Optional[Callable[[PVUpdate], None]] = None,
+        callback: Callable[[PVUpdate], None] | None = None,
         read_only: bool = False,
-        on_error: Optional[Callable[[BaseException], None]] = None,
+        on_error: Callable[[BaseException], None] | None = None,
     ) -> None:
         """
         Subscribe to PV updates.
@@ -297,11 +298,11 @@ class PVMonitor(Protocol):
         """
         ...
 
-    def unsubscribe(self, pv_name: str, callback: Optional[Callable] = None) -> None:
+    def unsubscribe(self, pv_name: str, callback: Callable | None = None) -> None:
         """Unsubscribe from PV updates (callback=None removes all)."""
         ...
 
-    def get_value(self, pv_name: str) -> Optional[PVValue]:
+    def get_value(self, pv_name: str) -> PVValue | None:
         """Get current PV value.
 
         Returns ``None`` only when the PV is not in the subscription
@@ -312,7 +313,7 @@ class PVMonitor(Protocol):
         """
         ...
 
-    def get_buffer(self, pv_name: str) -> List[PVValue]:
+    def get_buffer(self, pv_name: str) -> list[PVValue]:
         """Get buffered PV values."""
         ...
 
@@ -320,7 +321,7 @@ class PVMonitor(Protocol):
         """Check if PV is currently connected."""
         ...
 
-    def get_connected_pvs(self) -> List[str]:
+    def get_connected_pvs(self) -> list[str]:
         """List currently connected PV names."""
         ...
 
@@ -342,9 +343,9 @@ class MockPVMonitor:
     def subscribe(
         self,
         pv_name: str,
-        callback: Optional[Callable[[PVUpdate], None]] = None,
+        callback: Callable[[PVUpdate], None] | None = None,
         read_only: bool = False,
-        on_error: Optional[Callable[[BaseException], None]] = None,
+        on_error: Callable[[BaseException], None] | None = None,
     ) -> None:
         self._subscribed[pv_name] = True
         if callback:
@@ -363,7 +364,7 @@ class MockPVMonitor:
             write_access=not read_only,
         )
 
-    def unsubscribe(self, pv_name: str, callback: Optional[Callable] = None) -> None:
+    def unsubscribe(self, pv_name: str, callback: Callable | None = None) -> None:
         if callback and pv_name in self._callbacks:
             try:
                 self._callbacks[pv_name].remove(callback)
@@ -374,17 +375,17 @@ class MockPVMonitor:
             self._callbacks.pop(pv_name, None)
             self._values.pop(pv_name, None)
 
-    def get_value(self, pv_name: str) -> Optional[PVValue]:
+    def get_value(self, pv_name: str) -> PVValue | None:
         return self._values.get(pv_name)
 
-    def get_buffer(self, pv_name: str) -> List[PVValue]:
+    def get_buffer(self, pv_name: str) -> list[PVValue]:
         value = self._values.get(pv_name)
         return [value] if value else []
 
     def is_connected(self, pv_name: str) -> bool:
         return pv_name in self._subscribed
 
-    def get_connected_pvs(self) -> List[str]:
+    def get_connected_pvs(self) -> list[str]:
         return list(self._subscribed.keys())
 
     async def cleanup(self) -> None:

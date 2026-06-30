@@ -134,7 +134,9 @@ def test_pv_socket_receives_update_on_caput(client):
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
             msg = ws.receive_json()
-            if msg.get("event_type") == "pv_update" and msg.get("value") == pytest.approx(new_value):
+            if msg.get("event_type") == "pv_update" and msg.get("value") == pytest.approx(
+                new_value
+            ):
                 return
         pytest.fail(f"never saw pv_update with value={new_value}")
 
