@@ -23,6 +23,7 @@ Limitations:
 - ophyd-async classes that raise on instantiation (e.g. require extra
   ctor args) return ``Outcome.IMPORT_FAILED`` with the exception detail.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -30,8 +31,6 @@ import re
 import string
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
-
 
 # Strip any lowercase URI scheme (ca://, pva://, mock://, soft://, etc.).
 # ophyd-async backends are free to introduce new schemes; matching by shape
@@ -65,8 +64,8 @@ class Resolution:
 
     address: str
     outcome: Outcome
-    pv_name: Optional[str] = None
-    message: Optional[str] = None
+    pv_name: str | None = None
+    message: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -90,9 +89,7 @@ def _import_class(device_class_path: str):
     translate those into ``Outcome.IMPORT_FAILED``.
     """
     if "." not in device_class_path:
-        raise ImportError(
-            f"device_class '{device_class_path}' has no module prefix"
-        )
+        raise ImportError(f"device_class '{device_class_path}' has no module prefix")
     module_name, class_name = device_class_path.rsplit(".", 1)
     module = importlib.import_module(module_name)
     cls = getattr(module, class_name, None)
@@ -124,7 +121,7 @@ def _has_format_placeholder(suffix: str) -> bool:
 
 def _resolve_component_pv(
     cpt, parent_full_prefix: str
-) -> tuple[Optional[str], Optional[Outcome], Optional[str]]:
+) -> tuple[str | None, Outcome | None, str | None]:
     """Resolve a single ``Component`` to its absolute CA PV name.
 
     Returns one of:
@@ -168,9 +165,7 @@ def _resolve_component_pv(
     return suffix, None, None
 
 
-def _walk_class(
-    cls, parts: list[str], prefix: str
-) -> tuple[Outcome, str, Optional[str]]:
+def _walk_class(cls, parts: list[str], prefix: str) -> tuple[Outcome, str, str | None]:
     """Walk a chain of attribute names on a class, computing the absolute PV.
 
     Returns ``(outcome, value_or_path, optional_message)``:
@@ -264,7 +259,7 @@ def _strip_signal_source_scheme(source: str) -> str:
     return _URI_SCHEME_RE.sub("", source, count=1)
 
 
-def _walk_async_instance(device, parts: list[str]) -> tuple[Outcome, str, Optional[str]]:
+def _walk_async_instance(device, parts: list[str]) -> tuple[Outcome, str, str | None]:
     """Walk an instantiated ophyd-async device's attribute tree.
 
     Returns ``(RESOLVED, pv_name, None)`` for leaves that expose ``.source``,
@@ -292,8 +287,8 @@ def _walk_async_instance(device, parts: list[str]) -> tuple[Outcome, str, Option
 
 
 def _get_or_create_async_device(
-    cls, prefix: str, cache: Optional[dict]
-) -> tuple[Optional[object], Optional[str]]:
+    cls, prefix: str, cache: dict | None
+) -> tuple[object | None, str | None]:
     """Return ``(device, error_message)``; exactly one is non-None.
 
     Honors the optional ``(cls, prefix) → (device, err)`` cache so a batch
@@ -323,7 +318,7 @@ def _resolve_ophyd_async(
     prefix: str,
     sub_path: str,
     *,
-    device_cache: Optional[dict] = None,
+    device_cache: dict | None = None,
 ) -> Resolution:
     """Instantiate-without-connect, then walk ``.source`` URIs.
 
@@ -363,9 +358,7 @@ def _resolve_ophyd_async(
     # NO_SUCH_ATTR
     where = value
     bad = msg
-    detail = (
-        f"{bad} (at '{where}')" if where else f"{bad}"
-    )
+    detail = f"{bad} (at '{where}')" if where else f"{bad}"
     return Resolution(address=address, outcome=Outcome.NO_SUCH_ATTR, message=detail)
 
 
@@ -410,7 +403,7 @@ def resolve(
     *,
     device_class_path: str,
     prefix: str,
-    device_cache: Optional[dict] = None,
+    device_cache: dict | None = None,
 ) -> Resolution:
     """Resolve a single dotted address to a PV name.
 
@@ -445,7 +438,5 @@ def resolve(
         )
 
     if _is_ophyd_async_class(cls):
-        return _resolve_ophyd_async(
-            address, cls, prefix, sub_path, device_cache=device_cache
-        )
+        return _resolve_ophyd_async(address, cls, prefix, sub_path, device_cache=device_cache)
     return _resolve_ophyd_classic(address, cls, prefix, sub_path)

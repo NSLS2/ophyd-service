@@ -9,8 +9,9 @@ send that envelope so the two managers don't repeat it ~60 times.
 import asyncio
 import concurrent.futures
 import json
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Literal, Optional
+from typing import Any, Literal, Optional
 
 import structlog
 from fastapi import WebSocket
@@ -75,8 +76,8 @@ class LockedWS:
         self,
         ws: WebSocket,
         *,
-        max_message_bytes: Optional[int] = None,
-        send_timeout: Optional[float] = None,
+        max_message_bytes: int | None = None,
+        send_timeout: float | None = None,
     ):
         self._ws = ws
         self._send_lock = asyncio.Lock()
@@ -86,7 +87,7 @@ class LockedWS:
     async def accept(self) -> None:
         await self._ws.accept()
 
-    async def close(self, code: int = 1000, reason: Optional[str] = None) -> None:
+    async def close(self, code: int = 1000, reason: str | None = None) -> None:
         await self._ws.close(code=code, reason=reason)
 
     async def send_json(self, data: Any) -> None:

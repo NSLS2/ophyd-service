@@ -4,7 +4,7 @@ Pydantic models for Direct Device Control + Monitoring Service.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
@@ -99,12 +99,12 @@ class PVSetRequest(BaseModel):
     pv_name: str = Field(..., description="EPICS PV name")
     value: Any = Field(..., description="Value to set")
     wait: bool = Field(False, description="Block the CA thread until put completion")
-    timeout: Optional[float] = Field(
+    timeout: float | None = Field(
         None,
         description="Put timeout in seconds (used with wait=True or use_complete=True)",
         ge=0.0,
     )
-    connection_timeout: Optional[float] = Field(
+    connection_timeout: float | None = Field(
         None, description="Max seconds to wait for CA connection (pyepics default 5s)", ge=0.0
     )
     use_complete: bool = Field(
@@ -114,7 +114,7 @@ class PVSetRequest(BaseModel):
             "CA thread. Overrides `wait` (always waits) but frees the worker."
         ),
     )
-    ftype: Optional[int] = Field(
+    ftype: int | None = Field(
         None, description="Force non-native DBR type (power-user knob; leave null for native)"
     )
 
@@ -130,7 +130,7 @@ class PVSetResponse(BaseModel):
     timestamp: datetime
     coordination_checked: bool
     mode: CommandMode
-    message: Optional[str] = None
+    message: str | None = None
 
 
 class PVSetBatchRequest(BaseModel):
@@ -147,7 +147,7 @@ class PVSetBatchRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    caputs: List[PVSetRequest] = Field(
+    caputs: list[PVSetRequest] = Field(
         ...,
         min_length=1,
         max_length=100,
@@ -174,12 +174,12 @@ class PVSetBatchItemResult(BaseModel):
     value_set: Any = None
     timestamp: datetime
     coordination_checked: bool = False
-    mode: Optional[CommandMode] = None
-    message: Optional[str] = None
-    error_type: Optional[str] = Field(
+    mode: CommandMode | None = None
+    message: str | None = None
+    error_type: str | None = Field(
         None, description="Exception class name when success=false (e.g. RegistryValidationError)"
     )
-    status_code: Optional[int] = Field(
+    status_code: int | None = Field(
         None,
         description="HTTP status the equivalent single /pv/set call would have returned",
     )
@@ -200,7 +200,7 @@ class PVSetBatchResponse(BaseModel):
     ok: bool
     applied: int
     requested: int
-    results: List[PVSetBatchItemResult]
+    results: list[PVSetBatchItemResult]
 
 
 class EnrichmentSpec(BaseModel):
@@ -240,7 +240,7 @@ class EnrichmentRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    items: List[EnrichmentSpec] = Field(
+    items: list[EnrichmentSpec] = Field(
         ...,
         min_length=1,
         max_length=200,
@@ -259,12 +259,12 @@ class EnrichmentResultItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     ok: bool
-    pv_name: Optional[str] = None
-    error_type: Optional[str] = Field(
+    pv_name: str | None = None
+    error_type: str | None = Field(
         None,
         description="Short tag identifying the failure category when ok=false.",
     )
-    message: Optional[str] = None
+    message: str | None = None
 
 
 class EnrichmentResponse(BaseModel):
@@ -276,7 +276,7 @@ class EnrichmentResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    results: List[EnrichmentResultItem]
+    results: list[EnrichmentResultItem]
 
 
 class DeviceCommandRequest(BaseModel):
@@ -291,9 +291,9 @@ class DeviceCommandRequest(BaseModel):
 
     device_name: str
     method: str
-    args: List[Any] = Field(default_factory=list)
-    kwargs: Dict[str, Any] = Field(default_factory=dict)
-    timeout: Optional[float] = Field(None, ge=0.0)
+    args: list[Any] = Field(default_factory=list)
+    kwargs: dict[str, Any] = Field(default_factory=dict)
+    timeout: float | None = Field(None, ge=0.0)
     use_put: bool = False
 
 
@@ -308,7 +308,7 @@ class DeviceCommandResponse(BaseModel):
     result: Any = None
     timestamp: datetime
     coordination_checked: bool
-    message: Optional[str] = None
+    message: str | None = None
     use_put: bool = False
 
 
@@ -330,10 +330,10 @@ class InstantiationSpec(BaseModel):
     device_class: str = Field(
         ..., description="Fully qualified class path, e.g. 'ophyd.EpicsMotor'"
     )
-    args: List[Any] = Field(default_factory=list)
-    kwargs: Dict[str, Any] = Field(default_factory=dict)
+    args: list[Any] = Field(default_factory=list)
+    kwargs: dict[str, Any] = Field(default_factory=dict)
     active: bool = True
-    framework: Optional[str] = Field(
+    framework: str | None = Field(
         None, description="Advisory framework tag: 'ophyd-sync' | 'ophyd-async'"
     )
 
@@ -350,7 +350,7 @@ class CoordinationStatus(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     device_available: bool
-    locked_by: Optional[str] = None
+    locked_by: str | None = None
     status: DeviceLockStatus
     timestamp: datetime
 
@@ -379,19 +379,19 @@ class PVValue(BaseModel):
     connected: bool = True
 
     # Array structure captured pre-conversion (all zero/None for scalars).
-    shape: List[int] = Field(default_factory=list)
-    dtype: Optional[str] = None
+    shape: list[int] = Field(default_factory=list)
+    dtype: str | None = None
     ndim: int = 0
     nbytes: int = 0
 
-    units: Optional[str] = None
-    precision: Optional[int] = None
-    enum_strs: Optional[List[str]] = None
+    units: str | None = None
+    precision: int | None = None
+    enum_strs: list[str] | None = None
 
-    lower_ctrl_limit: Optional[float] = None
-    upper_ctrl_limit: Optional[float] = None
-    lower_disp_limit: Optional[float] = None
-    upper_disp_limit: Optional[float] = None
+    lower_ctrl_limit: float | None = None
+    upper_ctrl_limit: float | None = None
+    lower_disp_limit: float | None = None
+    upper_disp_limit: float | None = None
 
     # Default to no access — assume locked-out until EPICS confirms otherwise.
     # Pre-M14 these defaulted to True/True so any construction site that
@@ -422,15 +422,15 @@ class PVUpdate(BaseModel):
     # painted streaming-update PVs as readable regardless of CA reality.
     read_access: bool = False
     write_access: bool = False
-    alarm_status: Optional[str] = None
-    alarm_severity: Optional[int] = None
-    alarm_severity_name: Optional[str] = None
-    lower_ctrl_limit: Optional[float] = None
-    upper_ctrl_limit: Optional[float] = None
-    lower_disp_limit: Optional[float] = None
-    upper_disp_limit: Optional[float] = None
-    units: Optional[str] = None
-    precision: Optional[int] = None
+    alarm_status: str | None = None
+    alarm_severity: int | None = None
+    alarm_severity_name: str | None = None
+    lower_ctrl_limit: float | None = None
+    upper_ctrl_limit: float | None = None
+    lower_disp_limit: float | None = None
+    upper_disp_limit: float | None = None
+    units: str | None = None
+    precision: int | None = None
 
     _serialize_timestamp = field_serializer("timestamp")(_serialize_unix_epoch)
 
@@ -469,17 +469,17 @@ class PVInfo(BaseModel):
     write_access: bool = False
     timestamp: datetime
 
-    lower_ctrl_limit: Optional[float] = None
-    upper_ctrl_limit: Optional[float] = None
-    lower_disp_limit: Optional[float] = None
-    upper_disp_limit: Optional[float] = None
+    lower_ctrl_limit: float | None = None
+    upper_ctrl_limit: float | None = None
+    lower_disp_limit: float | None = None
+    upper_disp_limit: float | None = None
 
-    units: Optional[str] = None
-    precision: Optional[int] = None
-    enum_strs: Optional[List[str]] = None
+    units: str | None = None
+    precision: int | None = None
+    enum_strs: list[str] | None = None
 
-    alarm_status: Optional[str] = None
-    alarm_severity: Optional[AlarmSeverity] = None
+    alarm_status: str | None = None
+    alarm_severity: AlarmSeverity | None = None
 
 
 class PVValueResponse(BaseModel):
@@ -502,8 +502,8 @@ class PVLimits(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pv_name: str
-    lower_limit: Optional[float] = None
-    upper_limit: Optional[float] = None
+    lower_limit: float | None = None
+    upper_limit: float | None = None
     has_limits: bool = False
 
 
@@ -515,9 +515,9 @@ class PVMonitorRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    pv_names: List[str]
-    update_rate: Optional[float] = Field(None, ge=0.0)
-    buffer_size: Optional[int] = Field(None, ge=1, le=1000)
+    pv_names: list[str]
+    update_rate: float | None = Field(None, ge=0.0)
+    buffer_size: int | None = Field(None, ge=1, le=1000)
 
 
 class PVSubscription(BaseModel):
@@ -526,12 +526,12 @@ class PVSubscription(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     subscription_id: str
-    pv_names: List[str]
+    pv_names: list[str]
     status: SubscriptionStatus
     created_at: datetime
-    last_update: Optional[datetime] = None
+    last_update: datetime | None = None
     update_count: int = 0
-    client_id: Optional[str] = None
+    client_id: str | None = None
 
 
 # ===== WebSocket Models (ophyd-websocket compatible) =====
@@ -557,12 +557,12 @@ class WebSocketMessage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     action: WebSocketAction
-    pv: Optional[str] = None
-    pv_names: Optional[List[str]] = None
-    device: Optional[str] = None
-    component: Optional[str] = None
-    value: Optional[Any] = None
-    timeout: Optional[float] = None
+    pv: str | None = None
+    pv_names: list[str] | None = None
+    device: str | None = None
+    component: str | None = None
+    value: Any | None = None
+    timeout: float | None = None
 
 
 class WebSocketSetRequest(BaseModel):
@@ -571,11 +571,11 @@ class WebSocketSetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: WebSocketAction
-    pv: Optional[str] = None
-    device: Optional[str] = None
-    component: Optional[str] = None
-    value: Optional[Any] = None
-    timeout: Optional[float] = None
+    pv: str | None = None
+    device: str | None = None
+    component: str | None = None
+    value: Any | None = None
+    timeout: float | None = None
 
 
 class WebSocketSetResponse(BaseModel):
@@ -584,12 +584,12 @@ class WebSocketSetResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: str
-    pv: Optional[str] = None
-    device: Optional[str] = None
-    component: Optional[str] = None
-    value: Optional[Any] = None
+    pv: str | None = None
+    device: str | None = None
+    component: str | None = None
+    value: Any | None = None
     success: bool
-    message: Optional[str] = None
+    message: str | None = None
     timestamp: str
 
 
@@ -602,8 +602,8 @@ class NestedDeviceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     method: str = "read"
-    value: Optional[Any] = None
-    timeout: Optional[float] = None
+    value: Any | None = None
+    timeout: float | None = None
 
 
 class NestedDeviceResponse(BaseModel):
@@ -616,7 +616,7 @@ class NestedDeviceResponse(BaseModel):
     success: bool
     result: Any = None
     timestamp: datetime
-    message: Optional[str] = None
+    message: str | None = None
 
 
 # ===== Device-Socket Models =====
@@ -634,12 +634,12 @@ class DeviceUpdate(BaseModel):
 
     event_type: str = "device_update"
     device: str
-    signal: Optional[str] = None
+    signal: str | None = None
     value: Any
     timestamp: datetime
     connected: bool = True
-    read_access: Optional[bool] = True
-    write_access: Optional[bool] = None
+    read_access: bool | None = True
+    write_access: bool | None = None
 
     _serialize_timestamp = field_serializer("timestamp")(_serialize_unix_epoch)
 
@@ -651,8 +651,8 @@ class DeviceInfo(BaseModel):
 
     name: str
     device_type: str
-    ophyd_class: Optional[str] = None
-    pvs: Dict[str, str] = Field(default_factory=dict)
+    ophyd_class: str | None = None
+    pvs: dict[str, str] = Field(default_factory=dict)
     is_movable: bool = False
     is_readable: bool = True
 
@@ -665,7 +665,7 @@ class StopRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    timeout: Optional[float] = None
+    timeout: float | None = None
 
 
 class StopResponse(BaseModel):
@@ -676,7 +676,7 @@ class StopResponse(BaseModel):
     pv_name: str
     success: bool
     timestamp: datetime
-    message: Optional[str] = None
+    message: str | None = None
 
 
 # ===== Health Response =====
@@ -690,7 +690,7 @@ class HealthResponse(BaseModel):
     status: Literal["healthy", "unhealthy"] = "healthy"
     timestamp: datetime
     coordination_service_available: bool
-    coordination_service_detail: Optional[str] = None
+    coordination_service_detail: str | None = None
     # Running mode, so a file-backed / read-only deployment is always visible.
     registry_backend: str = "http"  # http | file (auto resolves to one of these)
     read_only: bool = False
@@ -710,7 +710,7 @@ class ServiceAvailability(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     available: bool
-    detail: Optional[str] = None
+    detail: str | None = None
 
 
 # ===== Exceptions =====

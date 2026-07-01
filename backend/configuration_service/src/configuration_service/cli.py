@@ -8,6 +8,7 @@ Matches pattern from SVC-001, SVC-002, and SVC-003 for consistency.
 import argparse
 import os
 import sys
+
 import uvicorn
 
 
@@ -155,7 +156,7 @@ def main() -> None:
     effective_strategy = "mock" if args.use_mock_data else args.load_strategy
 
     # Display startup information
-    print(f"Starting Configuration Service (SVC-004)")
+    print("Starting Configuration Service (SVC-004)")
     print(f"  Host: {args.host}")
     print(f"  Port: {args.port}")
     print(f"  Workers: {args.workers}")
@@ -163,9 +164,9 @@ def main() -> None:
     print(f"  Profile Path: {args.profile_path or 'Not set'}")
     print(f"  Load Strategy: {effective_strategy}")
     if args.ssl_keyfile:
-        print(f"  SSL: Enabled")
+        print("  SSL: Enabled")
     if args.proxy_headers:
-        print(f"  Proxy Headers: Enabled")
+        print("  Proxy Headers: Enabled")
     print()
     print(f"API Documentation: http://{args.host}:{args.port}/docs")
     print(f"Health Check: http://{args.host}:{args.port}/health")

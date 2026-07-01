@@ -25,12 +25,13 @@ from __future__ import annotations
 
 from ophyd import (
     Component as Cpt,
+)
+from ophyd import (
     Device,
     EpicsMotor,
     EpicsSignal,
     EpicsSignalRO,
 )
-
 
 # ── adsimdetector ───────────────────────────────────────────────────────
 # Source role: nsls2.ioc_deploy/roles/device_roles/adsimdetector/

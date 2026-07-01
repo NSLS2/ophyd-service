@@ -157,7 +157,7 @@ def _walk_component(device: Any, dotted_path: str) -> Any:
         return operator.attrgetter(dotted_path)(device)
     except AttributeError as e:
         raise ComponentNotFoundError(
-            f"Device {getattr(device, 'name', '?')!r} has no component " f"{dotted_path!r}: {e}"
+            f"Device {getattr(device, 'name', '?')!r} has no component {dotted_path!r}: {e}"
         ) from e
 
 

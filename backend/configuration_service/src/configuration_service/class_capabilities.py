@@ -6,7 +6,6 @@ Maps class names to their protocol capability flags.
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass(frozen=True)

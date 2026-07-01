@@ -8,13 +8,14 @@ Implements: PVMonitor protocol
 """
 
 import os
+import threading
 from collections import defaultdict, deque
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable, Deque, Dict, List, Literal, NamedTuple, Optional
+from typing import Literal, NamedTuple
 
 import numpy as np
 import structlog
-import threading
 
 from .._array_metadata import describe_array
 from ..config import Settings
@@ -30,7 +31,10 @@ if _epics_addr:
 if _epics_auto:
     os.environ["EPICS_CA_AUTO_ADDR_LIST"] = _epics_auto
 
-from ophyd import EpicsSignal, EpicsSignalRO
+from ophyd import (  # noqa: E402  (EPICS_CA_* env must be set before ophyd/pyepics import)
+    EpicsSignal,
+    EpicsSignalRO,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -44,8 +48,9 @@ class _Subscriber(NamedTuple):
     ``pv_error`` WebSocket envelope) instead of having it disappear into
     a log line.
     """
+
     callback: Callable[["PVUpdate"], None]
-    on_error: Optional[Callable[[BaseException], None]]
+    on_error: Callable[[BaseException], None] | None
 
 
 class PVMonitorManager:
@@ -60,13 +65,13 @@ class PVMonitorManager:
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        self._signals: Dict[str, EpicsSignal] = {}
-        self._buffers: Dict[str, Deque[PVValue]] = defaultdict(
+        self._signals: dict[str, EpicsSignal] = {}
+        self._buffers: dict[str, deque[PVValue]] = defaultdict(
             lambda: deque(maxlen=settings.pv_buffer_size)
         )
-        self._callbacks: Dict[str, List[_Subscriber]] = defaultdict(list)
-        self._connection_status: Dict[str, bool] = {}
-        self._latest_values: Dict[str, PVValue] = {}
+        self._callbacks: dict[str, list[_Subscriber]] = defaultdict(list)
+        self._connection_status: dict[str, bool] = {}
+        self._latest_values: dict[str, PVValue] = {}
         self._lock = threading.RLock()
 
         logger.info(
@@ -77,9 +82,9 @@ class PVMonitorManager:
     def subscribe(
         self,
         pv_name: str,
-        callback: Optional[Callable[[PVUpdate], None]] = None,
+        callback: Callable[[PVUpdate], None] | None = None,
         read_only: bool = False,
-        on_error: Optional[Callable[[BaseException], None]] = None,
+        on_error: Callable[[BaseException], None] | None = None,
     ) -> None:
         with self._lock:
             if pv_name not in self._signals:
@@ -141,7 +146,7 @@ class PVMonitorManager:
                                 pv_name=pv_name,
                                 error=str(destroy_err),
                             )
-                    raise PVNotFoundError(f"PV {pv_name} subscription failed: {e}")
+                    raise PVNotFoundError(f"PV {pv_name} subscription failed: {e}") from e
 
             if callback:
                 self._callbacks[pv_name].append(_Subscriber(callback, on_error))
@@ -374,7 +379,7 @@ class PVMonitorManager:
             write_access=write_access,
         )
 
-    def unsubscribe(self, pv_name: str, callback: Optional[Callable] = None) -> None:
+    def unsubscribe(self, pv_name: str, callback: Callable | None = None) -> None:
         signal_to_destroy = None
         with self._lock:
             if callback:
@@ -403,7 +408,7 @@ class PVMonitorManager:
             except Exception as e:  # noqa: BLE001
                 logger.warning("pv_destroy_failed", pv_name=pv_name, error=str(e))
 
-    def get_value(self, pv_name: str) -> Optional[PVValue]:
+    def get_value(self, pv_name: str) -> PVValue | None:
         """See ``PVMonitor.get_value``: ``None`` if not subscribed, else
         the cached value or a fresh read; raises ``PVReadError`` if the
         on-demand read fails."""
@@ -423,7 +428,7 @@ class PVMonitorManager:
 
             return None
 
-    def get_buffer(self, pv_name: str) -> List[PVValue]:
+    def get_buffer(self, pv_name: str) -> list[PVValue]:
         with self._lock:
             return list(self._buffers.get(pv_name, []))
 
@@ -431,7 +436,7 @@ class PVMonitorManager:
         with self._lock:
             return self._connection_status.get(pv_name, False)
 
-    def get_connected_pvs(self) -> List[str]:
+    def get_connected_pvs(self) -> list[str]:
         with self._lock:
             return [name for name, status in self._connection_status.items() if status]
 

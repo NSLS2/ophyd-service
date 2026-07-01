@@ -20,8 +20,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Dict, List, Literal, Optional, Tuple, TYPE_CHECKING
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from .models import DeviceRegistry
@@ -58,7 +58,7 @@ class DeviceLockState:
         self.locked_by_plan = locked_by_plan
         self.locked_by_item = locked_by_item
         self.locked_by_service = locked_by_service
-        self.locked_at = datetime.now(timezone.utc)
+        self.locked_at = datetime.now(UTC)
         self.lock_id = lock_id
 
     def to_dict(self) -> dict:
@@ -82,8 +82,8 @@ class LockConflict:
         self,
         device_name: str,
         reason: LockConflictReason,
-        locked_by_plan: Optional[str] = None,
-        locked_at: Optional[datetime] = None,
+        locked_by_plan: str | None = None,
+        locked_at: datetime | None = None,
     ):
         self.device_name = device_name
         self.reason: LockConflictReason = reason
@@ -97,10 +97,10 @@ class LockResult:
     def __init__(
         self,
         success: bool,
-        lock_id: Optional[str] = None,
-        locked_devices: Optional[List[str]] = None,
-        locked_pvs: Optional[List[str]] = None,
-        conflicts: Optional[List[LockConflict]] = None,
+        lock_id: str | None = None,
+        locked_devices: list[str] | None = None,
+        locked_pvs: list[str] | None = None,
+        conflicts: list[LockConflict] | None = None,
         error_code: int = 200,
     ):
         self.success = success
@@ -120,7 +120,7 @@ class DeviceLockManager:
     """
 
     def __init__(self, lock_all: bool = False):
-        self._locks: Dict[str, DeviceLockState] = {}
+        self._locks: dict[str, DeviceLockState] = {}
         self._lock = asyncio.Lock()
         self._version: int = 0
         # "lock_all" availability policy: when True and any lock is held,
@@ -136,11 +136,11 @@ class DeviceLockManager:
 
     async def acquire_locks(
         self,
-        device_names: List[str],
+        device_names: list[str],
         item_id: str,
         plan_name: str,
         locked_by_service: str,
-        registry: "DeviceRegistry",
+        registry: DeviceRegistry,
     ) -> LockResult:
         """
         Atomically acquire locks on multiple devices (all-or-nothing).
@@ -149,7 +149,7 @@ class DeviceLockManager:
         success=False with conflict information and appropriate error_code.
         """
         async with self._lock:
-            conflicts: List[LockConflict] = []
+            conflicts: list[LockConflict] = []
 
             # Validate all devices before acquiring any locks
             for name in device_names:
@@ -243,9 +243,9 @@ class DeviceLockManager:
 
     async def release_locks(
         self,
-        device_names: List[str],
+        device_names: list[str],
         item_id: str,
-    ) -> Tuple[bool, List[str], Optional[str]]:
+    ) -> tuple[bool, list[str], str | None]:
         """
         Release locks owned by item_id.
 
@@ -274,17 +274,15 @@ class DeviceLockManager:
 
             if unlocked:
                 self._version += 1
-                logger.info(
-                    "locks_released devices=%s item_id=%s", unlocked, item_id
-                )
+                logger.info("locks_released devices=%s item_id=%s", unlocked, item_id)
 
             return True, unlocked, None
 
     async def force_unlock(
         self,
-        device_names: List[str],
-        registry: "DeviceRegistry",
-    ) -> Tuple[List[str], List[str]]:
+        device_names: list[str],
+        registry: DeviceRegistry,
+    ) -> tuple[list[str], list[str]]:
         """
         Unconditionally clear locks regardless of ownership.
 
@@ -318,14 +316,14 @@ class DeviceLockManager:
         lock_state = self._locks.get(device_name)
         return lock_state is not None and lock_state.locked
 
-    def get_device_lock(self, device_name: str) -> Optional[DeviceLockState]:
+    def get_device_lock(self, device_name: str) -> DeviceLockState | None:
         """Get the lock state for a device, or None if unlocked."""
         lock_state = self._locks.get(device_name)
         if lock_state is not None and lock_state.locked:
             return lock_state
         return None
 
-    def get_all_locks(self) -> Dict[str, DeviceLockState]:
+    def get_all_locks(self) -> dict[str, DeviceLockState]:
         """Return a copy of all active locks."""
         return {name: state for name, state in self._locks.items() if state.locked}
 
@@ -336,7 +334,7 @@ class DeviceLockManager:
             self._version += 1
             logger.info("lock_all policy set to %s", enabled)
 
-    def global_lock_holder(self) -> Optional[DeviceLockState]:
+    def global_lock_holder(self) -> DeviceLockState | None:
         """The lock representing "a plan is running" under lock_all.
 
         The earliest-acquired active lock — stable for as long as that plan
@@ -348,7 +346,7 @@ class DeviceLockManager:
             return None
         return min(active, key=lambda state: state.locked_at)
 
-    def effective_lock(self, device_name: str) -> Optional[DeviceLockState]:
+    def effective_lock(self, device_name: str) -> DeviceLockState | None:
         """The lock state governing this device's AVAILABILITY.
 
         The device's own lock when present; otherwise, when the lock_all
@@ -366,9 +364,9 @@ class DeviceLockManager:
 
     def _get_device_pvs(
         self,
-        device_names: List[str],
-        registry: "DeviceRegistry",
-    ) -> List[str]:
+        device_names: list[str],
+        registry: DeviceRegistry,
+    ) -> list[str]:
         """Collect all PV names belonging to the given devices."""
         pvs = []
         for name in device_names:

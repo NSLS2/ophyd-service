@@ -6,7 +6,6 @@ before allowing operations. Uses a TTL cache to avoid per-request HTTP round-tri
 """
 
 import time
-from typing import Dict, Optional, Tuple
 
 import httpx
 import structlog
@@ -44,20 +43,20 @@ class RegistryClient:
 
     def __init__(self, settings: Settings, cache_ttl: float = 30.0):
         self.base_url = settings.configuration_service_url
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
         self._cache_ttl = cache_ttl
         # Cache: key -> (exists: bool, timestamp: float)
-        self._pv_cache: Dict[str, Tuple[bool, float]] = {}
-        self._device_cache: Dict[str, Tuple[bool, float]] = {}
+        self._pv_cache: dict[str, tuple[bool, float]] = {}
+        self._device_cache: dict[str, tuple[bool, float]] = {}
         # PV -> owning device name (None for standalone PVs). Populated as a
         # side effect of validate_pv so the disabled-state gate can map a
         # PV-keyed write to the device-keyed lock/disable state on
         # configuration_service without an extra round-trip.
-        self._pv_owner_cache: Dict[str, Tuple[Optional[str], float]] = {}
+        self._pv_owner_cache: dict[str, tuple[str | None, float]] = {}
         # device -> instantiation spec (None = device has no spec). Specs
         # change rarely; the TTL bounds how long a registry edit takes to
         # reach the DeviceManager (which also rebuilds on spec change).
-        self._spec_cache: Dict[str, Tuple[Optional[InstantiationSpec], float]] = {}
+        self._spec_cache: dict[str, tuple[InstantiationSpec | None, float]] = {}
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -67,7 +66,7 @@ class RegistryClient:
             )
         return self._client
 
-    def _cache_get(self, cache: Dict[str, Tuple[bool, float]], key: str) -> Optional[bool]:
+    def _cache_get(self, cache: dict[str, tuple[bool, float]], key: str) -> bool | None:
         """Check cache for a key, return None if expired or missing."""
         entry = cache.get(key)
         if entry is None:
@@ -182,7 +181,7 @@ class RegistryClient:
             logger.error("configuration_service_unavailable", error=str(e))
             raise RuntimeError("Configuration service unavailable") from e
 
-    async def get_owning_device(self, pv_name: str) -> Optional[str]:
+    async def get_owning_device(self, pv_name: str) -> str | None:
         """Return the device that owns this PV in the registry, or None for
         standalone PVs (PVs with no device-level lock/disable state).
 
@@ -220,11 +219,11 @@ class RegistryClient:
                 f"Configuration service registry error: owner lookup for "
                 f"{pv_name!r} returned HTTP {response.status_code}"
             )
-        device_name: Optional[str] = response.json().get("device_name")
+        device_name: str | None = response.json().get("device_name")
         self._pv_owner_cache[pv_name] = (device_name, time.monotonic())
         return device_name
 
-    async def get_instantiation_spec(self, device_name: str) -> Optional[InstantiationSpec]:
+    async def get_instantiation_spec(self, device_name: str) -> InstantiationSpec | None:
         """Fetch the device's instantiation spec from configuration_service.
 
         Returns None when the spec endpoint 404s. Callers run

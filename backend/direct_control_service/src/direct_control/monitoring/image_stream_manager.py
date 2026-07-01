@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Optional
 
 import numpy as np
 import structlog
@@ -104,7 +103,7 @@ class _StreamState:
 
     def __init__(self, log_normalization: bool) -> None:
         self.log_normalization = log_normalization
-        self.dimensions: Optional[dict] = None
+        self.dimensions: dict | None = None
         # Set on teardown so in-flight CA callbacks stop touching signals that
         # are about to be destroyed (avoids a spurious "Unexpected channel ID"
         # warning on every normal disconnect).
@@ -118,7 +117,7 @@ class ImageStreamManager:
         self,
         settings: Settings,
         kind: str,
-        registry_client: Optional[RegistryProvider] = None,
+        registry_client: RegistryProvider | None = None,
     ) -> None:
         if kind not in ("camera", "tiff"):
             raise ValueError(f"ImageStreamManager kind must be camera|tiff, got {kind!r}")
@@ -130,6 +129,11 @@ class ImageStreamManager:
         )
         self._connections: dict[str, LockedWS] = {}
         self._lock = asyncio.Lock()
+
+    @property
+    def connection_count(self) -> int:
+        """Currently-connected clients. Summed across managers for the global cap."""
+        return len(self._connections)
 
     # ------------------------------------------------------------------ #
     # Connection lifecycle
@@ -146,7 +150,7 @@ class ImageStreamManager:
             self._connections[client_id] = ws
         logger.info("image_socket_connected", client_id=client_id, kind=self.kind)
 
-        array_signal: Optional[EpicsSignalRO] = None
+        array_signal: EpicsSignalRO | None = None
         setting_signals: dict[str, EpicsSignalRO] = {}
         try:
             # 1. First message resolves which PVs to stream.
@@ -343,7 +347,7 @@ class ImageStreamManager:
                 error_envelope_fields={},
             )
 
-    def _render_frame(self, raw, dimensions: dict, log_normalization: bool) -> Optional[bytes]:
+    def _render_frame(self, raw, dimensions: dict, log_normalization: bool) -> bytes | None:
         """Normalize -> reshape -> downsample -> encode. Off-loop (CPU-bound)."""
         try:
             image = _build_display_image(
@@ -364,7 +368,7 @@ class ImageStreamManager:
         self,
         client_id: str,
         ws: LockedWS,
-        array_signal: Optional[EpicsSignalRO],
+        array_signal: EpicsSignalRO | None,
         setting_signals: dict[str, EpicsSignalRO],
     ) -> None:
         async with self._lock:
@@ -410,7 +414,7 @@ class ImageStreamManager:
             return_exceptions=True,
         )
         ok = True
-        for pv_name, result in zip(pv_names, results):
+        for pv_name, result in zip(pv_names, results, strict=True):
             if isinstance(result, (RegistryValidationError, RuntimeError)):
                 await send_error(ws, str(result), pv=pv_name)
                 ok = False

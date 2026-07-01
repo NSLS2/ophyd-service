@@ -36,7 +36,6 @@ from direct_control.main import (
 from direct_control.models import CoordinationCheckError
 from direct_control.registry_client import RegistryValidationError
 
-
 # ===== _registry_error_status: lock-step contract for batch + single =====
 
 
@@ -135,14 +134,11 @@ def test_coordination_failure_helper_passes_log_fields_through():
     """
     with structlog.testing.capture_logs() as logs:
         with pytest.raises(HTTPException):
-            _raise_http_for_coordination_failure(
-                CoordinationCheckError("down"), device_name="m1"
-            )
+            _raise_http_for_coordination_failure(CoordinationCheckError("down"), device_name="m1")
     matching = [
         entry
         for entry in logs
-        if entry.get("event") == "coordination_check_failed"
-        and entry.get("device_name") == "m1"
+        if entry.get("event") == "coordination_check_failed" and entry.get("device_name") == "m1"
     ]
     assert matching, f"expected coordination_check_failed event with device_name=m1, got {logs!r}"
     assert matching[0]["log_level"] == "error"

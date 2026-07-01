@@ -19,7 +19,6 @@ failure without issuing the EPICS write.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 from unittest.mock import AsyncMock
 
 import httpx
@@ -44,7 +43,7 @@ def _client_with(handler) -> RegistryClient:
     return client
 
 
-def _status_handler(status_code: int, json_body: Optional[dict] = None):
+def _status_handler(status_code: int, json_body: dict | None = None):
     calls = {"count": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -164,7 +163,10 @@ async def test_set_pv_fails_closed_when_owner_lookup_errors():
 
     settings = Settings()
     controller = DeviceController(
-        settings, _AvailableCoord(), _OutageRegistry(), DeviceManager(settings)  # type: ignore[arg-type]
+        settings,
+        _AvailableCoord(),
+        _OutageRegistry(),
+        DeviceManager(settings),  # type: ignore[arg-type]
     )
     controller._execute_put = AsyncMock()  # type: ignore[method-assign]
 

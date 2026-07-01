@@ -13,7 +13,6 @@ on ``app.state.direct_control_container`` and ``app.state.enrichment_cache_conta
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 import pytest
 
@@ -23,7 +22,6 @@ from configuration_service.direct_control_client import (
     EnrichmentSpec,
 )
 
-
 # ---------------------------------------------------------------------------
 # Mock client + fixtures
 # ---------------------------------------------------------------------------
@@ -31,7 +29,7 @@ from configuration_service.direct_control_client import (
 
 @dataclass
 class _MockCall:
-    specs: List[EnrichmentSpec]
+    specs: list[EnrichmentSpec]
 
 
 class _MockDirectControlClient:
@@ -44,11 +42,11 @@ class _MockDirectControlClient:
     """
 
     def __init__(self) -> None:
-        self.next_response: List[EnrichmentResult] = []
+        self.next_response: list[EnrichmentResult] = []
         self.raise_unavailable: bool = False
-        self.calls: List[_MockCall] = []
+        self.calls: list[_MockCall] = []
 
-    async def enrich(self, specs: List[EnrichmentSpec]) -> List[EnrichmentResult]:
+    async def enrich(self, specs: list[EnrichmentSpec]) -> list[EnrichmentResult]:
         self.calls.append(_MockCall(specs=list(specs)))
         if self.raise_unavailable:
             raise DirectControlUnavailable("simulated network failure")
@@ -58,10 +56,7 @@ class _MockDirectControlClient:
         # deterministic to check.
         if len(self.next_response) != len(specs):
             return [
-                EnrichmentResult(
-                    ok=True, pv_name=f"ENRICHED:{spec.sub_path}"
-                )
-                for spec in specs
+                EnrichmentResult(ok=True, pv_name=f"ENRICHED:{spec.sub_path}") for spec in specs
             ]
         return self.next_response
 
@@ -116,9 +111,7 @@ def configure_enrichment(client):
 # ---------------------------------------------------------------------------
 
 
-def test_no_client_configured_returns_needs_enrichment(
-    client, fmt_cpt_device_in_registry
-):
+def test_no_client_configured_returns_needs_enrichment(client, fmt_cpt_device_in_registry):
     """When direct-control isn't wired up, needs_enrichment outcomes pass
     through unchanged (pre-feature behavior)."""
     # Ensure no client is configured on this fixture path.
@@ -139,9 +132,7 @@ def test_enrichment_fills_in_needs_enrichment_outcomes(
 ):
     """With a client wired up, needs_enrichment items get enriched and
     returned as resolved."""
-    configure_enrichment.next_response = [
-        EnrichmentResult(ok=True, pv_name="IOC:counter")
-    ]
+    configure_enrichment.next_response = [EnrichmentResult(ok=True, pv_name="IOC:counter")]
 
     r = client.post(
         "/api/v1/devices/resolve",
@@ -165,9 +156,7 @@ def test_enrichment_cache_skips_second_call(
 ):
     """A second identical address should hit the in-memory cache, not
     re-call direct-control."""
-    configure_enrichment.next_response = [
-        EnrichmentResult(ok=True, pv_name="IOC:counter")
-    ]
+    configure_enrichment.next_response = [EnrichmentResult(ok=True, pv_name="IOC:counter")]
 
     address = "fmt_device.inner.counter_via_fmt"
     r1 = client.post("/api/v1/devices/resolve", json={"addresses": [address]})
@@ -230,22 +219,16 @@ def test_direct_control_per_item_failure_yields_enrichment_unavailable(
     assert "Could not connect to IOC" in row["message"]
 
 
-def test_enrichment_failure_not_cached(
-    client, fmt_cpt_device_in_registry, configure_enrichment
-):
+def test_enrichment_failure_not_cached(client, fmt_cpt_device_in_registry, configure_enrichment):
     """Per-item failures should NOT be cached — they may be transient
     (IOC restart) and we want the next request to retry."""
-    configure_enrichment.next_response = [
-        EnrichmentResult(ok=False, error_type="X", message="Y")
-    ]
+    configure_enrichment.next_response = [EnrichmentResult(ok=False, error_type="X", message="Y")]
 
     address = "fmt_device.inner.counter_via_fmt"
     client.post("/api/v1/devices/resolve", json={"addresses": [address]})
     # Now flip the mock to return success — a second request should hit
     # direct-control again (failure not cached) and pick up the new answer.
-    configure_enrichment.next_response = [
-        EnrichmentResult(ok=True, pv_name="IOC:counter")
-    ]
+    configure_enrichment.next_response = [EnrichmentResult(ok=True, pv_name="IOC:counter")]
     r = client.post("/api/v1/devices/resolve", json={"addresses": [address]})
 
     assert r.json()["resolved"][0]["outcome"] == "resolved"

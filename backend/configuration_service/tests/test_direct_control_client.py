@@ -19,7 +19,6 @@ from configuration_service.direct_control_client import (
     EnrichmentSpec,
 )
 
-
 # A single spec is enough for most checks; pick a stable one.
 SPEC = EnrichmentSpec(
     device_class_path="some.module.Cls",

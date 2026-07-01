@@ -5,7 +5,7 @@ Uses pydantic-settings for environment-based configuration.
 """
 
 from pathlib import Path
-from typing import Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     # Profile collection configuration
     # Can be set via CONFIG_PROFILE_PATH
-    profile_path: Optional[Path] = None
+    profile_path: Path | None = None
 
     # Loading strategy: "auto", "empty", "happi", "bits", or "mock"
     # auto: Auto-detect based on files present in profile_path (default)
@@ -55,8 +55,16 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
-    # CORS (if needed for web UI)
+    # CORS (if needed for web UI). cors_origins defaults to "*" for the dev
+    # inner-loop; set an explicit allowlist in production. cors_allow_credentials
+    # must stay False whenever cors_origins is "*": the combination makes
+    # Starlette reflect the caller's Origin AND echo
+    # Access-Control-Allow-Credentials, i.e. any site could drive a credentialed
+    # request. Auth is enforced upstream (bearer headers, not cookies), so
+    # credentials are off by default; create_app() also force-disables them if
+    # a wildcard origin is configured.
     cors_origins: list[str] = ["*"]
+    cors_allow_credentials: bool = False
 
     # Metrics
     metrics_enabled: bool = True
@@ -97,7 +105,7 @@ class Settings(BaseSettings):
     # unique-device batch can run several seconds on the first hit.
     # After warm-up the cache amortizes it; size to your expected
     # cold batch (unique_devices * 0.5s, with headroom).
-    direct_control_url: Optional[str] = None
+    direct_control_url: str | None = None
     direct_control_timeout: float = 30.0
 
     model_config = SettingsConfigDict(

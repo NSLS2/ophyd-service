@@ -64,8 +64,14 @@ def _pv_status(client, pv: str):
 class TestSharedPVOwnership:
     def test_removing_one_owner_rehomes_shared_pv(self, client):
         shared = "BL:SHARED:PV"
-        assert client.post("/api/v1/devices", json=_device_body("dev_a", {"val": shared})).status_code == 201
-        assert client.post("/api/v1/devices", json=_device_body("dev_b", {"val": shared})).status_code == 201
+        assert (
+            client.post("/api/v1/devices", json=_device_body("dev_a", {"val": shared})).status_code
+            == 201
+        )
+        assert (
+            client.post("/api/v1/devices", json=_device_body("dev_b", {"val": shared})).status_code
+            == 201
+        )
 
         # dev_b registered last and owns the index entry; deleting it must
         # re-home the PV to dev_a, not destroy the entry.
@@ -85,7 +91,10 @@ class TestSharedPVOwnership:
 
         # A device claims the standalone PV, then is removed: the standalone
         # registration must survive (pre-fix the entry was deleted outright).
-        assert client.post("/api/v1/devices", json=_device_body("claimer", {"val": pv})).status_code == 201
+        assert (
+            client.post("/api/v1/devices", json=_device_body("claimer", {"val": pv})).status_code
+            == 201
+        )
         assert client.delete("/api/v1/devices/claimer").status_code == 200
 
         resp = _pv_status(client, pv)
@@ -97,7 +106,10 @@ class TestSharedPVOwnership:
     def test_deleting_standalone_keeps_device_owned_entry(self, client):
         pv = "BL:DUAL:PV"
         assert client.post("/api/v1/pvs", json={"pv_name": pv}).status_code == 201
-        assert client.post("/api/v1/devices", json=_device_body("owner_dev", {"val": pv})).status_code == 201
+        assert (
+            client.post("/api/v1/devices", json=_device_body("owner_dev", {"val": pv})).status_code
+            == 201
+        )
 
         # Deleting the standalone registration must not destroy the
         # device-owned index entry.
@@ -109,7 +121,10 @@ class TestSharedPVOwnership:
 
     def test_sole_owner_removal_still_drops_pv(self, client):
         pv = "BL:ONLY:PV"
-        assert client.post("/api/v1/devices", json=_device_body("solo", {"val": pv})).status_code == 201
+        assert (
+            client.post("/api/v1/devices", json=_device_body("solo", {"val": pv})).status_code
+            == 201
+        )
         assert client.delete("/api/v1/devices/solo").status_code == 200
         assert _pv_status(client, pv).status_code == 404
 
@@ -143,7 +158,12 @@ class TestPersistBeforeMutate:
     def test_delete_failure_keeps_device_fully_alive(self, client, monkeypatch):
         from configuration_service.device_registry_store import DeviceRegistryStore
 
-        assert client.post("/api/v1/devices", json=_device_body("sticky", {"val": "BL:S:PV"})).status_code == 201
+        assert (
+            client.post(
+                "/api/v1/devices", json=_device_body("sticky", {"val": "BL:S:PV"})
+            ).status_code
+            == 201
+        )
 
         def _boom(self, *args, **kwargs):
             raise RuntimeError("simulated DB outage")

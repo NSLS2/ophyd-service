@@ -19,8 +19,8 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 
@@ -147,6 +147,8 @@ def app():
     """
     from direct_control.main import (
         app as fastapi_app,
+    )
+    from direct_control.main import (
         get_coordination_client,
         get_registry_client,
     )
@@ -178,7 +180,7 @@ async def install_config_http_stub(app):
     """
     import httpx
 
-    mock_client: "httpx.AsyncClient | None" = None
+    mock_client: httpx.AsyncClient | None = None
 
     def install(handler):
         nonlocal mock_client

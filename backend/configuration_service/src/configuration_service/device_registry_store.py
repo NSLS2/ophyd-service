@@ -23,7 +23,7 @@ by ``main.py`` and injected here.
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.engine import Engine
@@ -70,9 +70,7 @@ class DeviceRegistryStore:
             conn.execute(text("DROP TABLE IF EXISTS device_change_history"))
 
         self._initialized = True
-        logger.info(
-            "Device registry store initialized (%s)", self._engine.dialect.name
-        )
+        logger.info("Device registry store initialized (%s)", self._engine.dialect.name)
 
     def is_seeded(self) -> bool:
         """Check whether the registry has been seeded from a profile."""
@@ -123,9 +121,11 @@ class DeviceRegistryStore:
     def load_all_devices(self) -> DeviceRegistry:
         """Load all devices from DB into a fresh DeviceRegistry."""
         with self._engine.connect() as conn:
-            rows = conn.execute(
-                select(device_registry).order_by(device_registry.c.name)
-            ).mappings().all()
+            rows = (
+                conn.execute(select(device_registry).order_by(device_registry.c.name))
+                .mappings()
+                .all()
+            )
 
         registry = DeviceRegistry()
         for row in rows:
@@ -141,9 +141,9 @@ class DeviceRegistryStore:
         self,
         name: str,
         metadata: DeviceMetadata,
-        spec: Optional[DeviceInstantiationSpec] = None,
+        spec: DeviceInstantiationSpec | None = None,
         operation: str = "add",
-        details: Optional[dict] = None,
+        details: dict | None = None,
     ) -> None:
         """
         Save or update a device in the registry.
@@ -185,7 +185,7 @@ class DeviceRegistryStore:
 
         logger.debug(f"Saved device: {name} (operation={operation})")
 
-    def delete_device(self, name: str, details: Optional[dict] = None) -> bool:
+    def delete_device(self, name: str, details: dict | None = None) -> bool:
         """Delete a device. Returns True if it existed and was deleted."""
         now = time.time()
 
@@ -207,16 +207,18 @@ class DeviceRegistryStore:
             logger.debug(f"Deleted device: {name}")
         return deleted
 
-    def get_device(self, name: str) -> Optional[Dict[str, Any]]:
+    def get_device(self, name: str) -> dict[str, Any] | None:
         """Get a single device. Returns dict with metadata/spec/timestamps, or None."""
         with self._engine.connect() as conn:
-            row = conn.execute(
-                select(device_registry).where(device_registry.c.name == name)
-            ).mappings().first()
+            row = (
+                conn.execute(select(device_registry).where(device_registry.c.name == name))
+                .mappings()
+                .first()
+            )
         if row is None:
             return None
 
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "metadata": DeviceMetadata.model_validate_json(row["device_metadata"]),
             "spec": None,
             "created_at": row["created_at"],
@@ -228,9 +230,9 @@ class DeviceRegistryStore:
 
     def get_audit_log(
         self,
-        device_name: Optional[str] = None,
+        device_name: str | None = None,
         limit: int = 1000,
-    ) -> List[DeviceAuditEntry]:
+    ) -> list[DeviceAuditEntry]:
         """Get audit log entries, optionally filtered to a device, newest first."""
         stmt = select(device_audit_log).order_by(device_audit_log.c.id.desc()).limit(limit)
         if device_name:
@@ -274,14 +276,16 @@ class DeviceRegistryStore:
         self.seed_from_registry(registry)
         logger.info("Registry cleared and re-seeded from profile")
 
-    def export_happi(self) -> Dict[str, Any]:
+    def export_happi(self) -> dict[str, Any]:
         """Export the current registry in happi JSON format (keyed by device name)."""
         with self._engine.connect() as conn:
-            rows = conn.execute(
-                select(device_registry).order_by(device_registry.c.name)
-            ).mappings().all()
+            rows = (
+                conn.execute(select(device_registry).order_by(device_registry.c.name))
+                .mappings()
+                .all()
+            )
 
-        happi_db: Dict[str, Any] = {}
+        happi_db: dict[str, Any] = {}
         for row in rows:
             metadata_model = DeviceMetadata.model_validate_json(row["device_metadata"])
             if not row["instantiation_spec"]:
@@ -291,7 +295,7 @@ class DeviceRegistryStore:
                 )
             spec = DeviceInstantiationSpec.model_validate_json(row["instantiation_spec"])
 
-            entry: Dict[str, Any] = {
+            entry: dict[str, Any] = {
                 "_id": metadata_model.name,
                 "name": metadata_model.name,
                 "device_class": spec.device_class,
@@ -319,9 +323,9 @@ class DeviceRegistryStore:
 
     def log_lock_event(
         self,
-        device_names: List[str],
+        device_names: list[str],
         operation: str,
-        details: Optional[str] = None,
+        details: str | None = None,
     ) -> None:
         """Write lock/unlock/force_unlock events to the audit log."""
         now = time.time()
@@ -339,16 +343,14 @@ class DeviceRegistryStore:
     def device_count(self) -> int:
         """Get the number of devices in the registry."""
         with self._engine.connect() as conn:
-            return int(
-                conn.execute(select(func.count()).select_from(device_registry)).scalar_one()
-            )
+            return int(conn.execute(select(func.count()).select_from(device_registry)).scalar_one())
 
     # Operations exposed in the /changes feed. Lock/unlock/force_unlock don't
     # modify device state and are deliberately omitted. 'reset' is surfaced
     # through the reset_occurred flag, not as a per-device change.
     _CHANGE_FEED_OPS = ("seed", "add", "update", "delete", "enable", "disable")
 
-    def get_changes_since(self, since_version: int) -> Dict[str, Any]:
+    def get_changes_since(self, since_version: int) -> dict[str, Any]:
         """
         Return device-level state deltas after ``since_version``.
 
@@ -365,9 +367,7 @@ class DeviceRegistryStore:
 
         with self._engine.connect() as conn:
             current_version = int(
-                conn.execute(
-                    select(func.coalesce(func.max(audit.c.id), 0))
-                ).scalar_one()
+                conn.execute(select(func.coalesce(func.max(audit.c.id), 0))).scalar_one()
             )
 
             epoch_row = conn.execute(
@@ -416,7 +416,7 @@ class DeviceRegistryStore:
             )
             rows = conn.execute(stmt).mappings().all()
 
-        changes: List[Dict[str, Any]] = []
+        changes: list[dict[str, Any]] = []
         for row in rows:
             latest_id = int(row["latest_id"])
             if row["operation"] == "delete" or row["device_metadata"] is None:

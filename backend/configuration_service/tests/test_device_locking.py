@@ -1,6 +1,7 @@
 """Tests for device locking endpoints (A4 coordination)."""
 
 import json
+
 import pytest
 from fastapi.testclient import TestClient
 
