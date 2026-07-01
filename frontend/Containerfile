@@ -15,7 +15,7 @@ RUN apt-get update && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Create the non-root group and user; home lives at /srv/$USER
-RUN set -euxo pipefail && \
+RUN set -eux && \
     groupadd -g "${GID:-$UID}" "$USER" && \
     useradd -m -d "/srv/$USER" -u "$UID" -g "$USER" "$USER"
 
