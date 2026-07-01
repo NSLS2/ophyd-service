@@ -1,0 +1,68 @@
+FROM node:22-bookworm-slim AS base
+
+# Build args for a non-root user to run the service
+ARG username=skybeam-ios
+ARG uid=1001
+ARG gid=
+
+# Persist as env vars so stages that inherit from base get them automatically
+ENV USER="$username"
+ENV UID="$uid"
+ENV GID="$gid"
+
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create the non-root group and user; home lives at /srv/$USER
+RUN set -euxo pipefail && \
+    groupadd -g "${GID:-$UID}" "$USER" && \
+    useradd -m -d "/srv/$USER" -u "$UID" -g "$USER" "$USER"
+
+USER "$USER"
+WORKDIR "/srv/$USER"
+
+# --- Dev stage ---
+FROM base AS dev
+
+# Frontend project code should be mounted at "/srv/$USER/frontend" for development.
+WORKDIR "/srv/$USER/frontend"
+
+COPY --chown="$USER:$USER" . .
+RUN npm ci
+
+EXPOSE 5173
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:5173 || exit 1
+CMD ["npm", "run", "dev"]
+
+# --- Build stage ---
+FROM base AS build
+
+WORKDIR "/srv/$USER/frontend"
+
+# Install dependencies first to leverage layer caching.
+COPY --chown="$USER:$USER" package.json package-lock.json ./
+RUN npm ci
+
+# Include the rest of the project files.
+COPY --chown="$USER:$USER" . .
+RUN npm run build
+
+# --- Prod stage ---
+FROM base AS production
+
+WORKDIR "/srv/$USER/frontend"
+
+# Copy node_modules, built assets, and server from the build stage.
+COPY --from=build --chown="$USER:$USER" "/srv/$USER/frontend/node_modules" ./node_modules
+COPY --from=build --chown="$USER:$USER" "/srv/$USER/frontend/dist" ./dist
+COPY --from=build --chown="$USER:$USER" "/srv/$USER/frontend/server.js" ./
+COPY --from=build --chown="$USER:$USER" "/srv/$USER/frontend/package.json" ./
+
+EXPOSE 5173
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:5173 || exit 1
+
+ENV NODE_ENV=production
+CMD ["node", "server.js"]
