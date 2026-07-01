@@ -170,7 +170,7 @@ async def profile_collection_status_handler(
     try:
         status = await get_status(_resolved_profile_dir())
     except ProfileCollectionError as exc:
-        raise _map_profile_error(exc)
+        raise _map_profile_error(exc) from exc
     return ProfileStatusResponse(
         profile_dir=status.profile_dir,
         commit=status.commit,
@@ -203,7 +203,7 @@ async def profile_collection_pull_handler(
     try:
         result = await pull(_resolved_profile_dir())
     except ProfileCollectionError as exc:
-        raise _map_profile_error(exc)
+        raise _map_profile_error(exc) from exc
     return ProfilePullResponse(
         commit_before=result.commit_before,
         commit_after=result.commit_after,
@@ -234,7 +234,7 @@ async def profile_collection_reload_handler(
     try:
         pull_result = await pull(_resolved_profile_dir())
     except ProfileCollectionError as exc:
-        raise _map_profile_error(exc)
+        raise _map_profile_error(exc) from exc
 
     # Snapshot whether an environment is currently open. If yes,
     # close+open so the new profile is loaded. The pixi.toml-changed
@@ -410,9 +410,11 @@ async def devices_diff_against_profile(
     ),
 )
 async def devices_sync_from_profile(
-    payload: DeviceSyncRequest = DeviceSyncRequest(),
+    payload: Optional[DeviceSyncRequest] = None,
     principal=Security(get_current_principal, scopes=["write:manager:control"]),
 ) -> DeviceSyncResponse:
+    if payload is None:
+        payload = DeviceSyncRequest()
     if payload.strategy not in _VALID_SYNC_STRATEGIES:
         raise HTTPException(
             status_code=409,

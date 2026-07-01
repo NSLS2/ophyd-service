@@ -3908,10 +3908,15 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DeviceSyncRequest",
-                "default": {
-                  "strategy": "all"
-                }
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/DeviceSyncRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
               }
             }
           }
