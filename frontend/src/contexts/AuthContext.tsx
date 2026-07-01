@@ -15,7 +15,14 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ authData, children }: AuthProviderProps) {
-  if (!authData) {
+  // Treat missing/empty required fields as unauthenticated
+  const isMissingAuth =
+    !authData ||
+    !authData.upn ||
+    !Array.isArray(authData.roles) ||
+    authData.roles.length === 0;
+
+  if (isMissingAuth) {
     // No auth data - render error or redirect
     return (
       <div style={{ padding: '2rem', textAlign: 'center' }}>

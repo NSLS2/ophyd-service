@@ -42,11 +42,8 @@ export function ClientFinchBridge({ routes, headerTitle, fallback }: FinchBridge
   }
 
   // Once finch loads, render HubAppLayout
-  const { HubAppLayout, FinchConfigProvider } = FinchModule;
+  // Rely on the top-level FinchConfigProvider from entry-client.tsx
+  const { HubAppLayout } = FinchModule;
 
-  return (
-    <FinchConfigProvider config={{ ophydApiUrl: '/api/v1' }}>
-      <HubAppLayout routes={routes} headerTitle={headerTitle} />
-    </FinchConfigProvider>
-  );
+  return <HubAppLayout routes={routes} headerTitle={headerTitle} />;
 }

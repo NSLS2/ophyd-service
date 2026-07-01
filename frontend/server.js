@@ -28,6 +28,13 @@ const renderAuthScript = (authData) => {
   return `<script>window.__AUTH_DATA__=${safeJson};</script>`;
 };
 
+// Safely extract a header value as a string (handles string | string[] | undefined)
+const getHeader = (req, name) => {
+  const value = req.headers[name];
+  if (Array.isArray(value)) return value[0] || '';
+  return value || '';
+};
+
 // Cached production assets (client-side only - finch doesn't support SSR)
 const templateHtml = isProduction
   ? await fs.readFile('./dist/client/index.html', 'utf-8')
@@ -104,14 +111,13 @@ app.use(async (req, res) => {
     }
 
     // Extract Entra ID auth headers from HAProxy
+    const rolesHeader = getHeader(req, 'access-token-roles');
     let authData = {
-      upn: req.headers['access-token-upn'] || '',
-      name: req.headers['access-token-name'] || '',
-      roles: req.headers['access-token-roles']
-        ? req.headers['access-token-roles'].split(',').map(r => r.trim())
-        : [],
-      givenName: req.headers['access-token-given-name'],
-      familyName: req.headers['access-token-family-name'],
+      upn: getHeader(req, 'access-token-upn'),
+      name: getHeader(req, 'access-token-name'),
+      roles: rolesHeader ? rolesHeader.split(',').map(r => r.trim()) : [],
+      givenName: getHeader(req, 'access-token-given-name'),
+      familyName: getHeader(req, 'access-token-family-name'),
     };
 
     if (allowDevAuth && authData.roles.length === 0) {

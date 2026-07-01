@@ -1,5 +1,5 @@
 import React from 'react'
-import ReactDOM from 'react-dom/client'
+import { hydrateRoot, createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { FinchConfigProvider } from '@blueskyproject/finch'
@@ -32,7 +32,7 @@ const app = (
 const rootElement = document.getElementById('root')!
 
 if (rootElement.hasChildNodes()) {
-  ReactDOM.hydrateRoot(rootElement, app)
+  hydrateRoot(rootElement, app)
 } else {
-  ReactDOM.createRoot(rootElement).render(app)
+  createRoot(rootElement).render(app)
 }
