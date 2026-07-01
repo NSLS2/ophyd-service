@@ -1,4 +1,4 @@
-"""Pydantic response models for the RE Manager command routes (``routers/core_api.py``).
+"""Pydantic response models for the RE Manager command routes (``routers/`` domain modules).
 
 Each route returns the raw dict produced by the manager command handler. These models
 declare the response shapes so generated SDKs and the static ``openapi.json`` carry real
