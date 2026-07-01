@@ -215,9 +215,7 @@ class DeviceLockManager:
             return None
         return (now or datetime.now(UTC)) + timedelta(seconds=self._lease_ttl)
 
-    def _active_lock(
-        self, device_name: str, now: datetime | None = None
-    ) -> DeviceLockState | None:
+    def _active_lock(self, device_name: str, now: datetime | None = None) -> DeviceLockState | None:
         """The device's lock iff present, held, and not lapsed by its lease."""
         state = self._locks.get(device_name)
         if state is None or not state.locked:
@@ -493,9 +491,7 @@ class DeviceLockManager:
         """
         now = datetime.now(UTC)
         active = [
-            state
-            for state in self._locks.values()
-            if state.locked and not state.is_expired(now)
+            state for state in self._locks.values() if state.locked and not state.is_expired(now)
         ]
         if not active:
             return None

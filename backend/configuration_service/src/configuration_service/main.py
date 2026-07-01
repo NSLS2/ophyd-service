@@ -1070,9 +1070,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             locked_by_item=lock_state.locked_by_item if lock_state else None,
             locked_at=lock_state.locked_at.isoformat() if lock_state else None,
             locked_until=(
-                lock_state.expires_at.isoformat()
-                if lock_state and lock_state.expires_at
-                else None
+                lock_state.expires_at.isoformat() if lock_state and lock_state.expires_at else None
             ),
             lock_epoch=lock_manager.epoch,
             pv_health=pv_health_rollup,

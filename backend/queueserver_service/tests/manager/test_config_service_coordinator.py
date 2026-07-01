@@ -54,10 +54,22 @@ class FakeClient:
         self.locked = []
         self.unlocked = []
         self.force_unlocked = []
+        self.renewed = []
         self.changes_response = None
         self.lock_error_once = None
         self.unlock_error = None
         self.closed = False
+        # Lease/epoch surface returned by lock_devices/renew_locks (fix #1).
+        self.lock_epoch = "epoch-1"
+        self.lease_ttl_seconds = 0.0
+        self.renew_response = None
+
+    def _lock_body(self):
+        return {
+            "lock_epoch": self.lock_epoch,
+            "lease_ttl_seconds": self.lease_ttl_seconds,
+            "expires_at": None,
+        }
 
     async def get_instantiation_specs(self):
         return dict(self.instantiation_specs)
@@ -70,13 +82,26 @@ class FakeClient:
             err, self.lock_error_once = self.lock_error_once, None
             raise err
         self.locked.append((list(device_names), item_id, plan_name))
-        return {}
+        return self._lock_body()
 
     async def unlock_devices(self, device_names, *, item_id):
         if self.unlock_error is not None:
             raise self.unlock_error
         self.unlocked.append((list(device_names), item_id))
         return {}
+
+    async def renew_locks(self, device_names, *, item_id):
+        self.renewed.append((list(device_names), item_id))
+        if self.renew_response is not None:
+            return self.renew_response
+        return {
+            "success": True,
+            "renewed_devices": list(device_names),
+            "lost_devices": [],
+            "conflict_devices": [],
+            "lock_epoch": self.lock_epoch,
+            "expires_at": None,
+        }
 
     async def force_unlock_devices(self, device_names, *, reason):
         self.force_unlocked.append((list(device_names), reason))
@@ -587,5 +612,138 @@ def test_happy_path_does_not_force_unlock(_stub_devices_sync):
         assert len(client.lock_calls) == 1
         assert client.force_unlock_calls == []
         assert c._locked_devices == ["m1"]
+
+    _run(testing())
+
+
+# --- lock lease heartbeat (fix #1) ------------------------------------------
+
+
+def _held_coord(client, *, lease_ttl=30.0, epoch="epoch-1"):
+    """Coordinator that already holds a per-plan lock, ready for a heartbeat."""
+    c = _coord(lock_scope="plan", client=client)
+    c._locked_devices = ["det1"]
+    c._locked_item_id = "uid-1"
+    c._locked_plan_name = "count"
+    c._lock_epoch = epoch
+    c._lease_ttl_seconds = lease_ttl
+    return c
+
+
+def test_lock_records_epoch_and_lease_and_starts_heartbeat(monkeypatch):
+    monkeypatch.setattr(
+        coord_mod, "extract_device_names_from_plan",
+        lambda item, *, existing_devices: ["det1"],
+    )
+
+    async def testing():
+        client = FakeClient()
+        client.lock_epoch = "epoch-42"
+        client.lease_ttl_seconds = 30.0
+        c = _coord(lock_scope="plan", client=client)
+        await c.lock_devices_for_plan(
+            {"name": "count", "item_uid": "uid-1", "args": [], "kwargs": {}}
+        )
+        assert c._lock_epoch == "epoch-42"
+        assert c._lease_ttl_seconds == 30.0
+        # A lease > 0 starts the background heartbeat; stop it so the loop closes.
+        assert c._heartbeat_task is not None
+        await c._stop_heartbeat()
+
+    _run(testing())
+
+
+def test_no_heartbeat_when_lease_disabled(monkeypatch):
+    monkeypatch.setattr(
+        coord_mod, "extract_device_names_from_plan",
+        lambda item, *, existing_devices: ["det1"],
+    )
+
+    async def testing():
+        client = FakeClient()
+        client.lease_ttl_seconds = 0.0  # leases disabled
+        c = _coord(lock_scope="plan", client=client)
+        await c.lock_devices_for_plan(
+            {"name": "count", "item_uid": "uid-1", "args": [], "kwargs": {}}
+        )
+        assert c._heartbeat_task is None
+
+    _run(testing())
+
+
+def test_heartbeat_once_renews_and_updates_epoch():
+    async def testing():
+        client = FakeClient()
+        client.lock_epoch = "epoch-1"
+        c = _held_coord(client, epoch="epoch-1")
+
+        await c._heartbeat_once()
+        # Renewed exactly the held set under the held item id; no re-acquire.
+        assert client.renewed == [(["det1"], "uid-1")]
+        assert client.locked == []
+        assert c._lock_epoch == "epoch-1"
+
+    _run(testing())
+
+
+def test_heartbeat_reacquires_on_lost():
+    async def testing():
+        client = FakeClient()
+        client.renew_response = {
+            "success": False,
+            "renewed_devices": [],
+            "lost_devices": ["det1"],
+            "conflict_devices": [],
+            "lock_epoch": "epoch-1",
+            "expires_at": None,
+        }
+        c = _held_coord(client, epoch="epoch-1")
+
+        await c._heartbeat_once()
+        # A lost lease triggers a re-acquire under the same item id + plan name.
+        assert client.locked == [(["det1"], "uid-1", "count")]
+
+    _run(testing())
+
+
+def test_heartbeat_reacquires_on_epoch_change():
+    async def testing():
+        client = FakeClient()
+        # The authority restarted: renew reports a new epoch (locks were wiped).
+        client.renew_response = {
+            "success": True,
+            "renewed_devices": ["det1"],
+            "lost_devices": [],
+            "conflict_devices": [],
+            "lock_epoch": "epoch-2",
+            "expires_at": None,
+        }
+        client.lock_epoch = "epoch-2"
+        c = _held_coord(client, epoch="epoch-1")
+
+        await c._heartbeat_once()
+        assert client.locked == [(["det1"], "uid-1", "count")]
+        assert c._lock_epoch == "epoch-2"
+
+    _run(testing())
+
+
+def test_heartbeat_once_noop_when_nothing_held():
+    async def testing():
+        client = FakeClient()
+        c = _coord(lock_scope="plan", client=client)
+        c._lease_ttl_seconds = 30.0  # leases on, but no lock held
+        await c._heartbeat_once()
+        assert client.renewed == []
+
+    _run(testing())
+
+
+def test_heartbeat_once_noop_when_lease_disabled():
+    async def testing():
+        client = FakeClient()
+        c = _held_coord(client, lease_ttl=0.0)  # leases disabled
+        await c._heartbeat_once()
+        assert client.renewed == []
 
     _run(testing())
