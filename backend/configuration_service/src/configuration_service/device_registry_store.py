@@ -321,6 +321,91 @@ class DeviceRegistryStore:
 
         return happi_db
 
+    def export_bits(self) -> dict[str, Any]:
+        """Export the current registry in BITS (BCDA-APS guarneri) ``devices.yml`` format.
+
+        Returns a mapping keyed by the device *callable path* — an ophyd class
+        (e.g. ``ophyd.EpicsMotor``) or a module (e.g. ``ophyd.sim``) when the
+        device is built by a factory function — whose value is a list of
+        guarneri-style entries. Serialize the result with ``yaml.safe_dump`` to
+        obtain a ``devices.yml``.
+
+        The structure is designed to round-trip through
+        :class:`configuration_service.loader.BitsProfileLoader`.
+
+        Fidelity note: the guarneri schema only carries ``name``, ``prefix``,
+        ``read_pv`` and ``labels`` per entry. Constructor arguments beyond the
+        first positional (``prefix``) and kwargs beyond ``name``/``labels``
+        (e.g. ``write_pv``) are not representable in this format and are dropped
+        on export. Use :meth:`export_happi` (the default) when full
+        instantiation fidelity is required.
+        """
+        with self._engine.connect() as conn:
+            rows = (
+                conn.execute(select(device_registry).order_by(device_registry.c.name))
+                .mappings()
+                .all()
+            )
+
+        devices_yml: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            metadata_model = DeviceMetadata.model_validate_json(row["device_metadata"])
+            if not row["instantiation_spec"]:
+                raise RuntimeError(
+                    f"Registry inconsistency: device '{metadata_model.name}' has no "
+                    f"instantiation spec; cannot export"
+                )
+            spec = DeviceInstantiationSpec.model_validate_json(row["instantiation_spec"])
+
+            group_key, entry = self._bits_entry_from_spec(spec, metadata_model)
+            devices_yml.setdefault(group_key, []).append(entry)
+
+        return devices_yml
+
+    @staticmethod
+    def _bits_entry_from_spec(
+        spec: DeviceInstantiationSpec, metadata: DeviceMetadata
+    ) -> tuple[str, dict[str, Any]]:
+        """Map an instantiation spec to a ``(yaml_key, entry)`` BITS pair.
+
+        Mirrors ``BitsProfileLoader._process_entry`` so exported YAML reloads
+        into an equivalent registry:
+
+        - Class-style paths whose final segment is capitalised
+          (e.g. ``ophyd.EpicsMotor``) become the YAML key directly; the entry
+          carries no ``creator``.
+        - Factory-style paths whose final segment is lower-case
+          (e.g. ``ophyd.sim.motor``) are split: the module becomes the YAML key
+          and the callable name becomes the entry's ``creator``.
+        """
+        device_class = spec.device_class
+        module_part, _, last = device_class.rpartition(".")
+        if module_part and last[:1].islower():
+            # Factory/creator function: key is the module, creator names the callable.
+            group_key = module_part
+            entry: dict[str, Any] = {"name": spec.name, "creator": last}
+        else:
+            # Class path (the common case) or a single-segment fallback.
+            group_key = device_class
+            entry = {"name": spec.name}
+
+        # prefix: first positional string arg. BitsProfileLoader reads
+        # entry["prefix"] and rebuilds args=[prefix].
+        if spec.args and isinstance(spec.args[0], str) and spec.args[0]:
+            entry["prefix"] = spec.args[0]
+
+        # read_pv: signals may carry a distinct read PV as a kwarg (best-effort).
+        read_pv = spec.kwargs.get("read_pv")
+        if isinstance(read_pv, str) and read_pv:
+            entry["read_pv"] = read_pv
+
+        # labels: prefer authoritative metadata labels; fall back to spec kwargs.
+        labels = metadata.labels or spec.kwargs.get("labels") or []
+        if labels:
+            entry["labels"] = list(labels)
+
+        return group_key, entry
+
     def log_lock_event(
         self,
         device_names: list[str],
