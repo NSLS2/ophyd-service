@@ -272,7 +272,7 @@ def spreadsheet_to_plan_list(*, spreadsheet_file, file_name, **kwargs):  # noqa:
 
     # Lazy import: 'pandas' is only needed for spreadsheet->plan conversion, not
     # for importing this module (which the HTTP app / unified mode pulls in via
-    # core_api). Matches the lazy-import convention used for other heavy optional
+    # the queue router). Matches the lazy-import convention used for other heavy optional
     # deps (httpx, uvicorn, sqlalchemy) so a base install doesn't require pandas.
     # Raise a helpful hint if it is missing (like authenticators.exchange_code
     # does for httpx) instead of a bare ModuleNotFoundError.

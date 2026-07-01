@@ -21,12 +21,33 @@ from fastapi import FastAPI
 
 from queueserver_service.http.authentication import base_authentication_router
 from queueserver_service.http.openapi_config import custom_openapi
-from queueserver_service.http.routers import core_api, profile_collection as profile_collection_router
+from queueserver_service.http.routers import (
+    admin as admin_router,
+    console as console_router,
+    environment as environment_router,
+    execution as execution_router,
+    locks as locks_router,
+    permissions as permissions_router,
+    plans_devices as plans_devices_router,
+    profile_collection as profile_collection_router,
+    queue as queue_router,
+    run_engine as run_engine_router,
+    status as status_router,
+)
 
 
 def build_schema() -> dict:
     app = FastAPI()
-    app.include_router(core_api.router)
+    app.include_router(status_router.status_router)
+    app.include_router(queue_router.queue_router)
+    app.include_router(environment_router.environment_router)
+    app.include_router(run_engine_router.run_engine_router)
+    app.include_router(plans_devices_router.plans_devices_router)
+    app.include_router(permissions_router.permissions_router)
+    app.include_router(execution_router.execution_router)
+    app.include_router(locks_router.locks_router)
+    app.include_router(admin_router.admin_router)
+    app.include_router(console_router.console_router)
     app.include_router(profile_collection_router.router)
     app.include_router(profile_collection_router.devices_router)
     app.include_router(base_authentication_router, prefix="/api/auth")
