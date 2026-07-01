@@ -400,17 +400,18 @@ class DeviceLockManager:
         If a device is locked by a different item_id, returns failure.
         """
         async with self._lock:
-            # Verify ownership
+            now = datetime.now(UTC)
+            # Verify ownership. An expired (lapsed-lease) lock is effectively
+            # free, so it must NOT block a non-owner's unlock with a 403 —
+            # only a live lock held by a different item_id is a conflict.
             for name in device_names:
-                lock_state = self._locks.get(name)
-                if lock_state is not None and lock_state.locked:
-                    if lock_state.locked_by_item != item_id:
-                        return (
-                            False,
-                            [],
-                            f"Device '{name}' is locked by item {lock_state.locked_by_item}, "
-                            f"not {item_id}",
-                        )
+                active = self._active_lock(name, now)
+                if active is not None and active.locked_by_item != item_id:
+                    return (
+                        False,
+                        [],
+                        f"Device '{name}' is locked by item {active.locked_by_item}, not {item_id}",
+                    )
 
             # Release locks
             unlocked = []

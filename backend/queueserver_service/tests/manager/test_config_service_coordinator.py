@@ -747,3 +747,67 @@ def test_heartbeat_once_noop_when_lease_disabled():
         assert client.renewed == []
 
     _run(testing())
+
+
+def test_heartbeat_interval_never_reaches_lease_for_small_ttl():
+    """A fixed 1s floor could exceed a sub-3s lease; the interval must always
+    renew strictly before the lease lapses, and approximate ttl/3 for normal
+    TTLs."""
+    c = _coord(lock_scope="plan")
+    for ttl in (0.5, 1.0, 1.2, 3.0):
+        c._lease_ttl_seconds = ttl
+        assert c._heartbeat_interval() < ttl, ttl
+    c._lease_ttl_seconds = 30.0
+    assert 9.0 <= c._heartbeat_interval() <= 10.0  # ~ttl/3 for normal leases
+
+
+def test_heartbeat_reacquires_and_clears_bookkeeping_on_conflict():
+    """If renew reports the device under conflict_devices (lease lapsed and
+    another owner took it), the tick attempts a re-acquire; a 409 there means
+    we truly don't hold it, so the coordinator drops its stale bookkeeping."""
+    async def testing():
+        client = FakeClient()
+        client.renew_response = {
+            "success": False,
+            "renewed_devices": [],
+            "lost_devices": [],
+            "conflict_devices": ["det1"],
+            "lock_epoch": "epoch-1",
+            "expires_at": None,
+        }
+        # The re-acquire attempt conflicts (another owner holds it).
+        client.lock_error_once = ConfigServiceConflict(409, {"detail": "held by another"})
+        c = _held_coord(client, epoch="epoch-1")
+
+        await c._heartbeat_once()
+
+        # Re-acquire was attempted, then bookkeeping cleared on the 409.
+        assert client.locked == []  # lock_devices raised before recording
+        assert c._locked_item_id == ""
+        assert c._locked_devices == []
+        assert c._locked_plan_name == ""
+
+    _run(testing())
+
+
+def test_heartbeat_conflict_then_reacquire_succeeds_keeps_lock():
+    """If the conflicting owner released between renew and re-acquire, the
+    re-acquire succeeds and we keep the lock."""
+    async def testing():
+        client = FakeClient()
+        client.renew_response = {
+            "success": False,
+            "renewed_devices": [],
+            "lost_devices": [],
+            "conflict_devices": ["det1"],
+            "lock_epoch": "epoch-1",
+            "expires_at": None,
+        }
+        c = _held_coord(client, epoch="epoch-1")
+
+        await c._heartbeat_once()
+
+        # Re-acquire succeeded → still ours.
+        assert client.locked == [(["det1"], "uid-1", "count")]
+        assert c._locked_item_id == "uid-1"
+    _run(testing())

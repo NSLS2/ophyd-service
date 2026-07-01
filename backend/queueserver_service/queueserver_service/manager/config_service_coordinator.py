@@ -449,9 +449,12 @@ class ConfigServiceCoordinator:
                 pass
 
     def _heartbeat_interval(self) -> float:
-        """Renew at ~1/3 of the lease so two missed ticks still don't lapse it.
-        Floored at 1s to avoid a busy loop with a tiny TTL."""
-        return max(1.0, self._lease_ttl_seconds / 3.0)
+        """Renew at ~1/3 of the lease so two missed ticks still don't lapse it,
+        but never at or beyond the lease itself — a tiny TTL must still renew
+        before it expires (a fixed 1s floor could exceed a sub-3s lease and
+        cause avoidable lock loss). Capped at ttl/2 to guarantee that."""
+        ttl = self._lease_ttl_seconds
+        return min(max(ttl / 3.0, 0.5), ttl / 2.0)
 
     def _ensure_heartbeat(self) -> None:
         """Start the lease heartbeat loop if leases are active and it isn't
@@ -511,9 +514,21 @@ class ConfigServiceCoordinator:
 
         new_epoch = str(resp.get("lock_epoch") or "")
         lost = list(resp.get("lost_devices") or [])
+        conflicts = list(resp.get("conflict_devices") or [])
         epoch_changed = bool(new_epoch) and bool(prev_epoch) and new_epoch != prev_epoch
 
-        if epoch_changed or lost:
+        if conflicts:
+            # Our lease lapsed and another owner acquired these devices. A
+            # re-acquire would (correctly) 409; surface it loudly rather than
+            # keep believing we hold the lock, and drop our bookkeeping so we
+            # don't later "release" a lock we no longer own.
+            logger.error(
+                "config-service lease lost to another owner for item_id=%s plan=%r: "
+                "conflict on %s — our plan no longer holds these device(s)",
+                item_id, plan_name, conflicts,
+            )
+            await self._reacquire_after_loss(devices, item_id, plan_name)
+        elif epoch_changed or lost:
             logger.warning(
                 "config-service lock authority reset or lease lost "
                 "(epoch %s->%s, lost=%s); re-acquiring %d device(s) for %r",
@@ -536,12 +551,20 @@ class ConfigServiceCoordinator:
                 devices, item_id=item_id, plan_name=plan_name or "__reacquired__"
             )
         except ConfigServiceConflict as conflict:
+            # Another owner holds these devices now (our lease lapsed and was
+            # taken). We genuinely don't hold the lock — drop our bookkeeping
+            # (only if a concurrent plan transition hasn't already replaced it)
+            # so we don't later try to release a lock we don't own, and so the
+            # coordinator stops believing it's protected.
             logger.error(
-                "config-service re-acquire after authority reset conflicted for "
-                "item_id=%s (%s); devices may be briefly unprotected until the "
-                "next tick",
+                "config-service re-acquire conflicted for item_id=%s (%s); another "
+                "owner holds these device(s) — releasing our stale bookkeeping",
                 item_id, conflict,
             )
+            if self._locked_item_id == item_id:
+                self._locked_devices = []
+                self._locked_item_id = ""
+                self._locked_plan_name = ""
             return
         # Only commit if a concurrent transition didn't supersede us.
         if self._locked_item_id == item_id:

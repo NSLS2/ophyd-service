@@ -768,6 +768,33 @@ class TestLockLeaseUnit:
         assert res.success is False
         assert res.conflicts == ["a"]
 
+    async def test_release_by_nonowner_after_expiry_does_not_403(self):
+        """An expired (lapsed-lease) lock is effectively free, so a non-owner's
+        unlock must not be rejected as 'locked by another item'."""
+        from datetime import UTC, datetime, timedelta
+
+        from configuration_service.lock_manager import DeviceLockManager
+
+        mgr = DeviceLockManager(lease_ttl=100.0)
+        reg = _FakeRegistry(["a"])
+        await mgr.acquire_locks(["a"], "item-1", "count", "ee", reg)
+        mgr._locks["a"].expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+        success, unlocked, err = await mgr.release_locks(["a"], "item-OTHER")
+        assert success is True
+        assert err is None
+
+    async def test_release_by_nonowner_while_active_still_conflicts(self):
+        from configuration_service.lock_manager import DeviceLockManager
+
+        mgr = DeviceLockManager(lease_ttl=100.0)
+        reg = _FakeRegistry(["a"])
+        await mgr.acquire_locks(["a"], "item-1", "count", "ee", reg)
+
+        success, _, err = await mgr.release_locks(["a"], "item-OTHER")
+        assert success is False
+        assert "item-1" in err
+
     async def test_epoch_stable_within_instance(self):
         from configuration_service.lock_manager import DeviceLockManager
 
