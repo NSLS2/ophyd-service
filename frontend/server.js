@@ -93,7 +93,10 @@ if (isProduction) {
 // Serve HTML - catch-all route for SSR
 app.use(async (req, res) => {
   try {
-    const url = req.originalUrl.replace(basePath, '');
+    // Preserve leading slash for SSR route matching
+    const url = basePath === '/'
+      ? req.originalUrl
+      : (req.originalUrl.startsWith(basePath) ? '/' + req.originalUrl.slice(basePath.length) : req.originalUrl);
 
     /** @type {string} */
     let template;
@@ -108,6 +111,8 @@ app.use(async (req, res) => {
       // Always read fresh template in development
       template = await fs.readFile('./index.html', 'utf-8');
       template = await vite.transformIndexHtml(url, template);
+      // Load SSR entry point in dev to enable SSR during development
+      render = (await vite.ssrLoadModule('/src/entry-server.tsx')).render;
     }
 
     // Extract Entra ID auth headers from HAProxy

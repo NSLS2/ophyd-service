@@ -47,7 +47,7 @@ RUN npm ci
 
 # Include the rest of the project files.
 COPY --chown="$USER:$USER" . .
-RUN npm run build
+RUN npm run build && npm prune --omit=dev
 
 # --- Prod stage ---
 FROM base AS production

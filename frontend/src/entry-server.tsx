@@ -21,7 +21,9 @@ export async function render(url: string, authData: AuthData) {
     </React.StrictMode>
   );
 
-  const head = `<script>window.__AUTH_DATA__=${JSON.stringify(authData)};</script>`;
+  // Escape < to prevent XSS if authData contains malicious content like </script>
+  const safeJson = JSON.stringify(authData).replace(/</g, '\\u003c');
+  const head = `<script>window.__AUTH_DATA__=${safeJson};</script>`;
 
   return { html, head };
 }
