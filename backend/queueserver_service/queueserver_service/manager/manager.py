@@ -320,6 +320,16 @@ class RunEngineManager(Process):
         # worker did accept a request to pause (deferred) but had already passed its last checkpoint
         self._worker_state_info = None  # Copy of the last downloaded state of RE Worker
 
+        # Worker-death detection: count consecutive 'request_state' pipe timeouts
+        # while an environment should exist. After '_worker_state_timeout_limit'
+        # of them we ask the watchdog whether the worker process is actually alive
+        # (the watchdog is the authority — we never act on timeouts alone) and, if
+        # it is dead, run the recovery path. '_worker_death_handled' prevents
+        # re-triggering recovery once it has been scheduled for a given worker.
+        self._worker_state_timeout_count = 0
+        self._worker_state_timeout_limit = 5
+        self._worker_death_handled = False
+
         self.__queue_autostart_enabled = False
         self._queue_autostart_event = None
 
@@ -668,6 +678,10 @@ class RunEngineManager(Process):
 
         self._fut_manager_task_completed = self._loop.create_future()
 
+        # Fresh env: clear any worker-death-detection state from a previous worker.
+        self._worker_state_timeout_count = 0
+        self._worker_death_handled = False
+
         # Fresh lock-owner id for this environment. A leftover lock recorded
         # under a previous id (unlock failed at the last env-close) is then
         # recognizable as a debt and released before any new lock is taken.
@@ -928,7 +942,11 @@ class RunEngineManager(Process):
 
         ws, _ = await self._worker_request_state()
         if ws is None:
+            await self._handle_possible_worker_death()
             return
+
+        # Got a response — the worker is responsive again.
+        self._worker_state_timeout_count = 0
 
         # Logic to minimize the number of unnecessary status updates
         update_status = False
@@ -992,6 +1010,53 @@ class RunEngineManager(Process):
         fut = self._fut_manager_task_completed
         if fut is not None and not fut.done():
             fut.set_result(result)
+
+    async def _handle_possible_worker_death(self):
+        """Called from the poll loop when a ``request_state`` pipe request times
+        out. Detects a dead RE Worker process and runs the recovery path so the
+        manager doesn't stay stuck in ``EXECUTING_QUEUE`` / ``CREATING_ENVIRONMENT``
+        forever after a worker crash (SIGKILL / OOM).
+
+        A single timeout is not enough — a busy-but-alive worker may miss a poll —
+        so we require ``_worker_state_timeout_limit`` consecutive timeouts and then
+        confirm with the watchdog, which is the authority on process liveness. We
+        never kill on timeouts alone, so a legitimately slow env-open (a large
+        profile collection, hardware connection) is never aborted: the watchdog
+        keeps reporting the process alive and we keep waiting.
+        """
+        # Only meaningful while an environment exists or is being created; the
+        # destroy path already tears things down.
+        if not (self._environment_exists or (self._manager_state == MState.CREATING_ENVIRONMENT)):
+            return
+        if self._manager_state == MState.DESTROYING_ENVIRONMENT or self._worker_death_handled:
+            return
+
+        self._worker_state_timeout_count += 1
+        if self._worker_state_timeout_count < self._worker_state_timeout_limit:
+            return
+
+        if await self._watchdog_is_worker_alive():
+            # Unresponsive to state requests but the process is alive — likely just
+            # slow (still initializing / busy). Keep waiting.
+            return
+
+        logger.error(
+            "RE Worker is not responding to state requests and the watchdog reports "
+            "it dead after %d attempts; running environment recovery.",
+            self._worker_state_timeout_count,
+        )
+        self._worker_death_handled = True
+        self._worker_state_timeout_count = 0
+
+        if self._manager_state in (MState.CREATING_ENVIRONMENT, MState.CLOSING_ENVIRONMENT):
+            # Unblock the env open/close await; its existing failure path handles
+            # cleanup. Mirror the poll loop's normal resolution: close -> True
+            # (worker gone == closed), open -> False (worker failed to come up).
+            self._complete_manager_task(self._manager_state == MState.CLOSING_ENVIRONMENT)
+        else:
+            # IDLE / EXECUTING / PAUSED with a live environment: destroy it, which
+            # pushes any running plan back to the queue and releases locks.
+            self._loop.create_task(self._execute_background_task(self._kill_re_worker_task()))
 
     async def _handle_unexpected_worker_shutdown(self):
         """Confirm the worker exit, then release any config-service lock this
