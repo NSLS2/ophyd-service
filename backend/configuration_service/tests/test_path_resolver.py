@@ -17,7 +17,6 @@ from configuration_service.path_resolver import (
     resolve,
 )
 
-
 # ---------------------------------------------------------------------------
 # Top-level flat happi entries (device IS the leaf signal)
 # ---------------------------------------------------------------------------
@@ -127,7 +126,9 @@ def _make_class_with_fmt_cpt():
     Isolates the FmtCpt-with-placeholder behavior from any site-specific
     shim so the test doesn't depend on `ios_devs` / `bmm_devs` etc.
     """
-    from ophyd import Component as Cpt, Device, EpicsSignal, FormattedComponent as FmtCpt
+    from ophyd import Component as Cpt
+    from ophyd import Device, EpicsSignal
+    from ophyd import FormattedComponent as FmtCpt
 
     class Inner(Device):
         readback = Cpt(EpicsSignal, "Pos-I")
@@ -158,7 +159,9 @@ def test_resolve_formatted_component_with_literal_suffix_resolves():
 
     With ``add_prefix=()`` the suffix IS the absolute PV; the parent
     prefix is ignored."""
-    from ophyd import Device, EpicsSignal, FormattedComponent as FmtCpt
+    from ophyd import Device, EpicsSignal
+    from ophyd import FormattedComponent as FmtCpt
+
     from configuration_service.path_resolver import _walk_class
 
     class _Literal(Device):
@@ -177,7 +180,9 @@ def test_resolve_formatted_component_with_escaped_braces_resolves_to_literal():
     after formatting — no placeholder, statically resolvable. A naive
     ``'{' in suffix`` heuristic would flag these as ``needs_enrichment``
     (false positive); ``string.Formatter().parse()`` does not."""
-    from ophyd import Device, EpicsSignal, FormattedComponent as FmtCpt
+    from ophyd import Device, EpicsSignal
+    from ophyd import FormattedComponent as FmtCpt
+
     from configuration_service.path_resolver import _has_format_placeholder, _walk_class
 
     # _has_format_placeholder is the predicate the walker uses.
@@ -202,7 +207,9 @@ def test_resolve_formatted_component_with_escaped_braces_resolves_to_literal():
 # Module-scope so importlib can resolve them by name via device_class_path.
 # Mirrors the ios_devs.M1bMirror / FeedbackLoop pattern that exposed the
 # add_prefix=() resolver gap on the IOS demo.
-from ophyd import Component as _Cpt, Device as _Device, EpicsSignal as _EpicsSignal
+from ophyd import Component as _Cpt  # noqa: E402
+from ophyd import Device as _Device  # noqa: E402
+from ophyd import EpicsSignal as _EpicsSignal  # noqa: E402
 
 
 class _FeedbackLoopForTest(_Device):
@@ -334,7 +341,7 @@ def test_resolution_is_immutable_and_ok_property_works():
     assert r.ok
     r2 = Resolution(address="a", outcome=Outcome.NO_SUCH_ATTR, message="msg")
     assert not r2.ok
-    with pytest.raises(Exception):
+    with pytest.raises(AttributeError):
         r.address = "b"  # type: ignore[misc]  # frozen dataclass
 
 
@@ -461,6 +468,7 @@ def test_resolve_ophyd_async_device_cache_caches_failures():
     """Instantiation failure should be cached so subsequent addresses on
     the same (cls, prefix) short-circuit without retrying."""
     from ophyd_async.core import Device as AsyncDevice
+
     from configuration_service.path_resolver import _get_or_create_async_device
 
     construction_calls = 0
@@ -486,6 +494,7 @@ def test_resolve_ophyd_async_instantiation_failure_returns_import_failed():
     # building one, so test the path with a class that requires kwargs.
     # Define a local class inside the function so it's isolated.
     from ophyd_async.core import Device as AsyncDevice
+
     from configuration_service.path_resolver import _resolve_ophyd_async
 
     class _NeedsExtraArg(AsyncDevice):

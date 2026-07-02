@@ -11,11 +11,8 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import List, Optional
 
 import httpx
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Capture helpers
@@ -29,15 +26,14 @@ class _CapturedReport:
     body: dict
 
 
-def _make_capturing_handler(captured: List[_CapturedReport], seen: threading.Event):
+def _make_capturing_handler(captured: list[_CapturedReport], seen: threading.Event):
     """Build a MockTransport handler that records POSTs to the PV-health
     endpoints. The Event lets the test thread wait for the background
     task to finish rather than racing."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         if "/api/v1/pvs/" in str(request.url) and (
-            str(request.url).endswith("/success")
-            or str(request.url).endswith("/failure")
+            str(request.url).endswith("/success") or str(request.url).endswith("/failure")
         ):
             try:
                 body = request.read()
@@ -84,7 +80,7 @@ def _wait_for_report(seen: threading.Event, timeout: float = 2.0) -> None:
 
 def test_successful_caput_reports_success(install_config_http_stub, client):
     """A successful /api/v1/pv/set fires POST /api/v1/pvs/{pv}/success."""
-    captured: List[_CapturedReport] = []
+    captured: list[_CapturedReport] = []
     seen = threading.Event()
     install_config_http_stub(_make_capturing_handler(captured, seen))
 
@@ -104,7 +100,7 @@ def test_successful_caput_reports_success(install_config_http_stub, client):
 def test_failed_caput_reports_failure(install_config_http_stub, client, monkeypatch):
     """A pyepics-side caput failure should fire POST /failure with the
     error message."""
-    captured: List[_CapturedReport] = []
+    captured: list[_CapturedReport] = []
     seen = threading.Event()
     install_config_http_stub(_make_capturing_handler(captured, seen))
 
@@ -134,7 +130,7 @@ def test_failed_caput_reports_failure(install_config_http_stub, client, monkeypa
 
 def test_batch_caput_reports_success_per_item(install_config_http_stub, client):
     """Each successful item in a batch should produce one report."""
-    captured: List[_CapturedReport] = []
+    captured: list[_CapturedReport] = []
     seen = threading.Event()
 
     # Reset seen on each capture so multiple reports each trigger it;
@@ -165,6 +161,7 @@ def test_batch_caput_reports_success_per_item(install_config_http_stub, client):
 
     # Wait for both reports.
     import time
+
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline:
         if len(captured) >= 2:
@@ -205,7 +202,7 @@ def test_gate_failures_skip_reporting(install_config_http_stub, client):
     """DeviceLockedError / DeviceDisabledError / CoordinationCheckError
     reflect orchestration policy, not PV health — they must NOT trigger
     a health report."""
-    captured: List[_CapturedReport] = []
+    captured: list[_CapturedReport] = []
     seen = threading.Event()
     install_config_http_stub(_make_capturing_handler(captured, seen))
 
@@ -225,7 +222,6 @@ def test_gate_failures_skip_reporting(install_config_http_stub, client):
 
     # Give any spurious background task a chance to run.
     import time
+
     time.sleep(0.1)
-    assert captured == [], (
-        f"Expected no PV-health reports for a gate failure, got: {captured}"
-    )
+    assert captured == [], f"Expected no PV-health reports for a gate failure, got: {captured}"

@@ -14,7 +14,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, NamedTuple
 
 import httpx
 import numpy as np
@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from ._array_metadata import describe_array
-from .config import READ_ONLY_MESSAGE, Settings
+from .config import READ_ONLY_MESSAGE, Settings, resolve_cors_config
 from .coordination_client import CoordinationClient
 from .device_controller import DeviceController
 from .device_manager import DeviceManager
@@ -52,8 +52,8 @@ from .models import (
     PVSetResponse,
 )
 from .ophyd_cache import OphydDeviceCache
-from .pv_health_reporter import PVHealthReporter
 from .protocols import CoordinationService, DeviceControl, PVMonitor, RegistryProvider
+from .pv_health_reporter import PVHealthReporter
 from .registry_client import RegistryClient, RegistryValidationError
 from .registry_file import FileRegistryProvider
 
@@ -92,7 +92,7 @@ def _maybe_export_openapi(app: FastAPI) -> None:
         ) from exc
 
 
-async def _check_config_health(config_http: httpx.AsyncClient) -> Optional[str]:
+async def _check_config_health(config_http: httpx.AsyncClient) -> str | None:
     """One config-service /health poll. Returns None if healthy, else a reason.
 
     Distinguishes timeout / connection error / non-2xx so a failed probe says
@@ -109,9 +109,7 @@ async def _check_config_health(config_http: httpx.AsyncClient) -> Optional[str]:
     return f"/health returned HTTP {resp.status_code}"
 
 
-async def _await_config_service(
-    settings: Settings, config_http: httpx.AsyncClient
-) -> Optional[str]:
+async def _await_config_service(settings: Settings, config_http: httpx.AsyncClient) -> str | None:
     """Poll config-service /health until ready or the startup timeout elapses.
 
     Returns None once /health answers 200, else the last failure detail.
@@ -208,7 +206,7 @@ class RegistryResolution(NamedTuple):
 
 
 async def _resolve_registry_backend(
-    settings: Settings, config_http: Optional[httpx.AsyncClient]
+    settings: Settings, config_http: httpx.AsyncClient | None
 ) -> RegistryResolution:
     """Pick the registry backend, gating startup on config-service as needed.
 
@@ -304,9 +302,7 @@ async def lifespan(app: FastAPI):
     # the Settings validator enforces that. Without it there is no config
     # HTTP client and PV-health reporting is a no-op.
     if settings.configuration_service_url:
-        config_http = httpx.AsyncClient(
-            base_url=settings.configuration_service_url, timeout=10.0
-        )
+        config_http = httpx.AsyncClient(base_url=settings.configuration_service_url, timeout=10.0)
     else:
         config_http = None
         logger.info(
@@ -419,10 +415,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS is added at import (module-level app), so its config is read from the
+# environment here rather than from the lifespan Settings. resolve_cors_config()
+# force-disables credentials when a wildcard origin is configured — see its
+# docstring. Set DIRECT_CONTROL_CORS_ORIGINS to an explicit allowlist in prod.
+_cors_origins, _cors_allow_credentials = resolve_cors_config()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -490,7 +491,7 @@ _FORMAT_ALIASES = {
 }
 
 
-def _negotiate_format(request: Request, format_param: Optional[str]) -> str:
+def _negotiate_format(request: Request, format_param: str | None) -> str:
     """Pick a supported media type from ?format= or the Accept header.
 
     Returns 406 if Accept lists only media types we don't serve, matching
@@ -530,14 +531,14 @@ def _build_value_response(
     value: Any,
     timestamp_iso: str,
     size_limit: int,
-    format_param: Optional[str],
+    format_param: str | None,
     # Pre-computed metadata overrides (used when value was already converted
     # to JSON-native form and shape/dtype/ndim/nbytes are known from capture).
-    shape: Optional[List[int]] = None,
-    dtype: Optional[str] = None,
-    ndim: Optional[int] = None,
-    nbytes: Optional[int] = None,
-    extra: Optional[Dict[str, Any]] = None,
+    shape: list[int] | None = None,
+    dtype: str | None = None,
+    ndim: int | None = None,
+    nbytes: int | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> Response:
     """
     Build a tiled-style PV value response.
@@ -575,7 +576,7 @@ def _build_value_response(
                 raise HTTPException(
                     status_code=406,
                     detail=f"Cannot serve as binary ({e}); request application/json.",
-                )
+                ) from e
         else:
             raise HTTPException(
                 status_code=406,
@@ -604,7 +605,7 @@ def _build_value_response(
         return Response(body, media_type=_BINARY_MEDIA, headers=headers)
 
     tolist = getattr(value, "tolist", None)
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "pv_name": pv_name,
         "value": tolist() if callable(tolist) else value,
         "timestamp": timestamp_iso,
@@ -616,6 +617,48 @@ def _build_value_response(
     if extra:
         payload.update(extra)
     return JSONResponse(payload)
+
+
+def _registry_error_status(exc: Exception) -> int:
+    """HTTP status that a registry-validation exception should map to.
+
+    Single source of truth shared by:
+    - ``_map_registry_errors_to_http`` (used by every endpoint that ``raise``s)
+    - the ``/pv/set/batch`` endpoint (which builds rows instead of raising)
+
+    By routing both paths through this one helper, batch and single endpoints
+    can't drift on registry-error statuses — they map identically by
+    construction, which is the documented contract of the batch endpoint.
+
+    - ``RegistryValidationError`` → 404 (PV/device truly not registered)
+    - ``RuntimeError``            → 503 (config-service outage; per
+      ``registry_client``, 404 is the only "not found" signal — every other
+      non-2xx becomes RuntimeError, see ``test_registry_failure_modes``)
+    - anything else               → 500 (kept as a defensive default; the
+      caller should not normally reach this branch because callers only
+      catch the two types above)
+    """
+    if isinstance(exc, RegistryValidationError):
+        return 404
+    if isinstance(exc, RuntimeError):
+        return 503
+    return 500
+
+
+@asynccontextmanager
+async def _map_registry_errors_to_http():
+    """Async context manager that maps registry-validation exceptions to HTTPException.
+
+    Replaces the four-line try/except chain that was previously copy-pasted
+    around every ``await registry_client.validate_pv(...)`` and
+    ``validate_device(...)`` call. Status codes come from
+    ``_registry_error_status`` so the batch endpoint, which can't ``raise``
+    mid-loop and inspects the status code directly, stays in lock-step.
+    """
+    try:
+        yield
+    except (RegistryValidationError, RuntimeError) as exc:
+        raise HTTPException(status_code=_registry_error_status(exc), detail=str(exc)) from exc
 
 
 def _raise_http_for_device_unavailable(
@@ -634,6 +677,23 @@ def _raise_http_for_device_unavailable(
         raise HTTPException(status_code=409, detail=str(exc))
     logger.warning(f"{event_prefix}_locked", error=str(exc), **log_fields)
     raise HTTPException(status_code=423, detail=str(exc))
+
+
+def _raise_http_for_coordination_failure(
+    exc: CoordinationCheckError,
+    **log_fields: Any,
+) -> None:
+    """Translate a coordination-service outage into 503 + structured log.
+
+    Mirrors the layout of ``_raise_http_for_device_unavailable``: caller
+    supplies whichever identifier fields make sense for the endpoint
+    (``pv_name=``, ``device_name=``, ``device_path=``). The detail prefix
+    ``"Coordination check failed: "`` and the ``coordination_check_failed``
+    log event are preserved so existing log queries and the frontend's
+    error-message parser don't have to change.
+    """
+    logger.error("coordination_check_failed", error=str(exc), **log_fields)
+    raise HTTPException(status_code=503, detail=f"Coordination check failed: {exc}")
 
 
 # Device-control client errors → HTTP status. These are typed refusals from
@@ -773,12 +833,8 @@ async def set_pv(
     Gate failures (locked / disabled / coordination) are NOT reported —
     those reflect orchestration policy, not PV health.
     """
-    try:
+    async with _map_registry_errors_to_http():
         await registry_client.validate_pv(request.pv_name)
-    except RegistryValidationError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
 
     try:
         resp = await device_controller.set_pv(request)
@@ -787,15 +843,14 @@ async def set_pv(
         _raise_http_for_device_unavailable(e, "pv", pv_name=request.pv_name)
     except CoordinationCheckError as e:
         # Coordination unavailability — not a PV-health event.
-        logger.error("coordination_check_failed", pv_name=request.pv_name, error=str(e))
-        raise HTTPException(status_code=503, detail=f"Coordination check failed: {e}")
+        _raise_http_for_coordination_failure(e, pv_name=request.pv_name)
     except Exception as e:
         # An unexpected error after we got past the gates almost always
         # means a pyepics CA failure (timeout, put-rejected, etc.) —
         # that's a PV-health event.
         pv_health_reporter.report(request.pv_name, success=False, message=str(e))
         logger.error("set_pv_error", pv_name=request.pv_name, error=str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
     pv_health_reporter.report(
         request.pv_name,
@@ -857,7 +912,7 @@ async def set_pv_batch(
     is unacceptable for your use case, do not catch ``ok=false`` and move
     on — surface the failure to the operator.
     """
-    results: List[PVSetBatchItemResult] = []
+    results: list[PVSetBatchItemResult] = []
     applied = 0
 
     for item in request.caputs:
@@ -867,7 +922,11 @@ async def set_pv_batch(
         try:
             await registry_client.validate_pv(item.pv_name)
         except RegistryValidationError as e:
-            results.append(_batch_failure_result(item.pv_name, e, 404, coordination_checked=False))
+            results.append(
+                _batch_failure_result(
+                    item.pv_name, e, _registry_error_status(e), coordination_checked=False
+                )
+            )
             logger.warning(
                 "pv_set_batch_registry_invalid",
                 pv_name=item.pv_name,
@@ -875,7 +934,11 @@ async def set_pv_batch(
             )
             break
         except RuntimeError as e:
-            results.append(_batch_failure_result(item.pv_name, e, 503, coordination_checked=False))
+            results.append(
+                _batch_failure_result(
+                    item.pv_name, e, _registry_error_status(e), coordination_checked=False
+                )
+            )
             logger.warning(
                 "pv_set_batch_registry_unavailable",
                 pv_name=item.pv_name,
@@ -971,7 +1034,7 @@ async def set_pv_batch(
 _SIGNAL_SOURCE_SCHEMES = ("ca://", "pva://", "mock://", "soft://")
 
 
-def _extract_pv_name(leaf) -> Optional[str]:
+def _extract_pv_name(leaf) -> str | None:
     """Read the PV name off a leaf signal, framework-agnostic.
 
     Returns ``pvname`` for classic-ophyd ``EpicsSignal``-style leaves,
@@ -1071,7 +1134,7 @@ async def enrich_device_paths(
     so we don't introduce concurrent first-touches on the same device.
     Failures are returned per-item; the batch never halts on first error.
     """
-    results: List[EnrichmentResultItem] = await asyncio.to_thread(
+    results: list[EnrichmentResultItem] = await asyncio.to_thread(
         lambda: [
             _enrich_one(
                 ophyd_cache,
@@ -1089,14 +1152,14 @@ async def enrich_device_paths(
 async def get_pv_value_from_controller(
     pv_name: str,
     request: Request,
-    format: Optional[str] = Query(
+    format: str | None = Query(
         None,
         description="Override Accept header. 'json' or 'binary' (octet-stream).",
     ),
     as_string: bool = Query(
         False, description="Return the string representation (e.g. enum label)"
     ),
-    count: Optional[int] = Query(None, ge=1, description="Max waveform elements to return"),
+    count: int | None = Query(None, ge=1, description="Max waveform elements to return"),
     as_numpy: bool = Query(
         True, description="Return arrays as numpy.ndarray (JSON-serialized to list)"
     ),
@@ -1111,7 +1174,7 @@ async def get_pv_value_from_controller(
     ),
     timeout: float = Query(5.0, gt=0, description="CA get timeout in seconds"),
     connection_timeout: float = Query(5.0, gt=0, description="CA connection timeout in seconds"),
-    ftype: Optional[int] = Query(None, description="Force non-native DBR type (power user)"),
+    ftype: int | None = Query(None, description="Force non-native DBR type (power user)"),
     device_controller: DeviceControl = Depends(get_device_controller),
     registry_client: RegistryClient = Depends(get_registry_client),
     settings: Settings = Depends(get_settings),
@@ -1125,12 +1188,8 @@ async def get_pv_value_from_controller(
     `?format=binary`) returns raw bytes with the same metadata in
     `X-PV-*` headers.
     """
-    try:
+    async with _map_registry_errors_to_http():
         await registry_client.validate_pv(pv_name)
-    except RegistryValidationError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
 
     try:
         value = await device_controller.get_pv_value(
@@ -1145,7 +1204,7 @@ async def get_pv_value_from_controller(
         )
     except PVNotFoundError as e:
         logger.warning("pv_not_found", pv_name=pv_name, error=str(e))
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
     return _build_value_response(
         request,
@@ -1161,7 +1220,7 @@ async def get_pv_value_from_controller(
 async def get_monitored_pv_value(
     pv_name: str,
     request: Request,
-    format: Optional[str] = Query(
+    format: str | None = Query(
         None,
         description="Override Accept header. 'json' or 'binary' (octet-stream).",
     ),
@@ -1176,12 +1235,8 @@ async def get_monitored_pv_value(
     tiled-style envelope as the one-shot endpoint plus the monitor's
     full metadata (connected, alarm, limits, units, access flags).
     """
-    try:
+    async with _map_registry_errors_to_http():
         await registry_client.validate_pv(pv_name)
-    except RegistryValidationError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
 
     try:
         # subscribe is idempotent in PVMonitorManager; calling it unconditionally
@@ -1195,13 +1250,13 @@ async def get_monitored_pv_value(
         raise
     except PVNotFoundError as e:
         logger.warning("pv_not_found", pv_name=pv_name, error=str(e))
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except PVReadError as e:
         logger.warning("pv_read_failed", pv_name=pv_name, error=str(e))
-        raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         logger.error("get_monitored_pv_error", pv_name=pv_name, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
     # Everything in PVValue that isn't already in the envelope auto-propagates;
     # new metadata fields on PVValue will appear here without edits.
@@ -1250,25 +1305,20 @@ async def execute_device_method(
     409/423 (disabled/locked) / 422 (no instantiation spec) /
     503 (registry or coordination unavailable) / 500 (execution failure).
     """
-    try:
+    async with _map_registry_errors_to_http():
         await registry_client.validate_device(request.device_name)
-    except RegistryValidationError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
 
     try:
         return await device_controller.execute_device_method(request)
     except (DeviceDisabledError, DeviceLockedError) as e:
         _raise_http_for_device_unavailable(e, "device", device_name=request.device_name)
     except CoordinationCheckError as e:
-        logger.error("coordination_check_failed", device_name=request.device_name, error=str(e))
-        raise HTTPException(status_code=503, detail=f"Coordination check failed: {e}")
+        _raise_http_for_coordination_failure(e, device_name=request.device_name)
     except _DEVICE_CONTROL_CLIENT_ERRORS as e:
         _raise_http_for_control_client_error(e, "device_method", device_name=request.device_name)
     except RuntimeError as e:
         # Registry spec lookup hit an unreachable/erroring backend.
-        raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         logger.error(
             "device_command_error",
@@ -1276,7 +1326,7 @@ async def execute_device_method(
             error=str(e),
             exc_info=True,
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post(
@@ -1290,12 +1340,8 @@ async def stop_device(
     registry_client: RegistryClient = Depends(get_registry_client),
 ):
     """Stop a device (calls the device's stop() method with coordination check)."""
-    try:
+    async with _map_registry_errors_to_http():
         await registry_client.validate_device(device_name)
-    except RegistryValidationError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
 
     try:
         return await device_controller.execute_device_method(
@@ -1304,21 +1350,20 @@ async def stop_device(
     except (DeviceDisabledError, DeviceLockedError) as e:
         _raise_http_for_device_unavailable(e, "device_stop", device_name=device_name)
     except CoordinationCheckError as e:
-        logger.error("coordination_check_failed", device_name=device_name, error=str(e))
-        raise HTTPException(status_code=503, detail=f"Coordination check failed: {e}")
+        _raise_http_for_coordination_failure(e, device_name=device_name)
     except _DEVICE_CONTROL_CLIENT_ERRORS as e:
         _raise_http_for_control_client_error(e, "device_stop", device_name=device_name)
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         logger.error("device_stop_error", device_name=device_name, error=str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/api/v1/device/{device_path:path}", response_model=NestedDeviceResponse)
 async def access_nested_device(
     device_path: str,
-    request: Optional[NestedDeviceRequest] = None,
+    request: NestedDeviceRequest | None = None,
     settings: Settings = Depends(get_settings),
     device_controller: DeviceControl = Depends(get_device_controller),
     registry_client: RegistryClient = Depends(get_registry_client),
@@ -1340,12 +1385,8 @@ async def access_nested_device(
     if settings.global_read_only and method in ("set", "put", "trigger", "stop"):
         raise HTTPException(status_code=403, detail=READ_ONLY_MESSAGE)
 
-    try:
+    async with _map_registry_errors_to_http():
         await registry_client.validate_device(device_name)
-    except RegistryValidationError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
 
     try:
         result = await device_controller.access_nested_device(
@@ -1362,15 +1403,14 @@ async def access_nested_device(
     except (DeviceDisabledError, DeviceLockedError) as e:
         _raise_http_for_device_unavailable(e, "nested_device", device_path=device_path)
     except CoordinationCheckError as e:
-        logger.error("coordination_check_failed", device_path=device_path, error=str(e))
-        raise HTTPException(status_code=503, detail=f"Coordination check failed: {e}")
+        _raise_http_for_coordination_failure(e, device_path=device_path)
     except _DEVICE_CONTROL_CLIENT_ERRORS as e:
         _raise_http_for_control_client_error(e, "nested_device", device_path=device_path)
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         logger.error("nested_device_error", device_path=device_path, error=str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/api/v1/device/{device_path:path}/value")
@@ -1381,12 +1421,8 @@ async def get_nested_device_value(
 ):
     """Get nested device component value (read-only, no coordination check)."""
     device_name = device_path.split(".")[0]
-    try:
+    async with _map_registry_errors_to_http():
         await registry_client.validate_device(device_name)
-    except RegistryValidationError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
 
     try:
         value = await device_controller.access_nested_device(
@@ -1400,33 +1436,76 @@ async def get_nested_device_value(
     except _DEVICE_CONTROL_CLIENT_ERRORS as e:
         _raise_http_for_control_client_error(e, "nested_device_read", device_path=device_path)
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         logger.error("nested_device_read_error", device_path=device_path, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+async def _reject_if_ws_capacity_reached(websocket: WebSocket) -> bool:
+    """Enforce the global cap on concurrent WebSocket connections.
+
+    Sums live connections across every socket manager and, once
+    ``settings.ws_max_connections`` is reached, rejects the new connection with
+    WS close code 1013 (Try Again Later). The cap is global — all socket
+    endpoints (pv / device / camera / tiff) share it — and intentionally a soft
+    limit: a small transient overshoot from simultaneous handshakes is fine.
+    Returns True when the connection was rejected (the caller must then return
+    without handling it). The rejected socket is never registered with a
+    manager, so it does not count toward the total.
+    """
+    settings: Settings = app.state.settings
+    active = (
+        app.state.ws_manager.connection_count
+        + app.state.device_ws_manager.connection_count
+        + app.state.camera_ws_manager.connection_count
+        + app.state.tiff_ws_manager.connection_count
+    )
+    if active >= settings.ws_max_connections:
+        logger.warning(
+            "ws_connection_rejected_at_capacity",
+            active=active,
+            limit=settings.ws_max_connections,
+        )
+        # Accept then close so the client receives the 1013 close frame rather
+        # than a bare handshake failure.
+        await websocket.accept()
+        await websocket.close(
+            code=1013, reason="server at WebSocket connection capacity; try again later"
+        )
+        return True
+    return False
 
 
 @app.websocket("/api/v1/pv-socket")
 async def websocket_pv_socket(websocket: WebSocket):
     """PV monitoring WebSocket — finch `ophydSocketPVPath`."""
+    if await _reject_if_ws_capacity_reached(websocket):
+        return
     await app.state.ws_manager.handle_client(websocket)
 
 
 @app.websocket("/api/v1/device-socket")
 async def websocket_device_socket(websocket: WebSocket):
     """Device-level monitoring WebSocket — finch `ophydSocketDevicePath`."""
+    if await _reject_if_ws_capacity_reached(websocket):
+        return
     await app.state.device_ws_manager.handle_client(websocket)
 
 
 @app.websocket("/api/v1/camera-socket")
 async def websocket_camera_socket(websocket: WebSocket):
     """AreaDetector image streaming WebSocket — finch `ophydSocketCameraPath`."""
+    if await _reject_if_ws_capacity_reached(websocket):
+        return
     await app.state.camera_ws_manager.handle_client(websocket)
 
 
 @app.websocket("/api/v1/tiff-socket")
 async def websocket_tiff_socket(websocket: WebSocket):
     """TIFF-detector image streaming WebSocket — finch `ophydSocketTIFFPath`."""
+    if await _reject_if_ws_capacity_reached(websocket):
+        return
     await app.state.tiff_ws_manager.handle_client(websocket)
 
 

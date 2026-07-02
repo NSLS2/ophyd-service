@@ -29,7 +29,6 @@ from hypothesis import settings as hypothesis_settings
 from configuration_service.config import Settings
 from configuration_service.main import create_app
 
-
 # Module-scoped app so `@schema.parametrize()` can decorate at import time.
 # Mock-data mode (the lifespan creates tables + seeds on startup). Contract
 # tests only read GET schemas, so any seeded state is fine. Uses the test

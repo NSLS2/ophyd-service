@@ -22,8 +22,8 @@ uses it.)
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from types import SimpleNamespace
-from typing import AsyncIterator
 
 import httpx
 import pytest

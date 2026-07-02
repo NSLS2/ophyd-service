@@ -25,7 +25,6 @@ from direct_control.config import Settings
 from direct_control.models import PVNotFoundError, PVValue
 from direct_control.protocols import MockPVMonitor
 
-
 # ===== Failed subscribe must not poison the PV cache =========================
 
 
@@ -208,8 +207,6 @@ def test_camera_socket_disconnect_logs_no_loop_error(client, test_ioc, monkeypat
         time.sleep(0.05)
 
     loop_failures = [
-        event
-        for event in errors
-        if event in ("image_socket_error", "image_socket_loop_failed")
+        event for event in errors if event in ("image_socket_error", "image_socket_loop_failed")
     ]
     assert loop_failures == [], f"disconnect logged loop failures: {loop_failures}"

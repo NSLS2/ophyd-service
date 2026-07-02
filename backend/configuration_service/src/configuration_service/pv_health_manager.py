@@ -22,12 +22,12 @@ Design notes:
   ``PVHealthRecord.state`` in models.py. The counter is the source of
   truth.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from datetime import UTC, datetime
 
 from .models import PVHealthRecord, PVHealthState
 
@@ -44,12 +44,10 @@ class PVHealthManager:
     """
 
     def __init__(self) -> None:
-        self._records: Dict[str, PVHealthRecord] = {}
+        self._records: dict[str, PVHealthRecord] = {}
         self._lock = asyncio.Lock()
 
-    async def record_failure(
-        self, pv_name: str, message: Optional[str] = None
-    ) -> PVHealthRecord:
+    async def record_failure(self, pv_name: str, message: str | None = None) -> PVHealthRecord:
         """Increment the consecutive-failure counter and stamp the failure."""
         async with self._lock:
             existing = self._records.get(pv_name)
@@ -58,7 +56,7 @@ class PVHealthManager:
             record = PVHealthRecord(
                 pv_name=pv_name,
                 consecutive_failures=consecutive,
-                last_failure_at=datetime.now(timezone.utc),
+                last_failure_at=datetime.now(UTC),
                 last_failure_message=message,
                 last_success_at=last_success,
             )
@@ -83,7 +81,7 @@ class PVHealthManager:
         """
         async with self._lock:
             existing = self._records.get(pv_name)
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             if existing is None:
                 # Never-failed PV — return a transient record for the
                 # endpoint's response without growing the dict.
@@ -105,15 +103,13 @@ class PVHealthManager:
             self._records[pv_name] = record
             return record
 
-    async def get_health(self, pv_name: str) -> Optional[PVHealthRecord]:
+    async def get_health(self, pv_name: str) -> PVHealthRecord | None:
         """Return the record for ``pv_name`` or ``None`` if no caput has
         been reported yet (the frontend treats absence as ``healthy``)."""
         async with self._lock:
             return self._records.get(pv_name)
 
-    async def get_health_many(
-        self, pv_names: List[str]
-    ) -> Dict[str, PVHealthRecord]:
+    async def get_health_many(self, pv_names: list[str]) -> dict[str, PVHealthRecord]:
         """Return records only for the PVs in ``pv_names`` that have any.
 
         Used by the device-status endpoint to roll up health for a
@@ -121,11 +117,7 @@ class PVHealthManager:
         the caller's downstream UI treats absence as healthy.
         """
         async with self._lock:
-            return {
-                pv: self._records[pv]
-                for pv in pv_names
-                if pv in self._records
-            }
+            return {pv: self._records[pv] for pv in pv_names if pv in self._records}
 
     async def clear(self, pv_name: str) -> bool:
         """Drop the record for ``pv_name`` (admin reset). Returns True
@@ -145,7 +137,7 @@ class PVHealthManager:
         but the result is a point-in-time estimate."""
         return len(self._records)
 
-    async def stats(self) -> Dict[str, int]:
+    async def stats(self) -> dict[str, int]:
         """Return a count of records grouped by ``PVHealthState``.
 
         Used by the admin stats endpoint for an at-a-glance "how many
@@ -154,7 +146,7 @@ class PVHealthManager:
         downstream UIs don't have to special-case missing keys.
         """
         async with self._lock:
-            counts: Dict[str, int] = {s.value: 0 for s in PVHealthState}
+            counts: dict[str, int] = {s.value: 0 for s in PVHealthState}
             for record in self._records.values():
                 counts[record.state.value] += 1
             return counts

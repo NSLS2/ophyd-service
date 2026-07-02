@@ -5,15 +5,15 @@ Centralized device/PV registry management.
 Implements ProvidesDeviceRegistry protocol.
 """
 
+from configuration_service.config import Settings
+from configuration_service.loader import MockProfileLoader
 from configuration_service.main import app, create_app
 from configuration_service.models import (
-    DeviceMetadata,
-    PVMetadata,
     DeviceLabel,
+    DeviceMetadata,
     DeviceRegistry,
+    PVMetadata,
 )
-from configuration_service.loader import MockProfileLoader
-from configuration_service.config import Settings
 
 __all__ = [
     "app",

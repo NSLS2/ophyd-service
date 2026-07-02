@@ -331,10 +331,6 @@ def test_batch_set_max_length_enforced(client):
     """101-item batch is rejected by the pydantic max_length guard."""
     r = client.post(
         "/api/v1/pv/set/batch",
-        json={
-            "caputs": [
-                {"pv_name": "IOC:counter", "value": i} for i in range(101)
-            ]
-        },
+        json={"caputs": [{"pv_name": "IOC:counter", "value": i} for i in range(101)]},
     )
     assert r.status_code == 422

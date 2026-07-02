@@ -6,29 +6,30 @@ coordination checks (A4 requirement).
 """
 
 import asyncio
-from typing import Any, Optional, TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
+
 import structlog
 from epics import ca, caget, caput, get_pv
-from datetime import datetime
 
+from .config import Settings
 from .drivers import check_method_allowed, json_safe
 from .models import (
-    PVSetRequest,
-    PVSetResponse,
-    CoordinationStatus,
-    DeviceCommandRequest,
-    DeviceCommandResponse,
     CommandMode,
     ControlError,
     CoordinationCheckError,
-    DeviceLockedError,
+    CoordinationStatus,
+    DeviceCommandRequest,
+    DeviceCommandResponse,
     DeviceDisabledError,
+    DeviceLockedError,
     DeviceLockStatus,
     DeviceNotInstantiableError,
     InstantiationSpec,
     PVNotFoundError,
+    PVSetRequest,
+    PVSetResponse,
 )
-from .config import Settings
 
 if TYPE_CHECKING:
     from .device_manager import DeviceManager
@@ -46,6 +47,24 @@ class DeviceController:
     coordination with active plan execution (A4 requirement).
 
     Implements: DeviceControl protocol
+
+    Coordination is a check-then-act sequence: ``check_device_available``
+    reads the device's live lock state from configuration_service, then the
+    write is issued. This is inherently TOCTOU — a plan could acquire the
+    lock in the window between the check and the caput landing on the IOC.
+    The design accepts that narrow race rather than adding a distributed
+    reservation, because the exposure is bounded on both ends:
+
+    - configuration_service is authoritative at check time (no local lock
+      cache — every check is a live GET /status), so the window is one
+      request round-trip, not a TTL;
+    - when lock leases are enabled (CONFIG_LOCK_LEASE_TTL_SECONDS), the plan
+      owner (queueserver) re-acquires on lease loss / authority reset, and a
+      crashed owner's lock lapses on its own — so the coordination state a
+      write races against is never stale for longer than the lease.
+
+    A robust closure of the race would require a short-lived write
+    reservation on configuration_service; tracked as future work.
     """
 
     def __init__(
@@ -306,7 +325,7 @@ class DeviceController:
         timeout: float,
         connection_timeout: float,
         use_complete: bool,
-        ftype: Optional[int],
+        ftype: int | None,
     ) -> bool:
         """
         Execute a PV put, routing through the right pyepics entrypoint.
@@ -351,8 +370,10 @@ class DeviceController:
             try:
                 await asyncio.wait_for(done.wait(), timeout=timeout)
                 return True
-            except asyncio.TimeoutError:
-                raise ControlError(f"PV {pv_name} put-callback did not complete within {timeout}s")
+            except TimeoutError:
+                raise ControlError(
+                    f"PV {pv_name} put-callback did not complete within {timeout}s"
+                ) from None
 
         status = await asyncio.to_thread(
             ca.put, pv.chid, value, wait=wait, timeout=timeout, ftype=ftype
@@ -364,12 +385,12 @@ class DeviceController:
         pv_name: str,
         *,
         as_string: bool = False,
-        count: Optional[int] = None,
+        count: int | None = None,
         as_numpy: bool = True,
         use_monitor: bool = True,
         timeout: float = 5.0,
         connection_timeout: float = 5.0,
-        ftype: Optional[int] = None,
+        ftype: int | None = None,
     ) -> Any:
         """
         Get current PV value (read-only, no coordination check needed).
@@ -421,8 +442,8 @@ class DeviceController:
         self,
         device_path: str,
         method: str = "read",
-        value: Optional[Any] = None,
-        timeout: Optional[float] = None,
+        value: Any | None = None,
+        timeout: float | None = None,
     ) -> Any:
         """
         Access a nested device component (ophyd-websocket compatible).

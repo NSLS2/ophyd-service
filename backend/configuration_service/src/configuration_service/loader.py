@@ -19,15 +19,18 @@ of truth for available plans. Plans cannot be serialized over HTTP.
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
+if TYPE_CHECKING:
+    from .config import Settings
+
 from .class_capabilities import get_capabilities
 from .models import (
-    DeviceMetadata,
     DeviceInstantiationSpec,
     DeviceLabel,
+    DeviceMetadata,
     DeviceRegistry,
 )
 
@@ -41,7 +44,7 @@ logger = logging.getLogger(__name__)
 _MAX_FAILURES_IN_RAISE = 20
 
 
-def _raise_if_partial_load(failures: List[str], total: int, source: str) -> None:
+def _raise_if_partial_load(failures: list[str], total: int, source: str) -> None:
     """Refuse to seed from a partial registry.
 
     Pre-2026-05-02 the loader logged per-entry failures then announced a
@@ -57,9 +60,7 @@ def _raise_if_partial_load(failures: List[str], total: int, source: str) -> None
     )
     raise RuntimeError(
         f"Failed to load {len(failures)} of {total} {source} entries; "
-        f"refusing to seed registry from partial data. Errors: "
-        + "; ".join(shown)
-        + suffix
+        f"refusing to seed registry from partial data. Errors: " + "; ".join(shown) + suffix
     )
 
 
@@ -67,12 +68,12 @@ def _raise_if_partial_load(failures: List[str], total: int, source: str) -> None
 
 
 def _infer_device_label(
-    class_name: str, labels: Optional[List[str]] = None, functional_group: Optional[str] = None
+    class_name: str, labels: list[str] | None = None, functional_group: str | None = None
 ) -> DeviceLabel:
     """Infer DeviceLabel from class name, labels, and/or functional group."""
     # Check labels first (most reliable for BITS-style entries)
     if labels:
-        labels_lower = [l.lower() for l in labels]
+        labels_lower = [lbl.lower() for lbl in labels]
         if "motors" in labels_lower or "positioners" in labels_lower:
             return DeviceLabel.MOTOR
         if "detectors" in labels_lower or "area_detectors" in labels_lower:
@@ -108,7 +109,7 @@ def _infer_device_label(
     return DeviceLabel.DEVICE
 
 
-def _resolve_happi_templates(value: Any, prefix: Optional[str], name: Optional[str]) -> Any:
+def _resolve_happi_templates(value: Any, prefix: str | None, name: str | None) -> Any:
     """
     Substitute happi's `{{prefix}}` and `{{name}}` placeholders.
 
@@ -121,16 +122,12 @@ def _resolve_happi_templates(value: Any, prefix: Optional[str], name: Optional[s
         if "{{prefix}}" in value:
             if prefix is None:
                 raise ValueError(
-                    "unresolved {{prefix}} template in {!r}: entry has no 'prefix' field".format(
-                        value
-                    )
+                    f"unresolved {{prefix}} template in {value!r}: entry has no 'prefix' field"
                 )
             value = value.replace("{{prefix}}", prefix)
         if "{{name}}" in value:
             if name is None:
-                raise ValueError(
-                    "unresolved {{name}} template in {!r}: no name available".format(value)
-                )
+                raise ValueError(f"unresolved {{name}} template in {value!r}: no name available")
             value = value.replace("{{name}}", name)
         return value
     if isinstance(value, list):
@@ -141,15 +138,15 @@ def _resolve_happi_templates(value: Any, prefix: Optional[str], name: Optional[s
 
 
 def _derive_pvs_from_args(
-    class_name: str, args: List[Any], kwargs: Dict[str, Any]
-) -> Dict[str, str]:
+    class_name: str, args: list[Any], kwargs: dict[str, Any]
+) -> dict[str, str]:
     """
     Derive PV names from constructor arguments when possible.
 
     For known class patterns (e.g., EpicsMotor prefix), generate the
     standard PV field names.
     """
-    pvs: Dict[str, str] = {}
+    pvs: dict[str, str] = {}
     lower = class_name.lower()
 
     # EpicsMotor-like: first arg is prefix
@@ -176,7 +173,7 @@ def _derive_pvs_from_args(
     return pvs
 
 
-def _walk_class_for_pvs(device_class_path: str, prefix: str) -> Dict[str, str]:
+def _walk_class_for_pvs(device_class_path: str, prefix: str) -> dict[str, str]:
     """Import a compound ophyd Device class and enumerate every leaf-signal PV.
 
     Returns a dict keyed by dotted attribute path (e.g. ``"energy.setpoint"``,
@@ -232,15 +229,13 @@ def _walk_class_for_pvs(device_class_path: str, prefix: str) -> Dict[str, str]:
             Device,
             DynamicDeviceComponent,
         )
+
         from .path_resolver import _resolve_component_pv
     except ImportError as e:
         # ophyd is a hard dependency; if it fails to import here the
         # service is fundamentally broken — log loud and let the entry
         # fall back to prefix-only so the partial-load guard can see it.
-        logger.warning(
-            f"ophyd unavailable; class walk for {device_class_path!r} "
-            f"skipped: {e}"
-        )
+        logger.warning(f"ophyd unavailable; class walk for {device_class_path!r} skipped: {e}")
         return {}
 
     module_name, class_name = device_class_path.rsplit(".", 1)
@@ -266,11 +261,11 @@ def _walk_class_for_pvs(device_class_path: str, prefix: str) -> Dict[str, str]:
     def _is_subdevice(cpt_cls) -> bool:
         return isinstance(cpt_cls, type) and issubclass(cpt_cls, Device)
 
-    pvs: Dict[str, str] = {}
+    pvs: dict[str, str] = {}
 
     def walk(
         cur_cls,
-        path_parts: List[str],
+        path_parts: list[str],
         current_prefix: str,
         visited: frozenset,
     ) -> None:
@@ -341,7 +336,7 @@ class HappiProfileLoader:
         if not self.db_path:
             raise ValueError(f"No happi database found in {self.profile_path}")
 
-    def _find_happi_db(self) -> Optional[Path]:
+    def _find_happi_db(self) -> Path | None:
         """Find the happi database file."""
         for name in ["happi_db.json", "happi.json", "db.json"]:
             path = self.profile_path / name
@@ -353,7 +348,7 @@ class HappiProfileLoader:
         """Load device registry from happi database JSON."""
         logger.info(f"Loading happi device registry from {self.db_path}")
         registry = DeviceRegistry()
-        failures: List[str] = []
+        failures: list[str] = []
 
         with open(self.db_path) as f:
             db = json.load(f)
@@ -378,7 +373,7 @@ class HappiProfileLoader:
         )
         return registry
 
-    def _process_entry(self, name: str, entry: Dict[str, Any], registry: DeviceRegistry) -> None:
+    def _process_entry(self, name: str, entry: dict[str, Any], registry: DeviceRegistry) -> None:
         """Process a single happi database entry."""
         device_class_path = entry.get("device_class") or ""
         if not device_class_path:
@@ -410,7 +405,7 @@ class HappiProfileLoader:
         # prefix in the `prefix` field) we fall back to entry['prefix'].
         # Import / walk failures propagate to the per-entry handler in
         # load_registry.
-        walk_prefix: Optional[str] = None
+        walk_prefix: str | None = None
         if args and isinstance(args[0], str):
             walk_prefix = str(args[0])
         elif prefix:
@@ -490,12 +485,12 @@ class BitsProfileLoader:
             raise ValueError(f"No devices.yml found in {self.profile_path}")
 
         # Load iconfig if available
-        self.iconfig: Dict[str, Any] = {}
+        self.iconfig: dict[str, Any] = {}
         if self.iconfig_path:
             with open(self.iconfig_path) as f:
                 self.iconfig = yaml.safe_load(f) or {}
 
-    def _find_file(self, names: List[str]) -> Optional[Path]:
+    def _find_file(self, names: list[str]) -> Path | None:
         """Find a file by trying multiple names."""
         for name in names:
             path = self.configs_dir / name
@@ -510,7 +505,7 @@ class BitsProfileLoader:
         """Load device registry from BITS devices.yml."""
         logger.info(f"Loading BITS device registry from {self.devices_path}")
         registry = DeviceRegistry()
-        failures: List[str] = []
+        failures: list[str] = []
         total_entries = 0
 
         with open(self.devices_path) as f:
@@ -554,9 +549,9 @@ class BitsProfileLoader:
     def _process_entry(
         self,
         name: str,
-        entry: Dict[str, Any],
+        entry: dict[str, Any],
         module_path: str,
-        beamline: Optional[str],
+        beamline: str | None,
         registry: DeviceRegistry,
     ) -> None:
         """Process a single BITS device entry."""
@@ -582,7 +577,7 @@ class BitsProfileLoader:
         device_label = _infer_device_label(class_name, labels=labels)
 
         # Derive PVs from prefix if available
-        pvs: Dict[str, str] = {}
+        pvs: dict[str, str] = {}
         if prefix:
             pvs["prefix"] = prefix
             # For known motor types, add standard PV fields

@@ -326,10 +326,16 @@ class TestPartialLoadMessageCap:
 
 from ophyd import (  # noqa: E402  (module-level only to keep fixtures importable)
     Component as Cpt,
+)
+from ophyd import (  # noqa: E402
     Device,
-    DynamicDeviceComponent as DDC,
     EpicsSignal,
     EpicsSignalRO,
+)
+from ophyd import (  # noqa: E402
+    DynamicDeviceComponent as DDC,
+)
+from ophyd import (  # noqa: E402
     FormattedComponent as FmtCpt,
 )
 
@@ -457,9 +463,7 @@ class TestWalkClassForPVs:
         # an absolute PV (common pattern for cross-IOC references).
         # The other Component in the same class uses default add_prefix
         # and must still get the parent prefix prepended.
-        pvs = _walk_class_for_pvs(
-            f"{__name__}._WithAbsolutePrefixCpt", "XF:23ID2-OP{Mono}"
-        )
+        pvs = _walk_class_for_pvs(f"{__name__}._WithAbsolutePrefixCpt", "XF:23ID2-OP{Mono}")
         assert pvs == {
             "relative": "XF:23ID2-OP{Mono}Rel-PV",
             "absolute": "SR:Beam:Current",
@@ -486,13 +490,10 @@ class TestWalkClassForPVs:
         # misconfigured PYTHONPATH shouldn't block the whole registry
         # from coming up.
         with caplog.at_level("WARNING"):
-            result = _walk_class_for_pvs(
-                "nonexistent_module_xyz.WhateverClass", "TST:"
-            )
+            result = _walk_class_for_pvs("nonexistent_module_xyz.WhateverClass", "TST:")
         assert result == {}
         assert any(
-            "nonexistent_module_xyz" in r.message
-            and "prefix-only" in r.message
+            "nonexistent_module_xyz" in r.message and "prefix-only" in r.message
             for r in caplog.records
         )
 
@@ -560,9 +561,7 @@ class TestLoaderWalksCompoundDevices:
         # PV, so leaving it in would be noise that masks real misses.
         assert "XF:23ID2-OP{Mono}" not in registry.pvs
 
-    def test_unimportable_compound_class_falls_back_to_prefix(
-        self, tmp_path, caplog
-    ):
+    def test_unimportable_compound_class_falls_back_to_prefix(self, tmp_path, caplog):
         # If the device class can't be imported (PYTHONPATH gap, missing
         # site module), the walker logs a warning and returns {}. The
         # loader then keeps the prefix-only entry — the registry loads
@@ -588,10 +587,7 @@ class TestLoaderWalksCompoundDevices:
             registry = HappiProfileLoader(profile).load_registry()
         assert "ghost" in registry.devices
         assert "XF:99ID-OP{Ghost}" in registry.pvs
-        assert any(
-            "nonexistent_pkg_xyz" in r.message
-            for r in caplog.records
-        )
+        assert any("nonexistent_pkg_xyz" in r.message for r in caplog.records)
 
     def test_entry_with_empty_args_walks_using_prefix_field(self, tmp_path):
         # Some happi formats store the prefix in entry['prefix'] with

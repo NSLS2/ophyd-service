@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Classic ophyd (mock registry's EpicsMotor / EpicsScaler / SimDetector)
 # ---------------------------------------------------------------------------
