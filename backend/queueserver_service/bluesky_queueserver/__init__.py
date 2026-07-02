@@ -12,8 +12,8 @@ The implementation — and the import path for all new code — is
 startup scripts and upstream's own sample profiles, a small set of legacy
 ``bluesky_queueserver.manager.*`` subpaths is aliased to the in-tree
 implementation at the bottom of this module (see there for the exact set, and
-why the 0MQ-era ``.comms`` / ``.json_rpc`` / ``.logging_setup`` subpaths are
-deliberately excluded).
+why the ZeroMQ-layer ``.comms`` / ``.json_rpc`` / ``.logging_setup`` subpaths
+are deliberately excluded).
 """
 
 from queueserver_service import __version__  # noqa: F401
@@ -59,9 +59,9 @@ from queueserver_service import (  # noqa: F401
 # the in-tree modules; these are already imported by ``queueserver_service``
 # above, so aliasing adds no new import cost.
 #
-# The 0MQ-era ``.comms`` / ``.json_rpc`` / ``.logging_setup`` subpaths are
-# intentionally NOT aliased — that surface is being retired (HTTP-only
-# direction), and nothing in the drop-in contract requires them.
+# The ``.comms`` / ``.json_rpc`` / ``.logging_setup`` subpaths are intentionally
+# NOT aliased: they belong to the ZeroMQ messaging layer, which this service does
+# not expose to external importers.
 # ---------------------------------------------------------------------------
 import sys  # noqa: E402
 

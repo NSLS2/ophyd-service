@@ -1,12 +1,10 @@
-"""Drop-in parity tests for the ``bluesky_queueserver`` compatibility shim
-(2026-07-02 backend review, reports 05/06/07, plan item 2.5).
+"""Tests for the ``bluesky_queueserver`` compatibility shim.
 
-The distribution is named ``bluesky-queueserver`` and must provide the legacy
+This distribution is named ``bluesky-queueserver`` and must provide the legacy
 import surface that the ``bluesky-queueserver-api`` client and existing beamline
-startup scripts / upstream sample profiles rely on:
+startup scripts (and upstream sample profiles) rely on:
 
-* the top-level names re-exported from ``bluesky_queueserver`` (matching
-  upstream 0.0.24), and
+* the top-level names re-exported from ``bluesky_queueserver``, and
 * the ``bluesky_queueserver.manager.*`` subpaths that real profiles import,
   e.g. ``from bluesky_queueserver.manager.profile_tools import set_user_ns``.
 """
