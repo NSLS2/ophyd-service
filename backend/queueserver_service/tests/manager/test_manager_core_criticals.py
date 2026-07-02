@@ -1,17 +1,15 @@
-"""Regression tests for the queueserver manager-core criticals fixed in the
-2026-07 backend review (reports 00-summary / 07-queueserver-manager-core):
+"""Regression tests for queueserver manager-core robustness.
 
-* C1 — the worker-state poll task must not die permanently on a double
-  ``set_result`` (``_complete_manager_task`` guard) and the poll loop must
-  survive an exception in its body.
-* C2 — command-handler execution must be serialized by a single dispatch lock
-  so concurrent 0MQ / HTTP-loopback / autostart requests can't interleave their
-  check-then-act state transitions.
-* H1 — the plan report must be fetched with the long pipe timeout, retried once
-  on timeout, and retained by the worker across a read (so a lost pipe response
-  can be re-fetched instead of marking a completed plan failed).
-* H4 — the multiprocessing-pipe receive threads must exit (not busy-spin at
-  100% CPU) when the peer closes the pipe.
+* The worker-state poll task must not die permanently on a double ``set_result``
+  (``_complete_manager_task`` guard), and the poll loop must survive an exception
+  in its body.
+* Command-handler execution must be serialized by a single dispatch lock so
+  concurrent requests can't interleave their check-then-act state transitions.
+* The plan report must be fetched with the long pipe timeout, retried once on
+  timeout, and retained by the worker across a read (so a lost pipe response can
+  be re-fetched instead of marking a completed plan failed).
+* The multiprocessing-pipe receive threads must exit (not busy-spin at 100% CPU)
+  when the peer closes the pipe.
 
 The manager/worker are constructed via ``__new__`` (bypassing the
 multiprocessing-heavy ``__init__``); only the attributes each method under test
@@ -38,7 +36,7 @@ from queueserver_service.manager.worker import PlanExecState, RunEngineWorker
 
 
 # ----------------------------------------------------------------------------
-# C1 — poll-task resilience
+# poll-task resilience
 # ----------------------------------------------------------------------------
 
 
@@ -118,7 +116,7 @@ def _idle_ws():
 
 @pytest.mark.asyncio
 async def test_poll_once_completes_env_open_and_survives_reentry():
-    """Exercises the real poll-iteration body for the exact C1 scenario: env-open
+    """Exercises the real poll-iteration body for the env-open scenario: env-open
     resolves the completion future while the manager is still in
     CREATING_ENVIRONMENT (env-open holds that state while it runs the
     plans/devices download + config-service sync), so the next poll iteration
@@ -152,7 +150,7 @@ async def test_poll_once_completes_env_open_and_survives_reentry():
 
 
 # ----------------------------------------------------------------------------
-# C2 — dispatch serialization
+# dispatch serialization
 # ----------------------------------------------------------------------------
 
 
@@ -215,7 +213,7 @@ async def test_dispatch_command_surfaces_handler_exception_as_failure():
 
 
 # ----------------------------------------------------------------------------
-# H1 — plan-report loss (manager side: long timeout + one retry)
+# plan-report loss (manager side: long timeout + one retry)
 # ----------------------------------------------------------------------------
 
 
@@ -280,7 +278,7 @@ async def test_plan_report_not_available_is_not_retried():
 
 
 # ----------------------------------------------------------------------------
-# H1 — plan-report loss (worker side: report retained across a read)
+# plan-report loss (worker side: report retained across a read)
 # ----------------------------------------------------------------------------
 
 
@@ -327,7 +325,7 @@ def test_worker_reset_clears_report_and_delivered_flag():
 
 
 # ----------------------------------------------------------------------------
-# H4 — pipe-EOF busy-spin
+# pipe-EOF busy-spin
 # ----------------------------------------------------------------------------
 
 
