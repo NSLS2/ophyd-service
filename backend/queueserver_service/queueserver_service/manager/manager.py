@@ -335,6 +335,10 @@ class RunEngineManager(Process):
         # download so the worker can drop them. Retained results survive a lost
         # pipe response until acknowledged.
         self._task_results_received_uids = []
+        # Single-flight guard for task-result downloads (see
+        # '_load_task_results_from_worker'): results stay available until
+        # acknowledged, so overlapping downloads must be prevented.
+        self._loading_task_results = False
 
         self.__queue_autostart_enabled = False
         self._queue_autostart_event = None
@@ -688,12 +692,8 @@ class RunEngineManager(Process):
         self._worker_state_timeout_count = 0
         self._worker_death_handled = False
         # A fresh worker starts with no completed tasks, so drop any pending
-        # task-result acknowledgements left over from a previous environment.
+        # task-result acknowledgements and reset the single-flight download guard.
         self._task_results_received_uids = []
-        self._loading_task_results = False
-        # Single-flight guard: task results stay 'available' until acknowledged,
-        # so the poll loop would otherwise schedule overlapping downloads every
-        # cycle and flood the shared worker pipe. Only one runs at a time.
         self._loading_task_results = False
 
         # Fresh lock-owner id for this environment. A leftover lock recorded
