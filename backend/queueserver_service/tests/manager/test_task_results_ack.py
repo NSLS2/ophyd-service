@@ -116,6 +116,7 @@ def _results_manager(comm):
             stored.append(task_uid)
 
     mgr._task_results = _FakeTaskResults()
+    mgr._loading_task_results = False
     return mgr, stored
 
 
@@ -181,3 +182,34 @@ async def test_manager_skips_reprocessing_already_received_results():
     await mgr._load_task_results_from_worker()
     assert stored == []  # C not re-stored
     assert mgr._task_results_received_uids == ["C"]
+
+
+@pytest.mark.asyncio
+async def test_load_task_results_is_single_flight():
+    """Only one download runs at a time; a concurrent call is a no-op so the
+    poll loop can't flood the worker pipe while results stay available."""
+    comm = _FakeWorkerComm()
+    comm.add("A")
+    mgr, stored = _results_manager(comm)
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original_impl = mgr._load_task_results_from_worker_impl
+
+    async def blocking_impl():
+        started.set()
+        await release.wait()
+        await original_impl()
+
+    mgr._load_task_results_from_worker_impl = blocking_impl
+
+    first = asyncio.create_task(mgr._load_task_results_from_worker())
+    await started.wait()
+
+    # A second concurrent call returns immediately without starting a download.
+    await mgr._load_task_results_from_worker()
+    assert stored == []
+
+    release.set()
+    await first
+    assert stored == ["A"]

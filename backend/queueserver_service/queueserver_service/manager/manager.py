@@ -690,6 +690,11 @@ class RunEngineManager(Process):
         # A fresh worker starts with no completed tasks, so drop any pending
         # task-result acknowledgements left over from a previous environment.
         self._task_results_received_uids = []
+        self._loading_task_results = False
+        # Single-flight guard: task results stay 'available' until acknowledged,
+        # so the poll loop would otherwise schedule overlapping downloads every
+        # cycle and flood the shared worker pipe. Only one runs at a time.
+        self._loading_task_results = False
 
         # Fresh lock-owner id for this environment. A leftover lock recorded
         # under a previous id (unlock failed at the last env-close) is then
@@ -1287,6 +1292,23 @@ class RunEngineManager(Process):
     async def _load_task_results_from_worker(self):
         """
         Download results of the completed tasks from worker process.
+
+        Single-flight: task results remain available until acknowledged, so the
+        poll loop re-triggers this every cycle while results are pending. Running
+        only one download at a time avoids flooding the shared worker pipe with
+        overlapping requests (which would starve other worker communication).
+        """
+        if self._loading_task_results:
+            return
+        self._loading_task_results = True
+        try:
+            await self._load_task_results_from_worker_impl()
+        finally:
+            self._loading_task_results = False
+
+    async def _load_task_results_from_worker_impl(self):
+        """
+        Download and store completed-task results, acknowledging the previous batch.
 
         The worker retains task results until they are acknowledged, so this sends
         the ``task_uid``s received on the previous successful download as the
