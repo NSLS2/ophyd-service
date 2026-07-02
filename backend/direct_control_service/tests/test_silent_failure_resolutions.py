@@ -17,7 +17,6 @@ import pytest
 
 from direct_control.models import ServiceAvailability
 
-
 # ─── S1: device-method placeholders no longer return 200-OK / success=False ──
 #
 # Pre-fix: ``/stop`` and ``/execute`` returned ``200 OK`` with
@@ -104,6 +103,7 @@ def test_s1_stop_lock_gate_still_fires_before_spec_lookup(client):
     refactor can't accidentally invert it.
     """
     from datetime import datetime
+
     from direct_control.models import CoordinationStatus, DeviceLockStatus
 
     class _DisabledStub:
@@ -128,8 +128,7 @@ def test_s1_stop_lock_gate_still_fires_before_spec_lookup(client):
 
     r = client.post("/api/v1/device/some_device/stop")
     assert r.status_code == 409, (
-        f"expected 409 (disabled gate fires before spec lookup), got "
-        f"{r.status_code} {r.text!r}"
+        f"expected 409 (disabled gate fires before spec lookup), got {r.status_code} {r.text!r}"
     )
 
 
@@ -218,7 +217,10 @@ async def test_s2_set_pv_controller_raises_control_error_on_put_false():
 
     settings = Settings()
     controller = DeviceController(
-        settings, _AvailableCoord(), _StubRegistry(), DeviceManager(settings)  # type: ignore[arg-type]
+        settings,
+        _AvailableCoord(),
+        _StubRegistry(),
+        DeviceManager(settings),  # type: ignore[arg-type]
     )
     # Force the put to "fail" without touching EPICS at all.
     controller._execute_put = AsyncMock(return_value=False)  # type: ignore[method-assign]
@@ -268,7 +270,10 @@ async def test_s2_set_pv_controller_propagates_inner_exceptions():
 
     settings = Settings()
     controller = DeviceController(
-        settings, _AvailableCoord(), _StubRegistry(), DeviceManager(settings)  # type: ignore[arg-type]
+        settings,
+        _AvailableCoord(),
+        _StubRegistry(),
+        DeviceManager(settings),  # type: ignore[arg-type]
     )
     controller._execute_put = AsyncMock(  # type: ignore[method-assign]
         side_effect=RuntimeError("simulated EPICS write blew up"),
@@ -374,8 +379,7 @@ def test_finch_contract_pv_update_uses_pv_field(client):
             msg = ws.receive_json()
             if msg.get("event_type") == "pv_update":
                 assert "pv" in msg, (
-                    f"pv_update missing 'pv' field — finch's discriminator "
-                    f"check fails: {msg!r}"
+                    f"pv_update missing 'pv' field — finch's discriminator check fails: {msg!r}"
                 )
                 assert msg["pv"] == "IOC:counter"
                 # The legacy `pv_name` shim should be gone — we removed it.
@@ -728,8 +732,6 @@ async def test_s7_fetch_device_info_distinguishes_404_from_non2xx_from_network(c
     """Pin the three failure-class mapping. No live config_service required."""
     import httpx
 
-    from direct_control.models import DeviceInfo
-
     device_ws_manager = client.app.state.device_ws_manager
 
     async def _fake_get_404(_self):
@@ -743,22 +745,16 @@ async def test_s7_fetch_device_info_distinguishes_404_from_non2xx_from_network(c
     # 200 → (info, None) is exercised by the meta-message test above; here
     # we drive the three failure classes.
     async def _via_transport(handler):
-        device_ws_manager._http_client = httpx.AsyncClient(
-            transport=httpx.MockTransport(handler)
-        )
+        device_ws_manager._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         return await device_ws_manager._fetch_device_info("any_device")
 
     # 404 → not_found (the device truly isn't registered)
-    info, reason = await _via_transport(
-        lambda req: httpx.Response(404, json={"detail": "missing"})
-    )
+    info, reason = await _via_transport(lambda req: httpx.Response(404, json={"detail": "missing"}))
     assert info is None
     assert reason == "not_found"
 
     # 500 → upstream_error (config_service is up but rejected)
-    info, reason = await _via_transport(
-        lambda req: httpx.Response(500, json={"detail": "kaboom"})
-    )
+    info, reason = await _via_transport(lambda req: httpx.Response(500, json={"detail": "kaboom"}))
     assert info is None
     assert reason == "upstream_error"
 
@@ -922,9 +918,7 @@ async def test_s8_require_connection_rolls_back_on_partial_failure():
 
     mgr._fetch_device_info = _fetch  # type: ignore[method-assign]
 
-    outcome = await mgr.subscribe_device(
-        "c", "dev", require_connection=True
-    )
+    outcome = await mgr.subscribe_device("c", "dev", require_connection=True)
     assert outcome.ok is False
     assert outcome.reason == "not_connected"
     assert outcome.failed_pvs == []  # rolled-back path returns empty per the contract
@@ -1193,11 +1187,12 @@ async def test_c2_partial_recovery_preserved_through_require_connection_rollback
 @pytest.mark.asyncio
 async def test_c2_concurrent_subscribers_to_same_device_serialize():
     """A second subscribe in-flight with the first must wait + see consistent failures."""
+    import asyncio as _asyncio
+    import threading
+
     from direct_control.config import Settings
     from direct_control.models import DeviceInfo
     from direct_control.monitoring.device_websocket_manager import DeviceWebSocketManager
-    import asyncio as _asyncio
-    import threading
 
     settings = Settings()
 
@@ -1257,8 +1252,7 @@ async def test_c2_concurrent_subscribers_to_same_device_serialize():
     # Give B a moment to enter and block on the per-device lock.
     await _asyncio.sleep(0.05)
     assert not b_task.done(), (
-        "B must block on the per-device subscribe lock while A is in-flight "
-        "(C2 follow-up B)"
+        "B must block on the per-device subscribe lock while A is in-flight (C2 follow-up B)"
     )
 
     # Release A; both should now complete with consistent state.
@@ -1277,11 +1271,12 @@ async def test_c2_concurrent_subscribers_to_same_device_serialize():
 @pytest.mark.asyncio
 async def test_c2_disconnect_during_subscribe_returns_unknown_client():
     """A disconnect mid-subscribe must not raise KeyError on _device_subscriptions."""
+    import asyncio as _asyncio
+    import threading
+
     from direct_control.config import Settings
     from direct_control.models import DeviceInfo
     from direct_control.monitoring.device_websocket_manager import DeviceWebSocketManager
-    import asyncio as _asyncio
-    import threading
 
     settings = Settings()
 
@@ -1374,9 +1369,7 @@ def test_m7_extraction_defaults_to_no_access_when_read_pv_missing():
     from direct_control.config import Settings
     from direct_control.monitoring.pv_monitor import PVMonitorManager
 
-    pv_value = PVMonitorManager(Settings())._signal_to_pv_value(
-        "FAKE:pv", _make_fake_signal()
-    )
+    pv_value = PVMonitorManager(Settings())._signal_to_pv_value("FAKE:pv", _make_fake_signal())
 
     assert pv_value.read_access is False, (
         "missing _read_pv must default read_access=False — pre-fix this was True"
@@ -1529,6 +1522,7 @@ def test_m9_subscribe_on_error_fires_when_value_callback_raises():
     the CA listener thread) so the test is fast and deterministic.
     """
     from datetime import datetime
+
     from direct_control.config import Settings
     from direct_control.models import PVUpdate
     from direct_control.monitoring.pv_monitor import PVMonitorManager, _Subscriber
@@ -1569,6 +1563,7 @@ def test_m9_dispatch_swallows_on_error_failures_so_other_subscribers_run():
     every other subscriber on the same PV.
     """
     from datetime import datetime
+
     from direct_control.config import Settings
     from direct_control.models import PVUpdate
     from direct_control.monitoring.pv_monitor import PVMonitorManager, _Subscriber
@@ -1693,9 +1688,7 @@ async def test_m9_device_socket_error_handler_broadcasts_envelope_to_clients():
     mgr._connections["c2"] = _StubWS("c2")  # type: ignore[assignment]
     mgr._device_clients["dev"] = {"c1", "c2"}
 
-    await mgr._broadcast_device_callback_error(
-        "dev", "motor", "IOC:motor", RuntimeError("kaboom")
-    )
+    await mgr._broadcast_device_callback_error("dev", "motor", "IOC:motor", RuntimeError("kaboom"))
 
     for client_id in ("c1", "c2"):
         assert len(sent[client_id]) == 1
@@ -1764,7 +1757,6 @@ def test_m10_rest_get_monitored_pv_returns_503_on_read_error(client):
     PVReadError. Pre-fix the same condition surfaced as 404 "not found".
     """
     from direct_control.models import PVReadError
-    from direct_control.protocols import PVMonitor
 
     class _FailingMonitor:
         def subscribe(self, *_args, **_kwargs):
@@ -1964,9 +1956,7 @@ def test_m14_pvupdate_default_access_bits_are_locked_out():
         timestamp=datetime.now(),
     )
 
-    assert update.read_access is False, (
-        "PVUpdate must default read_access=False — pre-M14 was True"
-    )
+    assert update.read_access is False, "PVUpdate must default read_access=False — pre-M14 was True"
     assert update.write_access is False
 
 

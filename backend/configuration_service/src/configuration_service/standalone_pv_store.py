@@ -15,11 +15,9 @@ Usage:
 import json
 import logging
 import time
-from typing import List, Optional
 
 from sqlalchemy import delete, select
-from sqlalchemy.engine import Engine
-from sqlalchemy.engine import Row
+from sqlalchemy.engine import Engine, Row
 
 from .db import metadata, standalone_pvs, upsert
 from .models import StandalonePV
@@ -47,19 +45,17 @@ class StandalonePVStore:
             return
         metadata.create_all(self._engine)
         self._initialized = True
-        logger.info(
-            "Standalone PV store initialized (%s)", self._engine.dialect.name
-        )
+        logger.info("Standalone PV store initialized (%s)", self._engine.dialect.name)
 
     def save_pv(
         self,
         pv_name: str,
-        description: Optional[str] = None,
+        description: str | None = None,
         protocol: str = "ca",
         access_mode: str = "read-only",
-        labels: Optional[List[str]] = None,
+        labels: list[str] | None = None,
         source: str = "runtime",
-        created_by: Optional[str] = None,
+        created_by: str | None = None,
     ) -> None:
         """
         Save (upsert) a standalone PV. Preserves created_at/created_by on update.
@@ -99,16 +95,14 @@ class StandalonePVStore:
     def delete_pv(self, pv_name: str) -> bool:
         """Delete a standalone PV. Returns True if it was found and deleted."""
         with self._engine.begin() as conn:
-            result = conn.execute(
-                delete(standalone_pvs).where(standalone_pvs.c.pv_name == pv_name)
-            )
+            result = conn.execute(delete(standalone_pvs).where(standalone_pvs.c.pv_name == pv_name))
             deleted = result.rowcount > 0
 
         if deleted:
             logger.debug(f"Deleted standalone PV: {pv_name}")
         return deleted
 
-    def get_pv(self, pv_name: str) -> Optional[StandalonePV]:
+    def get_pv(self, pv_name: str) -> StandalonePV | None:
         """Get a single standalone PV by name."""
         with self._engine.connect() as conn:
             row = conn.execute(
@@ -118,14 +112,12 @@ class StandalonePVStore:
             return None
         return self._row_to_model(row)
 
-    def get_all_pvs(self, labels: Optional[List[str]] = None) -> List[StandalonePV]:
+    def get_all_pvs(self, labels: list[str] | None = None) -> list[StandalonePV]:
         """
         Get all standalone PVs, optionally filtered to those having ALL given labels.
         """
         with self._engine.connect() as conn:
-            rows = conn.execute(
-                select(standalone_pvs).order_by(standalone_pvs.c.pv_name)
-            ).all()
+            rows = conn.execute(select(standalone_pvs).order_by(standalone_pvs.c.pv_name)).all()
         pvs = [self._row_to_model(row) for row in rows]
 
         if labels:
@@ -133,7 +125,7 @@ class StandalonePVStore:
 
         return pvs
 
-    def get_all_labels(self) -> List[str]:
+    def get_all_labels(self) -> list[str]:
         """Get all unique labels across all standalone PVs (sorted)."""
         with self._engine.connect() as conn:
             rows = conn.execute(select(standalone_pvs.c.labels)).all()

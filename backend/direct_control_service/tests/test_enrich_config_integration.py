@@ -19,7 +19,7 @@ no IOC.
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
@@ -27,12 +27,12 @@ import pytest_asyncio
 
 pytest.importorskip("configuration_service")
 
-from ophyd import Component as Cpt, Device, EpicsSignal  # noqa: E402
-
 from configuration_service.direct_control_client import (  # noqa: E402
     DirectControlClient,
     EnrichmentSpec,
 )
+from ophyd import Component as Cpt  # noqa: E402
+from ophyd import Device, EpicsSignal
 
 
 class _EnrichTestDevice(Device):

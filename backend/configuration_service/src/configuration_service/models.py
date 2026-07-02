@@ -6,8 +6,9 @@ These models represent the core entities for the device/PV registry.
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Literal, Optional, Any, Set
 from enum import Enum
+from typing import Any, Literal
+
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 # Re-exported so the path-resolver response model has a single source of
@@ -56,11 +57,11 @@ class DeviceInstantiationSpec(BaseModel):
     device_class: str = Field(
         description="Fully qualified class path (e.g., 'ophyd.EpicsMotor', 'ophyd.EpicsScaler')"
     )
-    args: List[Any] = Field(
+    args: list[Any] = Field(
         default_factory=list,
         description="Positional arguments for device constructor (e.g., ['BL01:DET1:'])",
     )
-    kwargs: Dict[str, Any] = Field(
+    kwargs: dict[str, Any] = Field(
         default_factory=dict,
         description="Keyword arguments for device constructor (e.g., {'name': 'det1'})",
     )
@@ -91,7 +92,7 @@ class DeviceMetadata(BaseModel):
     name: str = Field(description="Device name from profile collection")
     device_label: DeviceLabel = Field(description="Classification of device")
     ophyd_class: str = Field(description="Ophyd device class name")
-    module: Optional[str] = Field(
+    module: str | None = Field(
         default=None, description="Python module containing the device class"
     )
     # Capability flags (from ophyd protocol introspection)
@@ -125,31 +126,27 @@ class DeviceMetadata(BaseModel):
         default=False, description="Writes external assets (has collect_asset_docs)"
     )
     # PV and attribute info
-    pvs: Dict[str, str] = Field(default_factory=dict, description="Component name to PV mapping")
-    hints: Optional[Dict[str, Any]] = Field(
+    pvs: dict[str, str] = Field(default_factory=dict, description="Component name to PV mapping")
+    hints: dict[str, Any] | None = Field(
         default=None, description="Bluesky hints for plotting/display"
     )
-    read_attrs: List[str] = Field(default_factory=list, description="Readable attributes")
-    configuration_attrs: List[str] = Field(
+    read_attrs: list[str] = Field(default_factory=list, description="Readable attributes")
+    configuration_attrs: list[str] = Field(
         default_factory=list, description="Configuration attributes"
     )
-    parent: Optional[str] = Field(default=None, description="Parent device if this is a component")
+    parent: str | None = Field(default=None, description="Parent device if this is a component")
     # Labels for device grouping (BITS format)
-    labels: List[str] = Field(
+    labels: list[str] = Field(
         default_factory=list,
         description="Device labels for grouping (e.g., 'motors', 'detectors', 'baseline')",
     )
     # Extended metadata (happi format)
-    beamline: Optional[str] = Field(default=None, description="Beamline identifier (from happi)")
-    location_group: Optional[str] = Field(
-        default=None, description="Location grouping (from happi)"
-    )
-    functional_group: Optional[str] = Field(
+    beamline: str | None = Field(default=None, description="Beamline identifier (from happi)")
+    location_group: str | None = Field(default=None, description="Location grouping (from happi)")
+    functional_group: str | None = Field(
         default=None, description="Functional grouping (from happi)"
     )
-    documentation: Optional[str] = Field(
-        default=None, description="Device documentation/description"
-    )
+    documentation: str | None = Field(default=None, description="Device documentation/description")
 
     class Config:
         json_schema_extra = {
@@ -192,16 +189,16 @@ class PVMetadata(BaseModel):
 
     pv: str = Field(description="EPICS PV name")
     connected: bool = Field(default=False, description="Connection status")
-    dtype: Optional[str] = Field(default=None, description="EPICS data type")
-    units: Optional[str] = Field(default=None, description="Engineering units")
-    precision: Optional[int] = Field(default=None, description="Display precision")
-    enum_strs: Optional[List[str]] = Field(
+    dtype: str | None = Field(default=None, description="EPICS data type")
+    units: str | None = Field(default=None, description="Engineering units")
+    precision: int | None = Field(default=None, description="Display precision")
+    enum_strs: list[str] | None = Field(
         default=None, description="Enumeration strings for enum PVs"
     )
-    upper_ctrl_limit: Optional[float] = Field(default=None, description="Upper control limit")
-    lower_ctrl_limit: Optional[float] = Field(default=None, description="Lower control limit")
-    device_name: Optional[str] = Field(default=None, description="Owning device name if known")
-    component_name: Optional[str] = Field(default=None, description="Component name within device")
+    upper_ctrl_limit: float | None = Field(default=None, description="Upper control limit")
+    lower_ctrl_limit: float | None = Field(default=None, description="Lower control limit")
+    device_name: str | None = Field(default=None, description="Owning device name if known")
+    component_name: str | None = Field(default=None, description="Component name within device")
 
     class Config:
         json_schema_extra = {
@@ -228,16 +225,16 @@ class DeviceRegistry(BaseModel):
     Provides fast lookup for device metadata and instantiation specs.
     """
 
-    devices: Dict[str, DeviceMetadata] = Field(
+    devices: dict[str, DeviceMetadata] = Field(
         default_factory=dict, description="Device name to metadata mapping"
     )
-    pvs: Dict[str, PVMetadata] = Field(
+    pvs: dict[str, PVMetadata] = Field(
         default_factory=dict, description="PV name to metadata mapping"
     )
-    instantiation_specs: Dict[str, DeviceInstantiationSpec] = Field(
+    instantiation_specs: dict[str, DeviceInstantiationSpec] = Field(
         default_factory=dict, description="Device name to instantiation specification mapping"
     )
-    standalone_pv_names: Set[str] = Field(
+    standalone_pv_names: set[str] = Field(
         default_factory=set,
         description=(
             "PVs registered as standalone (no owning device). Tracked so a "
@@ -246,20 +243,20 @@ class DeviceRegistry(BaseModel):
         ),
     )
 
-    def get_device(self, name: str) -> Optional[DeviceMetadata]:
+    def get_device(self, name: str) -> DeviceMetadata | None:
         """Get device by name."""
         return self.devices.get(name)
 
     def list_devices(
         self,
-        device_label: Optional[DeviceLabel] = None,
-        pattern: Optional[str] = None,
-        labels: Optional[List[str]] = None,
-        ophyd_class: Optional[str] = None,
-        readable: Optional[bool] = None,
-        movable: Optional[bool] = None,
-        flyable: Optional[bool] = None,
-    ) -> List[str]:
+        device_label: DeviceLabel | None = None,
+        pattern: str | None = None,
+        labels: list[str] | None = None,
+        ophyd_class: str | None = None,
+        readable: bool | None = None,
+        movable: bool | None = None,
+        flyable: bool | None = None,
+    ) -> list[str]:
         """List device names with optional filtering.
 
         Args:
@@ -303,25 +300,25 @@ class DeviceRegistry(BaseModel):
 
         return sorted(names)
 
-    def list_labels(self) -> List[str]:
+    def list_labels(self) -> list[str]:
         """Get all unique labels from devices."""
         all_labels: set = set()
         for device in self.devices.values():
             all_labels.update(device.labels)
         return sorted(all_labels)
 
-    def get_pv(self, pv_name: str) -> Optional[PVMetadata]:
+    def get_pv(self, pv_name: str) -> PVMetadata | None:
         """Get PV metadata by name."""
         return self.pvs.get(pv_name)
 
-    def search_pvs(self, pattern: str) -> List[str]:
+    def search_pvs(self, pattern: str) -> list[str]:
         """Search PVs by glob pattern."""
         import fnmatch
 
         return sorted([pv for pv in self.pvs.keys() if fnmatch.fnmatch(pv, pattern)])
 
     def add_device(
-        self, device: DeviceMetadata, instantiation_spec: Optional[DeviceInstantiationSpec] = None
+        self, device: DeviceMetadata, instantiation_spec: DeviceInstantiationSpec | None = None
     ) -> None:
         """Add or update device in registry.
 
@@ -351,7 +348,9 @@ class DeviceRegistry(BaseModel):
                 if prior_owner is not None and prior_owner != device.name:
                     logger.info(
                         "PV %s ownership reassigned from device %s to %s",
-                        pv_name, prior_owner, device.name,
+                        pv_name,
+                        prior_owner,
+                        device.name,
                     )
                 self.pvs[pv_name].device_name = device.name
                 self.pvs[pv_name].component_name = component_name
@@ -369,9 +368,9 @@ class DeviceRegistry(BaseModel):
             self.pvs[pv_name] = PVMetadata(pv=pv_name, device_name=None)
         elif self.pvs[pv_name].device_name is not None:
             logger.info(
-                "PV %s registered standalone but is owned by device %s; "
-                "device ownership preserved",
-                pv_name, self.pvs[pv_name].device_name,
+                "PV %s registered standalone but is owned by device %s; device ownership preserved",
+                pv_name,
+                self.pvs[pv_name].device_name,
             )
 
     def remove_standalone_pv(self, pv_name: str) -> None:
@@ -402,9 +401,7 @@ class DeviceRegistry(BaseModel):
         # was deleted, destroying the surviving owner's registry entry); a PV
         # registered as standalone reverts to standalone; only PVs nobody
         # else claims are dropped.
-        owned = [
-            pv_name for pv_name, pv_meta in self.pvs.items() if pv_meta.device_name == name
-        ]
+        owned = [pv_name for pv_name, pv_meta in self.pvs.items() if pv_meta.device_name == name]
         for pv_name in owned:
             new_owner = None
             for other_name, other_device in self.devices.items():
@@ -434,7 +431,7 @@ class DeviceRegistry(BaseModel):
         return True
 
     def update_device(
-        self, device: DeviceMetadata, instantiation_spec: Optional[DeviceInstantiationSpec] = None
+        self, device: DeviceMetadata, instantiation_spec: DeviceInstantiationSpec | None = None
     ) -> bool:
         """Update an existing device by removing old PV indexes and re-adding.
 
@@ -459,13 +456,13 @@ class DeviceRegistry(BaseModel):
         self.add_device(device, instantiation_spec)
         return True
 
-    def get_instantiation_spec(self, name: str) -> Optional[DeviceInstantiationSpec]:
+    def get_instantiation_spec(self, name: str) -> DeviceInstantiationSpec | None:
         """Get device instantiation specification by name."""
         return self.instantiation_specs.get(name)
 
     def list_instantiation_specs(
         self, active_only: bool = True
-    ) -> Dict[str, DeviceInstantiationSpec]:
+    ) -> dict[str, DeviceInstantiationSpec]:
         """Get all device instantiation specifications.
 
         Args:
@@ -546,11 +543,11 @@ class DeviceInstantiationSpecUpdate(BaseModel):
     DeviceInstantiationSpec — enforced by test_partial_models_field_parity.
     """
 
-    name: Optional[str] = _partial_field(DeviceInstantiationSpec, "name")
-    device_class: Optional[str] = _partial_field(DeviceInstantiationSpec, "device_class")
-    args: Optional[List[Any]] = _partial_field(DeviceInstantiationSpec, "args")
-    kwargs: Optional[Dict[str, Any]] = _partial_field(DeviceInstantiationSpec, "kwargs")
-    active: Optional[bool] = _partial_field(DeviceInstantiationSpec, "active")
+    name: str | None = _partial_field(DeviceInstantiationSpec, "name")
+    device_class: str | None = _partial_field(DeviceInstantiationSpec, "device_class")
+    args: list[Any] | None = _partial_field(DeviceInstantiationSpec, "args")
+    kwargs: dict[str, Any] | None = _partial_field(DeviceInstantiationSpec, "kwargs")
+    active: bool | None = _partial_field(DeviceInstantiationSpec, "active")
 
 
 class DeviceMetadataUpdate(BaseModel):
@@ -562,31 +559,31 @@ class DeviceMetadataUpdate(BaseModel):
     DeviceMetadata — enforced by test_partial_models_field_parity.
     """
 
-    name: Optional[str] = _partial_field(DeviceMetadata, "name")
-    device_label: Optional[DeviceLabel] = _partial_field(DeviceMetadata, "device_label")
-    ophyd_class: Optional[str] = _partial_field(DeviceMetadata, "ophyd_class")
-    module: Optional[str] = _partial_field(DeviceMetadata, "module")
-    is_movable: Optional[bool] = _partial_field(DeviceMetadata, "is_movable")
-    is_flyable: Optional[bool] = _partial_field(DeviceMetadata, "is_flyable")
-    is_readable: Optional[bool] = _partial_field(DeviceMetadata, "is_readable")
-    is_triggerable: Optional[bool] = _partial_field(DeviceMetadata, "is_triggerable")
-    is_stageable: Optional[bool] = _partial_field(DeviceMetadata, "is_stageable")
-    is_configurable: Optional[bool] = _partial_field(DeviceMetadata, "is_configurable")
-    is_pausable: Optional[bool] = _partial_field(DeviceMetadata, "is_pausable")
-    is_stoppable: Optional[bool] = _partial_field(DeviceMetadata, "is_stoppable")
-    is_subscribable: Optional[bool] = _partial_field(DeviceMetadata, "is_subscribable")
-    is_checkable: Optional[bool] = _partial_field(DeviceMetadata, "is_checkable")
-    writes_external_assets: Optional[bool] = _partial_field(DeviceMetadata, "writes_external_assets")
-    pvs: Optional[Dict[str, str]] = _partial_field(DeviceMetadata, "pvs")
-    hints: Optional[Dict[str, Any]] = _partial_field(DeviceMetadata, "hints")
-    read_attrs: Optional[List[str]] = _partial_field(DeviceMetadata, "read_attrs")
-    configuration_attrs: Optional[List[str]] = _partial_field(DeviceMetadata, "configuration_attrs")
-    parent: Optional[str] = _partial_field(DeviceMetadata, "parent")
-    labels: Optional[List[str]] = _partial_field(DeviceMetadata, "labels")
-    beamline: Optional[str] = _partial_field(DeviceMetadata, "beamline")
-    location_group: Optional[str] = _partial_field(DeviceMetadata, "location_group")
-    functional_group: Optional[str] = _partial_field(DeviceMetadata, "functional_group")
-    documentation: Optional[str] = _partial_field(DeviceMetadata, "documentation")
+    name: str | None = _partial_field(DeviceMetadata, "name")
+    device_label: DeviceLabel | None = _partial_field(DeviceMetadata, "device_label")
+    ophyd_class: str | None = _partial_field(DeviceMetadata, "ophyd_class")
+    module: str | None = _partial_field(DeviceMetadata, "module")
+    is_movable: bool | None = _partial_field(DeviceMetadata, "is_movable")
+    is_flyable: bool | None = _partial_field(DeviceMetadata, "is_flyable")
+    is_readable: bool | None = _partial_field(DeviceMetadata, "is_readable")
+    is_triggerable: bool | None = _partial_field(DeviceMetadata, "is_triggerable")
+    is_stageable: bool | None = _partial_field(DeviceMetadata, "is_stageable")
+    is_configurable: bool | None = _partial_field(DeviceMetadata, "is_configurable")
+    is_pausable: bool | None = _partial_field(DeviceMetadata, "is_pausable")
+    is_stoppable: bool | None = _partial_field(DeviceMetadata, "is_stoppable")
+    is_subscribable: bool | None = _partial_field(DeviceMetadata, "is_subscribable")
+    is_checkable: bool | None = _partial_field(DeviceMetadata, "is_checkable")
+    writes_external_assets: bool | None = _partial_field(DeviceMetadata, "writes_external_assets")
+    pvs: dict[str, str] | None = _partial_field(DeviceMetadata, "pvs")
+    hints: dict[str, Any] | None = _partial_field(DeviceMetadata, "hints")
+    read_attrs: list[str] | None = _partial_field(DeviceMetadata, "read_attrs")
+    configuration_attrs: list[str] | None = _partial_field(DeviceMetadata, "configuration_attrs")
+    parent: str | None = _partial_field(DeviceMetadata, "parent")
+    labels: list[str] | None = _partial_field(DeviceMetadata, "labels")
+    beamline: str | None = _partial_field(DeviceMetadata, "beamline")
+    location_group: str | None = _partial_field(DeviceMetadata, "location_group")
+    functional_group: str | None = _partial_field(DeviceMetadata, "functional_group")
+    documentation: str | None = _partial_field(DeviceMetadata, "documentation")
 
 
 class DeviceUpdateRequest(BaseModel):
@@ -597,11 +594,11 @@ class DeviceUpdateRequest(BaseModel):
     keep their current values.
     """
 
-    metadata: Optional[DeviceMetadataUpdate] = Field(
+    metadata: DeviceMetadataUpdate | None = Field(
         default=None,
         description="Partial device metadata — only included fields are updated",
     )
-    instantiation_spec: Optional[DeviceInstantiationSpecUpdate] = Field(
+    instantiation_spec: DeviceInstantiationSpecUpdate | None = Field(
         default=None,
         description="Partial instantiation spec — only included fields are updated",
     )
@@ -633,7 +630,7 @@ class DeviceAuditEntry(BaseModel):
     device_name: str = Field(description="Device name (or '*' for registry-wide ops)")
     operation: str = Field(description="Operation (seed/add/update/delete/reset)")
     timestamp: float = Field(description="Unix timestamp")
-    details: Optional[str] = Field(default=None, description="Optional JSON details")
+    details: str | None = Field(default=None, description="Optional JSON details")
 
 
 class DeviceChangeEntry(BaseModel):
@@ -648,8 +645,8 @@ class DeviceChangeEntry(BaseModel):
     device_name: str = Field(description="Device name")
     op: Literal["upsert", "delete"] = Field(description="Either 'upsert' or 'delete'")
     version: int = Field(description="Audit log id of the change that produced this state")
-    metadata: Optional[DeviceMetadata] = Field(default=None)
-    spec: Optional[DeviceInstantiationSpec] = Field(default=None)
+    metadata: DeviceMetadata | None = Field(default=None)
+    spec: DeviceInstantiationSpec | None = Field(default=None)
 
 
 class DeviceChangesResponse(BaseModel):
@@ -667,7 +664,7 @@ class DeviceChangesResponse(BaseModel):
     current_version: int = Field(description="Latest audit log id at query time")
     service_epoch: str = Field(description="Stable service-instance identifier")
     reset_occurred: bool = Field(description="True if a registry-wide reset happened in the range")
-    changes: List[DeviceChangeEntry] = Field(default_factory=list)
+    changes: list[DeviceChangeEntry] = Field(default_factory=list)
 
 
 # ===== Nested Device Models =====
@@ -693,14 +690,14 @@ class StandalonePV(BaseModel):
     """A standalone PV not associated with any ophyd device."""
 
     pv_name: str = Field(description="EPICS PV name")
-    description: Optional[str] = Field(default=None, description="Human-readable description")
+    description: str | None = Field(default=None, description="Human-readable description")
     protocol: PVProtocol = Field(default=PVProtocol.CA, description="EPICS protocol")
     access_mode: PVAccessMode = Field(default=PVAccessMode.READ_ONLY, description="Access mode")
-    labels: List[str] = Field(default_factory=list, description="Labels for RBAC grouping")
+    labels: list[str] = Field(default_factory=list, description="Labels for RBAC grouping")
     source: str = Field(default="runtime", description="Source of registration")
-    created_by: Optional[str] = Field(default=None, description="User who registered this PV")
-    created_at: Optional[float] = Field(default=None, description="Unix timestamp of creation")
-    updated_at: Optional[float] = Field(default=None, description="Unix timestamp of last update")
+    created_by: str | None = Field(default=None, description="User who registered this PV")
+    created_at: float | None = Field(default=None, description="Unix timestamp of creation")
+    updated_at: float | None = Field(default=None, description="Unix timestamp of last update")
 
 
 class StandalonePVCreateRequest(BaseModel):
@@ -728,10 +725,10 @@ class StandalonePVCreateRequest(BaseModel):
         pattern=r"^[\x21-\x7e]+$",
         description="EPICS PV name (non-empty, printable ASCII, no whitespace)",
     )
-    description: Optional[str] = Field(default=None, description="Human-readable description")
+    description: str | None = Field(default=None, description="Human-readable description")
     protocol: PVProtocol = Field(default=PVProtocol.CA, description="EPICS protocol")
     access_mode: PVAccessMode = Field(default=PVAccessMode.READ_ONLY, description="Access mode")
-    labels: List[str] = Field(default_factory=list, description="Labels for RBAC grouping")
+    labels: list[str] = Field(default_factory=list, description="Labels for RBAC grouping")
 
     class Config:
         json_schema_extra = {
@@ -752,10 +749,10 @@ class StandalonePVUpdateRequest(BaseModel):
     applied; omitted fields keep their current values.
     """
 
-    description: Optional[str] = Field(default=None, description="Human-readable description")
-    protocol: Optional[PVProtocol] = Field(default=None, description="EPICS protocol")
-    access_mode: Optional[PVAccessMode] = Field(default=None, description="Access mode")
-    labels: Optional[List[str]] = Field(default=None, description="Labels for RBAC grouping")
+    description: str | None = Field(default=None, description="Human-readable description")
+    protocol: PVProtocol | None = Field(default=None, description="EPICS protocol")
+    access_mode: PVAccessMode | None = Field(default=None, description="Access mode")
+    labels: list[str] | None = Field(default=None, description="Labels for RBAC grouping")
 
     class Config:
         json_schema_extra = {
@@ -781,7 +778,7 @@ class StandalonePVCRUDResponse(BaseModel):
 class DeviceLockRequest(BaseModel):
     """Request model for acquiring device locks (bulk atomic)."""
 
-    device_names: List[str] = Field(description="Devices to lock")
+    device_names: list[str] = Field(description="Devices to lock")
     item_id: str = Field(description="Queue item ID holding the lock")
     plan_name: str = Field(description="Name of the plan acquiring devices")
     locked_by_service: str = Field(
@@ -805,8 +802,8 @@ class DeviceLockConflict(BaseModel):
 
     device_name: str = Field(description="Device name")
     reason: str = Field(description="Why the lock failed (not_found, disabled, already_locked)")
-    locked_by_plan: Optional[str] = Field(default=None, description="Plan holding the lock")
-    locked_at: Optional[str] = Field(default=None, description="ISO timestamp of lock acquisition")
+    locked_by_plan: str | None = Field(default=None, description="Plan holding the lock")
+    locked_at: str | None = Field(default=None, description="ISO timestamp of lock acquisition")
 
 
 class LockPolicy(BaseModel):
@@ -826,10 +823,29 @@ class DeviceLockResponse(BaseModel):
     """Response model for successful lock acquisition."""
 
     success: bool = Field(description="Whether locks were acquired")
-    locked_devices: List[str] = Field(default_factory=list, description="Devices that were locked")
-    locked_pvs: List[str] = Field(default_factory=list, description="PVs implicitly locked")
-    lock_id: Optional[str] = Field(default=None, description="Lock group identifier")
+    locked_devices: list[str] = Field(default_factory=list, description="Devices that were locked")
+    locked_pvs: list[str] = Field(default_factory=list, description="PVs implicitly locked")
+    lock_id: str | None = Field(default=None, description="Lock group identifier")
     registry_version: int = Field(description="Lock version counter")
+    lock_epoch: str = Field(
+        description=(
+            "Lock-authority generation id. Changes when configuration_service "
+            "restarts (in-memory lock state is rebuilt). Holders compare this "
+            "across calls to detect that their locks were dropped and must be "
+            "re-acquired."
+        ),
+    )
+    expires_at: str | None = Field(
+        default=None,
+        description=(
+            "ISO timestamp when the lease lapses if not renewed, or null when "
+            "leases are disabled (CONFIG_LOCK_LEASE_TTL_SECONDS=0)."
+        ),
+    )
+    lease_ttl_seconds: float = Field(
+        default=0.0,
+        description="Configured lease TTL in seconds (0 = leases disabled).",
+    )
 
 
 class DeviceLockConflictResponse(BaseModel):
@@ -837,7 +853,7 @@ class DeviceLockConflictResponse(BaseModel):
 
     success: bool = Field(default=False)
     message: str = Field(description="Human-readable error message")
-    conflicting_devices: List[DeviceLockConflict] = Field(
+    conflicting_devices: list[DeviceLockConflict] = Field(
         default_factory=list, description="Devices that caused the conflict"
     )
 
@@ -845,24 +861,67 @@ class DeviceLockConflictResponse(BaseModel):
 class DeviceUnlockRequest(BaseModel):
     """Request model for releasing device locks."""
 
-    device_names: List[str] = Field(description="Devices to unlock")
+    device_names: list[str] = Field(description="Devices to unlock")
     item_id: str = Field(description="Queue item ID that holds the lock")
+
+
+class DeviceLockRenewRequest(BaseModel):
+    """Request model for renewing (heartbeating) held device locks."""
+
+    device_names: list[str] = Field(description="Devices whose lease to extend")
+    item_id: str = Field(description="Queue item ID that holds the lock")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "device_names": ["sample_x", "det1"],
+                "item_id": "550e8400-e29b-41d4-a716-446655440000",
+            }
+        }
+
+
+class DeviceLockRenewResponse(BaseModel):
+    """Response model for a lock-renewal (heartbeat).
+
+    ``success`` is True only when every requested device was renewed. When
+    ``lost`` is non-empty the holder no longer owns those locks here (they
+    expired, were released, or the authority restarted) and must re-acquire;
+    ``lock_epoch`` lets the holder confirm an authority reset.
+    """
+
+    success: bool = Field(description="True only if every device was renewed")
+    renewed_devices: list[str] = Field(
+        default_factory=list, description="Devices whose lease was extended"
+    )
+    lost_devices: list[str] = Field(
+        default_factory=list,
+        description="Requested devices no longer held here — re-acquire needed",
+    )
+    conflict_devices: list[str] = Field(
+        default_factory=list,
+        description="Requested devices currently held by a different item_id",
+    )
+    lock_epoch: str = Field(description="Lock-authority generation id")
+    expires_at: str | None = Field(
+        default=None, description="New lease expiry (null when leases disabled)"
+    )
 
 
 class DeviceUnlockResponse(BaseModel):
     """Response model for unlock operations."""
 
     success: bool = Field(description="Whether locks were released")
-    unlocked_devices: List[str] = Field(
+    unlocked_devices: list[str] = Field(
         default_factory=list, description="Devices that were unlocked"
     )
     registry_version: int = Field(description="Lock version counter")
+    lock_epoch: str = Field(description="Lock-authority generation id")
 
 
 class DeviceForceUnlockRequest(BaseModel):
     """Request model for administrative force-unlock."""
 
-    device_names: List[str] = Field(description="Devices to force-unlock")
+    device_names: list[str] = Field(description="Devices to force-unlock")
     reason: str = Field(description="Reason for force-unlock (for audit log)")
 
     class Config:
@@ -881,12 +940,25 @@ class DeviceStatusResponse(BaseModel):
     available: bool = Field(description="True only when enabled AND unlocked")
     enabled: bool = Field(description="Whether the device is enabled for instantiation")
     lock_status: str = Field(description="Lock state: 'locked' or 'unlocked'")
-    locked_by_plan: Optional[str] = Field(default=None, description="Plan holding the lock")
-    locked_by_item: Optional[str] = Field(
-        default=None, description="Queue item ID holding the lock"
+    locked_by_plan: str | None = Field(default=None, description="Plan holding the lock")
+    locked_by_item: str | None = Field(default=None, description="Queue item ID holding the lock")
+    locked_at: str | None = Field(default=None, description="ISO timestamp of lock acquisition")
+    locked_until: str | None = Field(
+        default=None,
+        description=(
+            "ISO timestamp when the current lock's lease lapses if not "
+            "renewed, or null when unlocked or leases are disabled."
+        ),
     )
-    locked_at: Optional[str] = Field(default=None, description="ISO timestamp of lock acquisition")
-    pv_health: Dict[str, "PVHealthRecord"] = Field(
+    lock_epoch: str = Field(
+        description=(
+            "Lock-authority generation id. Changes on a configuration_service "
+            "restart (in-memory lock state is rebuilt). Readers (direct-control) "
+            "can detect that the lock table was reset — every device will report "
+            "unlocked until holders re-acquire."
+        ),
+    )
+    pv_health: dict[str, "PVHealthRecord"] = Field(
         default_factory=dict,
         description=(
             "PV-level health records keyed by PV name. Only PVs that have "
@@ -906,20 +978,18 @@ class PVStatusResponse(BaseModel):
     available: bool = Field(
         description="True when owning device is enabled and unlocked (or standalone)"
     )
-    device_name: Optional[str] = Field(
+    device_name: str | None = Field(
         default=None, description="Owning device name (null for standalone PVs)"
     )
-    device_enabled: Optional[bool] = Field(
+    device_enabled: bool | None = Field(
         default=None, description="Whether the owning device is enabled"
     )
-    device_lock_status: Optional[str] = Field(default=None, description="Owning device lock state")
-    locked_by_plan: Optional[str] = Field(
+    device_lock_status: str | None = Field(default=None, description="Owning device lock state")
+    locked_by_plan: str | None = Field(
         default=None, description="Plan holding the lock on the owning device"
     )
-    locked_by_item: Optional[str] = Field(
-        default=None, description="Queue item ID holding the lock"
-    )
-    locked_at: Optional[str] = Field(default=None, description="ISO timestamp of lock acquisition")
+    locked_by_item: str | None = Field(default=None, description="Queue item ID holding the lock")
+    locked_at: str | None = Field(default=None, description="ISO timestamp of lock acquisition")
 
 
 # ===== PV Health Tracking =====
@@ -960,9 +1030,9 @@ class PVHealthRecord(BaseModel):
 
     pv_name: str
     consecutive_failures: int = 0
-    last_failure_at: Optional[datetime] = None
-    last_failure_message: Optional[str] = None
-    last_success_at: Optional[datetime] = None
+    last_failure_at: datetime | None = None
+    last_failure_message: str | None = None
+    last_success_at: datetime | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -983,7 +1053,7 @@ class PVHealthReport(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    message: Optional[str] = Field(
+    message: str | None = Field(
         None,
         description="Diagnostic message for failure reports (EPICS error, timeout reason, etc.).",
     )
@@ -999,9 +1069,7 @@ class PVHealthClearResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    cleared: int = Field(
-        ..., ge=0, description="Number of records removed (never negative)."
-    )
+    cleared: int = Field(..., ge=0, description="Number of records removed (never negative).")
 
 
 class PVHealthStateCounts(BaseModel):
@@ -1018,9 +1086,7 @@ class PVHealthStateCounts(BaseModel):
 
     healthy: int = Field(0, ge=0, description="PVs in the ``healthy`` state.")
     degraded: int = Field(0, ge=0, description="PVs in the ``degraded`` state.")
-    unresponsive: int = Field(
-        0, ge=0, description="PVs in the ``unresponsive`` state."
-    )
+    unresponsive: int = Field(0, ge=0, description="PVs in the ``unresponsive`` state.")
 
 
 class PVHealthStats(BaseModel):
@@ -1044,11 +1110,7 @@ class PVHealthStats(BaseModel):
     @property
     def tracked_pvs(self) -> int:
         """Total number of PVs with at least one health record."""
-        return (
-            self.by_state.healthy
-            + self.by_state.degraded
-            + self.by_state.unresponsive
-        )
+        return self.by_state.healthy + self.by_state.degraded + self.by_state.unresponsive
 
 
 class NestedDeviceComponent(BaseModel):
@@ -1057,8 +1119,8 @@ class NestedDeviceComponent(BaseModel):
     name: str = Field(description="Component name")
     device_path: str = Field(description="Full path to component")
     parent_device: str = Field(description="Parent device name")
-    component_type: Optional[str] = Field(None, description="Component type")
-    pv: Optional[str] = Field(None, description="Associated EPICS PV")
+    component_type: str | None = Field(None, description="Component type")
+    pv: str | None = Field(None, description="Associated EPICS PV")
     is_readable: bool = Field(default=True, description="Whether component is readable")
     is_settable: bool = Field(default=False, description="Whether component is settable")
 
@@ -1090,7 +1152,7 @@ class PathResolveRequest(BaseModel):
       ``.source`` URI.
     """
 
-    addresses: List[str] = Field(
+    addresses: list[str] = Field(
         ...,
         min_length=1,
         max_length=200,
@@ -1112,12 +1174,11 @@ class PathResolveResultItem(BaseModel):
     address: str
     outcome: PathResolveOutcome = Field(
         description=(
-            "Per-address result kind. See ``PathResolveOutcome`` for the "
-            "full set of values."
+            "Per-address result kind. See ``PathResolveOutcome`` for the full set of values."
         )
     )
-    pv_name: Optional[str] = None
-    message: Optional[str] = None
+    pv_name: str | None = None
+    message: str | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -1133,4 +1194,4 @@ class PathResolveResponse(BaseModel):
     is the right semantic; unlike batch caput there's no halt-on-failure.
     """
 
-    resolved: List[PathResolveResultItem]
+    resolved: list[PathResolveResultItem]

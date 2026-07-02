@@ -10,10 +10,10 @@ When configuration_service is deployed without a direct-control URL (e.g.
 local dev, frontend-only test environments), this client is simply not
 constructed and the resolver leaves ``needs_enrichment`` outcomes alone.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
 
 import httpx
 import structlog
@@ -35,9 +35,9 @@ class EnrichmentResult:
     """Mirrors one row of the direct-control response."""
 
     ok: bool
-    pv_name: Optional[str] = None
-    error_type: Optional[str] = None
-    message: Optional[str] = None
+    pv_name: str | None = None
+    error_type: str | None = None
+    message: str | None = None
 
 
 class DirectControlUnavailable(Exception):
@@ -63,7 +63,7 @@ class DirectControlClient:
         self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout)
         self._base_url = base_url
 
-    async def enrich(self, specs: List[EnrichmentSpec]) -> List[EnrichmentResult]:
+    async def enrich(self, specs: list[EnrichmentSpec]) -> list[EnrichmentResult]:
         """Resolve a batch of ``(class, prefix, sub_path)`` triples.
 
         Returns one ``EnrichmentResult`` per spec, in order. Raises
@@ -93,8 +93,7 @@ class DirectControlClient:
                 error_type=type(e).__name__,
             )
             raise DirectControlUnavailable(
-                f"direct-control at {self._base_url} unreachable: "
-                f"{type(e).__name__}: {e}"
+                f"direct-control at {self._base_url} unreachable: {type(e).__name__}: {e}"
             ) from e
 
         if resp.status_code != 200:
@@ -119,8 +118,7 @@ class DirectControlClient:
             rows = body["results"]
         except (ValueError, KeyError, TypeError) as e:
             raise DirectControlUnavailable(
-                f"direct-control returned malformed body: "
-                f"{type(e).__name__}: {e}"
+                f"direct-control returned malformed body: {type(e).__name__}: {e}"
             ) from e
 
         if not isinstance(rows, list) or len(rows) != len(specs):
@@ -144,8 +142,7 @@ class DirectControlClient:
             ]
         except (KeyError, TypeError, AttributeError) as e:
             raise DirectControlUnavailable(
-                f"direct-control returned malformed result row: "
-                f"{type(e).__name__}: {e}"
+                f"direct-control returned malformed result row: {type(e).__name__}: {e}"
             ) from e
 
     async def aclose(self) -> None:

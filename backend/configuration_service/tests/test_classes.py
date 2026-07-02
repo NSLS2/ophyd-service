@@ -14,9 +14,12 @@ hands off to direct-control. The mock direct-control client in
 production direct-control would instantiate this class against a real
 IOC and read each leaf's ``pvname``.
 """
+
 from __future__ import annotations
 
-from ophyd import Component as Cpt, Device, EpicsSignal, FormattedComponent as FmtCpt
+from ophyd import Component as Cpt
+from ophyd import Device, EpicsSignal
+from ophyd import FormattedComponent as FmtCpt
 
 
 class _Inner(Device):
