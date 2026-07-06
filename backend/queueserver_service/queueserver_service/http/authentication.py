@@ -378,9 +378,12 @@ def get_current_principal_websocket(
         # WebSocket authenticates.
         api_key = param
     if api_key is None:
-        # Also accept the key as an "api_key" query parameter, mirroring the HTTP
-        # get_api_key dependency, so a client can authenticate a WebSocket the same
-        # way it authenticates its HTTP requests.
+        # Fallback: accept the key as an "api_key" query parameter, mirroring the
+        # HTTP get_api_key dependency, so a client can authenticate a WebSocket the
+        # same way it authenticates its HTTP requests. The "Authorization" header
+        # above is the preferred transport — a query-string key can leak into
+        # access logs and reverse-proxy logs, which commonly record query strings —
+        # so this is intentionally only a compatibility fallback (header wins).
         #
         # Cookies are deliberately NOT accepted here: the WebSocket upgrade is not
         # covered by the CORS middleware and performs no Origin check, so honoring

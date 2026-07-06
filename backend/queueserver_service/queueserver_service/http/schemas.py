@@ -169,7 +169,7 @@ class AuthenticationMode(str, enum.Enum):
 
 
 # NOTE: no route currently serves an "About"/discovery document. Upstream
-# tiled/bluesky-httpserver expose an API-root "about" endpoint that lists the
+# tiled/bluesky-httpserver exposes an API-root "about" endpoint that lists the
 # configured authentication providers and their login endpoints so a generic
 # client can discover how to authenticate. The bluesky-queueserver-api client
 # (the frozen HTTP contract for this service) does NOT use it — it targets the
