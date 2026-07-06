@@ -1324,12 +1324,20 @@ class RunEngineManager(Process):
         this — there a sync failure should fail env-open loudly.)
         """
         try:
-            await self._load_existing_plans_and_devices_from_worker()
+            ok = await self._load_existing_plans_and_devices_from_worker()
         except Exception as ex:  # noqa: BLE001
             logger.exception("Config-service device sync failed (%s): %s", context, ex)
             self._set_config_service_sync_error(str(ex))
         else:
-            self._set_config_service_sync_error(None)
+            if ok:
+                self._set_config_service_sync_error(None)
+            else:
+                # A False return is a non-exception failure: the worker
+                # plans/devices download failed, so the config-service sync
+                # never ran. Surface it rather than clearing a prior error.
+                msg = "Failed to download plans/devices from the worker; config-service sync skipped"
+                logger.error("Config-service device sync skipped (%s): %s", context, msg)
+                self._set_config_service_sync_error(msg)
 
     async def _load_task_results_from_worker(self):
         """

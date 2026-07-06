@@ -189,3 +189,21 @@ async def test_guarded_sync_never_raises_so_startup_degrades():
     # Must complete without raising.
     await mgr._sync_plans_devices_from_worker_guarded(context="manager restart")
     assert mgr._config_service_sync_error == "registry down"
+
+
+@pytest.mark.asyncio
+async def test_guarded_sync_surfaces_false_download_failure():
+    """A False return (the worker plans/devices download failed, so the sync
+    never ran) is a non-exception failure: it must be surfaced, not treated as
+    success and used to clear a prior error."""
+    mgr = RunEngineManager.__new__(RunEngineManager)
+    mgr._config_service_sync_error = "previous error"
+    mgr._status_update = lambda: None
+
+    async def download_failed():
+        return False
+
+    mgr._load_existing_plans_and_devices_from_worker = download_failed
+    await mgr._sync_plans_devices_from_worker_guarded(context="periodic poll")
+    assert mgr._config_service_sync_error is not None
+    assert "download" in mgr._config_service_sync_error.lower()
