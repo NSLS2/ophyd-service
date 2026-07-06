@@ -122,6 +122,7 @@ class StatusResponse(RMResponse):
     task_results_uid: str
     lock_info_uid: str
     lock: LockState
+    config_service_sync_error: Optional[str] = None
 
 
 class QueueGetResponse(RMResponse):

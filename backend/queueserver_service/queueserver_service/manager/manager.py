@@ -301,6 +301,12 @@ class RunEngineManager(Process):
         # Recent RE Manager status. The status must be updated after each operation by 'self._status_update()'
         self._status = {}
 
+        # Last config-service device-sync error (or None). Surfaced in status so
+        # a sync that fails in the fire-and-forget periodic poll or the manager
+        # restart path is API-visible instead of only a log line. Cleared on the
+        # next successful sync.
+        self._config_service_sync_error = None
+
         # The number of time RE Manager was started (including the first attempt to start it).
         #   Numbering starts from 1.
         self._number_of_restarts = number_of_restarts
@@ -583,6 +589,8 @@ class RunEngineManager(Process):
             "task_results_uid": self._task_results.task_results_uid,
             "lock_info_uid": self._lock_info.uid,
             "lock": {"environment": self._lock_info.environment, "queue": self._lock_info.queue},
+            # None unless the most recent config-service device sync failed.
+            "config_service_sync_error": self._config_service_sync_error,
         }
 
         self._status_publish()  # Add the updated status to 'msg_queue'
@@ -974,7 +982,9 @@ class RunEngineManager(Process):
             update_status = False
 
         if ws["plans_and_devices_list_updated"]:
-            self._loop.create_task(self._load_existing_plans_and_devices_from_worker())
+            self._loop.create_task(
+                self._sync_plans_devices_from_worker_guarded(context="periodic poll")
+            )
 
         if ws["completed_tasks_available"]:
             self._loop.create_task(self._load_task_results_from_worker())
@@ -1288,6 +1298,38 @@ class RunEngineManager(Process):
 
             self._status_update()
         return True
+
+    def _set_config_service_sync_error(self, err_msg):
+        """Record (or clear) the config-service sync error surfaced in status.
+
+        Only republishes status when the value actually changes, so a healthy
+        periodic poll doesn't emit a status update on every tick.
+        """
+        if self._config_service_sync_error != err_msg:
+            self._config_service_sync_error = err_msg
+            self._status_update()
+
+    async def _sync_plans_devices_from_worker_guarded(self, *, context):
+        """Run the worker plans/devices download + config-service sync, catching
+        and surfacing any failure instead of letting it escape.
+
+        Used by the fire-and-forget periodic poll and the manager restart path.
+        Both must not let a config-service sync error propagate: as an orphaned
+        ``create_task`` it would surface only as asyncio's "Task exception was
+        never retrieved" (the periodic poll), and in the restart coroutine an
+        unreachable config-service would kill the manager and drive a watchdog
+        crash-loop. The error is logged and recorded in the
+        ``config_service_sync_error`` status field so it is API-visible; a later
+        successful sync clears it. (The env-open path deliberately does NOT use
+        this — there a sync failure should fail env-open loudly.)
+        """
+        try:
+            await self._load_existing_plans_and_devices_from_worker()
+        except Exception as ex:  # noqa: BLE001
+            logger.exception("Config-service device sync failed (%s): %s", context, ex)
+            self._set_config_service_sync_error(str(ex))
+        else:
+            self._set_config_service_sync_error(None)
 
     async def _load_task_results_from_worker(self):
         """
@@ -2093,9 +2135,17 @@ class RunEngineManager(Process):
 
     async def _worker_command_update_device_overlay(self, upserts, deletes, *, replace):
         try:
+            # Use the long timeout: the worker handler instantiates every
+            # upserted device AND regenerates the existing/allowed lists (a full
+            # tree walk), which routinely exceeds the 0.5 s regular timeout on a
+            # real profile. With the regular timeout this pre-plan staleness
+            # update times out *after* the worker already applied the overlay,
+            # aborting the plan and stopping the queue on every registry change.
+            tt = self._comm_to_worker_timeout_long
             response = await self._comm_to_worker.send_msg(
                 "command_update_device_overlay",
                 {"upserts": upserts, "deletes": deletes, "replace": replace},
+                timeout=tt,
             )
             success = response["status"] == "accepted"
             err_msg = response["err_msg"]
@@ -4455,7 +4505,12 @@ class RunEngineManager(Process):
             #   and a copy of user group permissions, so they could be downloaded from the worker.
             #   If the request to download plans and devices fails, then the lists of existing and allowed
             #   devices and plans and the dictionary of user group permissions are going to be empty ({}).
-            await self._load_existing_plans_and_devices_from_worker()
+            # Guarded: if config-service is unreachable while the watchdog
+            # restarts the manager over a live worker, an unhandled sync error
+            # here would kill the startup coroutine and crash-loop the manager.
+            # Degrade instead — record the error in status and keep starting;
+            # the sync retries on the next periodic poll / env-open.
+            await self._sync_plans_devices_from_worker_guarded(context="manager restart")
 
             try:
                 self._update_allowed_plans_and_devices(restore_plans_devices=False)

@@ -1278,16 +1278,27 @@ class RunEngineWorker(Process):
         implicit_deletes: set = set()
         if replace:
             implicit_deletes = self._config_service_overlay_names - set(upserts)
+        # Stage-then-commit: instantiate every new device FIRST (the only
+        # fallible step here). Only once they ALL succeed do we mutate the RE
+        # namespace, whose remaining operations are plain dict pops/assignments
+        # that can't fail. A mid-loop instantiation failure would otherwise
+        # leave the namespace half-applied (some devices swapped, some deleted,
+        # some not) while this command reports "rejected" and the manager
+        # believes nothing changed.
         try:
-            for name in implicit_deletes:
-                self._re_namespace.pop(name, None)
-            for name, spec in upserts.items():
-                self._re_namespace[name] = instantiate_device_from_spec(spec)
-            for name in deletes:
-                self._re_namespace.pop(name, None)
+            staged_upserts = {
+                name: instantiate_device_from_spec(spec) for name, spec in upserts.items()
+            }
         except Exception as ex:  # noqa: BLE001
             logger.exception("config-service overlay update failed")
             return {"status": "rejected", "err_msg": str(ex)}
+
+        for name in implicit_deletes:
+            self._re_namespace.pop(name, None)
+        for name, device in staged_upserts.items():
+            self._re_namespace[name] = device
+        for name in deletes:
+            self._re_namespace.pop(name, None)
 
         if replace:
             self._config_service_overlay_names = set(upserts)
