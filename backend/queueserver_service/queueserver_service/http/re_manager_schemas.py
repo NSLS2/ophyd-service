@@ -6,10 +6,12 @@ type information instead of an untyped object.
 
 Two deliberate choices:
 
-* ``extra = "forbid"`` on every model. The manager dicts are the source of truth; if a
-  handler grows a new key, the endpoint fails hard with a ResponseValidationError instead
-  of FastAPI silently dropping the field. The integration tests exercise the live shapes
-  so drift is caught at test time, not in production.
+* ``extra = "allow"`` on every model. The manager dicts are the source of truth and can
+  grow new keys over time (for example, when tracking upstream bluesky-queueserver).
+  Allowing extra keys lets those pass straight through to the client — matching upstream,
+  which does not validate or strip response fields — instead of failing an otherwise-valid
+  request with a ResponseValidationError (HTTP 500). The declared fields still carry real
+  type information into the generated SDKs and the static ``openapi.json``.
 * Scalar ``item`` / ``running_item`` fields are ``Optional`` and ``QueueItem`` fields all
   carry defaults, because the manager returns ``None`` or an empty ``{}`` for these on the
   failure / idle path (e.g. ``item_get`` returns ``item={}`` when the lookup fails). An
@@ -18,7 +20,7 @@ Two deliberate choices:
 First cut covers the Status, Queue, Queue Items and History tag groups (22 routes). The
 remaining groups will be modelled in a follow-up.
 
-The inner ``class Config: extra = "forbid"`` form sets forbid-extra under both pydantic v1
+The inner ``class Config: extra = "allow"`` form sets allow-extra under both pydantic v1
 and v2, matching the version-portable style of ``schemas.py``.
 """
 
@@ -28,10 +30,10 @@ import pydantic
 
 
 class RMResponse(pydantic.BaseModel):
-    """Base for RE Manager response models: reject unexpected keys (fail-hard on drift)."""
+    """Base for RE Manager response models: allow unknown keys through (upstream-compatible)."""
 
     class Config:
-        extra = "forbid"
+        extra = "allow"
 
 
 # --------------------------------------------------------------------------------------

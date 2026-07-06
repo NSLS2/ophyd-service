@@ -4771,7 +4771,7 @@
             "title": "Config"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -4801,7 +4801,7 @@
             "title": "Text"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -4831,7 +4831,7 @@
             "title": "Console Output Uid"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -4870,7 +4870,7 @@
             "default": []
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -5055,7 +5055,7 @@
             "title": "Devices Allowed Uid"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -5097,7 +5097,7 @@
             "title": "Devices Existing Uid"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -5139,7 +5139,7 @@
             "title": "Task Uid"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -5183,7 +5183,7 @@
             "title": "Plan History Uid"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -5310,7 +5310,7 @@
             "title": "Result"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "title": "HistoryItem",
         "description": "A history item: same shape as a queue item, ``result`` always populated."
@@ -5368,7 +5368,7 @@
             ]
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -5408,7 +5408,7 @@
             ]
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -5461,7 +5461,7 @@
             "title": "Results"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -5550,7 +5550,7 @@
             "title": "Emergency Lock Key Is Set"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "title": "LockInfo",
         "description": "The structured lock-info block (``_format_lock_info``). All fields optional so the\nempty ``{}`` returned on the failure path validates as an all-``None`` instance."
@@ -5587,7 +5587,7 @@
             "title": "Lock Info Uid"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -5607,7 +5607,7 @@
             "title": "Queue"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "environment",
@@ -5638,7 +5638,7 @@
             "title": "User Group Permissions"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -5657,7 +5657,7 @@
             "title": "Ignore Failures"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "loop",
@@ -5699,7 +5699,7 @@
             "title": "Plans Allowed Uid"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -5741,7 +5741,7 @@
             "title": "Plans Existing Uid"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -6006,7 +6006,7 @@
             "title": "Plan Queue Uid"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -6133,7 +6133,7 @@
             "title": "Result"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "title": "QueueItem",
         "description": "A queue or history item.\n\n``item_uid`` / ``item_type`` / ``name`` are present on a populated item but every field\nis optional so that an empty ``{}`` (returned by some handlers on failure/idle) validates.\n``args`` / ``kwargs`` / ``meta`` are user-supplied and ``properties`` is added internally;\nthey are kept free-form to avoid drift on user-arbitrary content."
@@ -6161,7 +6161,7 @@
             "title": "Re Metadata"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -6213,7 +6213,7 @@
             "title": "Run List Uid"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -6385,7 +6385,7 @@
             "$ref": "#/components/schemas/LockState"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "msg",
@@ -6426,7 +6426,7 @@
             "title": "Msg"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -6480,7 +6480,7 @@
             "title": "Result"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -6533,7 +6533,7 @@
             "title": "Status"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",
@@ -6564,7 +6564,7 @@
             "title": "Task Uid"
           }
         },
-        "additionalProperties": false,
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "success",

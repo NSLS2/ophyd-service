@@ -2,14 +2,17 @@
 
 These tests drive real requests through a running httpserver + RE Manager (the existing
 ``fastapi_server`` / ``re_manager`` fixtures) and confirm the actual response shapes satisfy
-the Pydantic models in ``queueserver_service.http.re_manager_schemas``. Because every model uses
-``extra="forbid"``, a server-side ResponseValidationError (drift between a model and the
-manager's real dict) surfaces as an HTTP 500 — caught here both by ``_validates`` (the error
-body fails the model round-trip) and by the explicit drift-sentinel tests that compare live
-keys to the model's declared fields.
+the Pydantic models in ``queueserver_service.http.re_manager_schemas``. The models are
+intentionally introspected against real responses rather than hand-asserted, so they cannot
+silently drift from the manager.
 
-The models are intentionally introspected against real responses rather than hand-asserted,
-so they cannot silently drift from the manager.
+Every model uses ``extra="allow"``, so unknown manager keys pass through to the client
+(matching upstream) instead of raising a server-side ResponseValidationError / HTTP 500.
+Because unknown keys no longer fail validation, ``_validates`` catches only missing required
+fields and error bodies that slipped through; new-key drift is caught by the explicit
+drift-sentinel tests, which compare live keys to the model's declared fields — but only for
+the routes that have one (currently status, history and lock_info), so extra keys on other
+routes pass through silently rather than surfacing as an HTTP 500 in production.
 """
 
 import pprint
@@ -58,10 +61,12 @@ from tests.http.conftest import (  # noqa: F401
 
 
 def _validates(model, resp):
-    """Round-trip a live response through its model (``extra="forbid"``).
+    """Round-trip a live response through its model (``extra="allow"``).
 
-    Fails if the response carries an unexpected key, is missing a required field, or is an
-    error body (e.g. a 500 from a server-side ResponseValidationError) that slipped through.
+    Fails if the response is missing a required field or is an error body (e.g. a 500 that
+    slipped through). Unexpected keys are allowed through by the model, so new-key drift is
+    caught by the drift-sentinel tests below where present (status, history, lock_info) rather
+    than here.
     """
     assert "detail" not in resp, f"error response leaked instead of {model.__name__}:\n{pprint.pformat(resp)}"
     return model(**resp)
