@@ -137,6 +137,14 @@ class PVMonitorManager:
                 logger.error("pv_subscription_error", pv_name=pv_name, error=str(e))
                 if signal is not None:
                     self._destroy_signal_quietly(signal, pv_name)
+                # Drop the connect lock for a PV that never established a
+                # subscription. No unsubscribe path reaches a failed PV, so
+                # without this a repeatedly-failing PV would leave its entry in
+                # _connect_locks forever. Guarded on _signals so we never remove
+                # the lock for a live subscription a racing subscriber committed.
+                with self._lock:
+                    if pv_name not in self._signals:
+                        self._connect_locks.pop(pv_name, None)
                 raise PVNotFoundError(f"PV {pv_name} subscription failed: {e}") from e
 
             # Commit the connected signal + initial value under the lock. If a
@@ -177,6 +185,9 @@ class PVMonitorManager:
                         self._connection_status.pop(pv_name, None)
                         self._latest_values.pop(pv_name, None)
                         self._buffers.pop(pv_name, None)
+                        # PV never subscribed — drop its connect lock too (see
+                        # the connect-failure path above for the rationale).
+                        self._connect_locks.pop(pv_name, None)
                         self._destroy_signal_quietly(signal, pv_name)
                         raise PVNotFoundError(f"PV {pv_name} subscription failed: {e}") from e
 

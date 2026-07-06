@@ -92,6 +92,41 @@ def test_pv_monitor_failed_subscribe_cleans_cache_and_retry_works(monkeypatch):
     assert isinstance(monitor._signals["X:PV"], _WorkingSignal)
 
 
+def test_pv_monitor_failed_subscribe_drops_connect_lock(monkeypatch):
+    """A PV that never subscribes must not leave a permanent per-PV connect
+    lock: no unsubscribe path reaches a failed PV, so subscribe() itself has to
+    drop it or a repeatedly-failing PV would accumulate entries forever.
+    """
+    import direct_control.monitoring.pv_monitor as pvm
+
+    monitor = pvm.PVMonitorManager(Settings())
+    monkeypatch.setattr(
+        pvm.PVMonitorManager,
+        "_signal_to_pv_value",
+        lambda self, pv_name, signal: _dummy_pv_value(pv_name),
+    )
+
+    # (a) failure while registering the CA monitors (connect succeeded)
+    monkeypatch.setattr(pvm, "EpicsSignal", _FailingSubscribeSignal)
+    with pytest.raises(PVNotFoundError):
+        monitor.subscribe("X:PV")
+    assert "X:PV" not in monitor._connect_locks
+
+    # (b) failure to connect at all
+    class _NeverConnectsSignal(_StubSignalBase):
+        def __init__(self, pv_name, name=None):
+            super().__init__(pv_name, name)
+            self.connected = False
+
+        def subscribe(self, *args, **kwargs):
+            return 0
+
+    monkeypatch.setattr(pvm, "EpicsSignal", _NeverConnectsSignal)
+    with pytest.raises(PVNotFoundError):
+        monitor.subscribe("Y:PV")
+    assert "Y:PV" not in monitor._connect_locks
+
+
 # ===== Shared PV across two devices survives one device's teardown ===========
 
 
