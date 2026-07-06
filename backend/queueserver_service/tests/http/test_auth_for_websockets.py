@@ -50,20 +50,30 @@ class _ReceiveSystemInfoSocket(threading.Thread):
     save messages to the buffer.
     """
 
-    def __init__(self, *, endpoint, api_key=None, token=None, **kwargs):
+    def __init__(
+        self, *, endpoint, api_key=None, token=None, api_key_scheme="ApiKey", api_key_in_query=False, **kwargs
+    ):
         super().__init__(**kwargs)
         self.received_data_buffer = []
         self._exit = False
         self._api_key = api_key
         self._token = token
+        # Scheme name to send in the 'Authorization' header for the API key. The
+        # server treats it case-insensitively, so passing e.g. "apikey" must work.
+        self._api_key_scheme = api_key_scheme
+        # If True, pass the API key as an '?api_key=' query parameter instead of a header.
+        self._api_key_in_query = api_key_in_query
         self._endpoint = endpoint
 
     def run(self):
         websocket_uri = f"ws://{SERVER_ADDRESS}:{SERVER_PORT}/api{self._endpoint}"
         if self._token is not None:
             additional_headers = {"Authorization": f"Bearer {self._token}"}
+        elif self._api_key is not None and self._api_key_in_query:
+            websocket_uri += f"?api_key={self._api_key}"
+            additional_headers = {}
         elif self._api_key is not None:
-            additional_headers = {"Authorization": f"ApiKey {self._api_key}"}
+            additional_headers = {"Authorization": f"{self._api_key_scheme} {self._api_key}"}
         else:
             additional_headers = {}
 
@@ -94,7 +104,10 @@ class _ReceiveSystemInfoSocket(threading.Thread):
 
 
 # fmt: off
-@pytest.mark.parametrize("ws_auth_type", ["apikey", "apikey_invalid", "none"])
+@pytest.mark.parametrize(
+    "ws_auth_type",
+    ["apikey", "apikey_lowercase", "apikey_mixedcase", "apikey_query", "apikey_invalid", "none"],
+)
 # fmt: on
 def test_websocket_auth_01(
     tmpdir,
@@ -133,6 +146,14 @@ def test_websocket_auth_01(
         ws_params = {}
     elif ws_auth_type == "apikey":
         ws_params = {"api_key": api_key}
+    elif ws_auth_type == "apikey_lowercase":
+        # The 'Authorization' scheme name must be accepted case-insensitively.
+        ws_params = {"api_key": api_key, "api_key_scheme": "apikey"}
+    elif ws_auth_type == "apikey_mixedcase":
+        ws_params = {"api_key": api_key, "api_key_scheme": "aPiKeY"}
+    elif ws_auth_type == "apikey_query":
+        # The key may also be supplied as an '?api_key=' query parameter.
+        ws_params = {"api_key": api_key, "api_key_in_query": True}
     elif ws_auth_type == "apikey_invalid":
         ws_params = {"api_key": "InvalidApiKey"}
     # elif ws_auth_type == "token":
@@ -164,7 +185,7 @@ def test_websocket_auth_01(
     buffer = rsc.received_data_buffer
     if ws_auth_type in ("none", "apikey_invalid", "token_invalid"):
         assert len(buffer) == 0
-    elif ws_auth_type in ("apikey", "token"):
+    elif ws_auth_type in ("apikey", "apikey_lowercase", "apikey_mixedcase", "apikey_query", "token"):
         assert len(buffer) > 0
         for msg in buffer:
             assert "time" in msg, msg
