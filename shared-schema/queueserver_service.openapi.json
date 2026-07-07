@@ -6383,6 +6383,17 @@
           },
           "lock": {
             "$ref": "#/components/schemas/LockState"
+          },
+          "config_service_sync_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Service Sync Error"
           }
         },
         "additionalProperties": true,
