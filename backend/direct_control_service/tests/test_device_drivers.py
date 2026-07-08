@@ -10,6 +10,7 @@ ophyd-async coverage uses soft signals. The live-IOC end-to-end paths are in
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import numpy as np
 import pytest
@@ -522,3 +523,52 @@ async def test_async_invoke_no_stop_when_opted_out():
         await driver.invoke(_AsyncTarget(), "set", [1.0], {}, timeout=0.2, stop_on_timeout=False)
     assert "stop-on-timeout disabled" in str(excinfo.value)
     assert stop_calls == []
+
+
+async def test_classic_invoke_bounds_a_blocking_stop(monkeypatch):
+    """A classic stop() that blocks (CA/network) must not stall the response: it
+    is bounded by _STOP_TIMEOUT and reported as unconfirmed."""
+    monkeypatch.setattr("direct_control.drivers._STOP_TIMEOUT", 0.2)
+    driver = ClassicOphydDriver()
+    release = threading.Event()
+
+    class _BlockingStop:
+        name = "wedged_motor"
+
+        def __init__(self):
+            self.status = Status()
+
+        def set(self, *args, **kwargs):
+            return self.status
+
+        def stop(self, *args, **kwargs):
+            release.wait(5)  # blocks well past the (patched) _STOP_TIMEOUT
+
+    target = _BlockingStop()
+    try:
+        with pytest.raises(ControlError) as excinfo:
+            await driver.invoke(target, "set", [1.0], {}, timeout=0.2)
+        assert "did not confirm within 0.2s" in str(excinfo.value)
+    finally:
+        release.set()  # let the lingering stop thread exit
+        _finish(target.status)
+
+
+async def test_async_invoke_bounds_a_hanging_stop(monkeypatch):
+    """An ophyd-async stop() that never completes is bounded by _STOP_TIMEOUT and
+    reported as unconfirmed."""
+    monkeypatch.setattr("direct_control.drivers._STOP_TIMEOUT", 0.2)
+    driver = OphydAsyncDriver()
+
+    class _HangingStop:
+        name = "wedged_async_motor"
+
+        def set(self, *args, **kwargs):
+            return _AsyncStatusStuck()
+
+        async def stop(self, *args, **kwargs):
+            await asyncio.sleep(5)  # never completes within the patched _STOP_TIMEOUT
+
+    with pytest.raises(ControlError) as excinfo:
+        await driver.invoke(_HangingStop(), "set", [1.0], {}, timeout=0.2)
+    assert "did not confirm within 0.2s" in str(excinfo.value)

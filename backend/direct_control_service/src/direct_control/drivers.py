@@ -214,15 +214,21 @@ def _stop_note(target_name: str, enabled: bool, stop: Any) -> str | None:
     return None
 
 
-async def _stop_after_timeout_sync(target: Any, target_name: str, enabled: bool) -> str:
-    """Best-effort classic-ophyd stop() after a command timed out. Never raises;
-    returns a message fragment describing the outcome for the surfaced error."""
-    stop = getattr(target, "stop", None)
-    done = _stop_note(target_name, enabled, stop)
-    if done is not None:
-        return done
+async def _await_stop(coro: Any, target_name: str) -> str:
+    """Await a stop coroutine under ``_STOP_TIMEOUT`` and map the outcome to a
+    message fragment. Never raises. Bounding matters: a stop() that blocks as
+    badly as the original command (CA/network trouble) must not stall the HTTP
+    response — we give up after ``_STOP_TIMEOUT`` and report it as unconfirmed."""
     try:
-        await asyncio.to_thread(stop)
+        await asyncio.wait_for(coro, timeout=_STOP_TIMEOUT)
+    except TimeoutError:
+        logger.error(
+            "stop_after_timeout_unconfirmed", target=target_name, stop_timeout=_STOP_TIMEOUT
+        )
+        return (
+            f" A stop() was issued but did not confirm within {_STOP_TIMEOUT}s; "
+            "hardware may still be in motion."
+        )
     except Exception as stop_ex:  # noqa: BLE001 — best-effort halt; report, don't mask the timeout
         logger.error("stop_after_timeout_failed", target=target_name, error=repr(stop_ex))
         return f" A stop() was attempted but failed ({stop_ex!r}); hardware may still be in motion."
@@ -230,22 +236,40 @@ async def _stop_after_timeout_sync(target: Any, target_name: str, enabled: bool)
     return " A stop() was issued to halt the device."
 
 
+async def _stop_after_timeout_sync(target: Any, target_name: str, enabled: bool) -> str:
+    """Best-effort classic-ophyd stop() after a command timed out. Never raises;
+    returns a message fragment describing the outcome for the surfaced error.
+
+    The blocking stop() is offloaded to a worker thread and bounded by
+    ``_STOP_TIMEOUT`` (if the bound elapses the thread is left running — the stop
+    is still in flight — and we report it as unconfirmed)."""
+    stop = getattr(target, "stop", None)
+    done = _stop_note(target_name, enabled, stop)
+    if done is not None:
+        return done
+    return await _await_stop(asyncio.to_thread(stop), target_name)
+
+
 async def _stop_after_timeout_async(target: Any, target_name: str, enabled: bool) -> str:
     """Best-effort ophyd-async stop() after a command timed out. Never raises;
-    returns a message fragment describing the outcome for the surfaced error."""
+    returns a message fragment describing the outcome for the surfaced error.
+
+    ophyd-async stop() is async by contract: it returns an awaitable without
+    blocking, which we await under ``_STOP_TIMEOUT``. A stop() that returns a
+    non-awaitable has already run (returning is what unblocks us)."""
     stop = getattr(target, "stop", None)
     done = _stop_note(target_name, enabled, stop)
     if done is not None:
         return done
     try:
         result = stop()
-        if inspect.isawaitable(result):
-            await asyncio.wait_for(_as_coro(result), timeout=_STOP_TIMEOUT)
     except Exception as stop_ex:  # noqa: BLE001 — best-effort halt; report, don't mask the timeout
         logger.error("stop_after_timeout_failed", target=target_name, error=repr(stop_ex))
         return f" A stop() was attempted but failed ({stop_ex!r}); hardware may still be in motion."
-    logger.warning("stopped_after_timeout", target=target_name)
-    return " A stop() was issued to halt the device."
+    if not inspect.isawaitable(result):
+        logger.warning("stopped_after_timeout", target=target_name)
+        return " A stop() was issued to halt the device."
+    return await _await_stop(_as_coro(result), target_name)
 
 
 class ClassicOphydDriver:
