@@ -230,37 +230,34 @@ async def test_coordination_service_health_probe(side_a):
     assert avail.detail is None
 
 
-async def test_device_info_fetch_known_and_unknown(side_a):
-    """device-socket's _fetch_device_info parses the real GET /devices/{name}.
+async def test_device_socket_fetches_pvs_via_registry(side_a):
+    """device-socket resolves a device's PV set via the RegistryProvider.
 
-    Distinct consumer/parse from validate_device: it reads the full payload
-    (pvs dict drives recursive device-socket subscription) and categorizes
-    failures. Verified here for the 200 and 404->"not_found" arms.
+    Mirrors the ``get_device_pvs`` REST path (``GET /devices/{name}`` -> ``pvs``
+    dict): both the 200 arm (returns the mapping) and the 404 arm (returns
+    None, surfaced as ``"not_found"``) come out of the real config-service.
     """
-    # Imported lazily, matching conftest's caution around the monitoring
-    # subpackage (which pulls pyepics); none of it is exercised here.
     from direct_control.monitoring.device_websocket_manager import (
         DeviceWebSocketManager,
     )
 
-    # pv_monitor / device_controller are unused by _fetch_device_info, which
-    # only touches self.settings + the injected http client.
+    # pv_monitor / device_controller are unused by _fetch_device_pvs, which
+    # only touches self.registry_client (side_a's RegistryClient here).
     mgr = DeviceWebSocketManager(
         pv_monitor=None,  # type: ignore[arg-type]
         device_controller=None,  # type: ignore[arg-type]
         settings=_dc_settings(),
+        registry_client=side_a.registry,
     )
-    mgr._http_client = side_a.raw  # reuse the in-process ASGI client
 
-    info, reason = await mgr._fetch_device_info(_DEVICE)
+    pvs, reason = await mgr._fetch_device_pvs(_DEVICE)
     assert reason is None
-    assert info is not None
-    assert info.name == _DEVICE
+    assert pvs is not None
     # The pvs dict is what the device-socket recurses over to subscribe.
-    assert _PV in info.pvs.values()
+    assert _PV in pvs.values()
 
-    missing_info, missing_reason = await mgr._fetch_device_info("no_such_device")
-    assert missing_info is None
+    missing_pvs, missing_reason = await mgr._fetch_device_pvs("no_such_device")
+    assert missing_pvs is None
     assert missing_reason == "not_found"
 
 

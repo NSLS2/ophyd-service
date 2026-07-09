@@ -279,6 +279,53 @@ class RegistryClient:
         self._spec_cache[device_name] = (spec, time.monotonic())
         return spec
 
+    async def get_device_pvs(self, device_name: str) -> dict[str, str] | None:
+        """Fetch the device's component -> PV map from configuration_service.
+
+        Returns None when the device 404s (not registered). Returns the ``pvs``
+        mapping from the device document otherwise (an empty dict if the device
+        owns no PVs).
+
+        Raises:
+            RuntimeError: configuration_service unreachable or returned an
+                unexpected status.
+        """
+        client = await self._get_client()
+        try:
+            response = await client.get(f"/api/v1/devices/{device_name}")
+        except httpx.RequestError as e:
+            logger.error("configuration_service_unavailable", error=str(e))
+            raise RuntimeError("Configuration service unavailable") from e
+
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            logger.warning(
+                "registry_device_pvs_unexpected_status",
+                device_name=device_name,
+                status_code=response.status_code,
+            )
+            raise RuntimeError(
+                f"Device-PV lookup for {device_name!r} returned HTTP {response.status_code}"
+            )
+
+        # Parse + normalize under one guard: any deviation from the documented
+        # shape (non-JSON body, non-mapping root, non-mapping ``pvs``, item
+        # values that don't str()-ify) is surfaced as RuntimeError so callers
+        # only ever have one exception class to catch, per the docstring
+        # contract.
+        try:
+            body = response.json()
+            pvs = body.get("pvs", {}) or {}
+            return {str(component): str(pv) for component, pv in pvs.items()}
+        except (ValueError, AttributeError, TypeError) as e:
+            logger.error(
+                "registry_device_pvs_malformed",
+                device_name=device_name,
+                error=str(e),
+            )
+            raise RuntimeError(f"Device-PV response for {device_name!r} is malformed: {e}") from e
+
     async def cleanup(self) -> None:
         """Cleanup HTTP client."""
         if self._client:
