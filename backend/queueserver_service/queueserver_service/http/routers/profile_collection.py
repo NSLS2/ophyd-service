@@ -336,11 +336,30 @@ class DeviceDiff(BaseModel):
     )
     removed: List[str] = Field(
         default_factory=list,
-        description="Names present in the registry but no longer reported by the worker.",
+        description=(
+            "ACTIVE registry names the worker no longer reports. "
+            "Deliberately-disabled registry entries land in ``disabled`` "
+            "instead so ``apply /devices/sync`` under strategy ``all`` "
+            "cannot destroy the operator's disable choice."
+        ),
     )
     modified: List[DeviceDiffModifiedEntry] = Field(
         default_factory=list,
-        description="Names present in both whose instantiation specs differ.",
+        description=(
+            "Names present on both sides, active in the registry, "
+            "whose instantiation specs differ."
+        ),
+    )
+    disabled: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Registry entries with ``active=false`` (regardless of worker "
+            "state). Informational: ``apply /devices/sync`` with "
+            "``strategy='all'`` or ``'additions_only'`` never touches "
+            "these, so a deliberately-disabled device is neither "
+            "re-enabled nor deleted. Use ``strategy='selected'`` to "
+            "opt in to re-enabling one."
+        ),
     )
 
 

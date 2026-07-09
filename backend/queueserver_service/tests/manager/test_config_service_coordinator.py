@@ -28,8 +28,9 @@ def _run(coro):
 
 
 class FakeHost:
-    def __init__(self, existing_devices=None):
+    def __init__(self, existing_devices=None, existing_plans=None):
         self._existing_devices = existing_devices or {}
+        self._existing_plans = existing_plans or {}
         self.overlay_calls = []
         self.reload_calls = 0
         self.overlay_result = (True, "")
@@ -38,6 +39,10 @@ class FakeHost:
     @property
     def existing_devices(self):
         return self._existing_devices
+
+    @property
+    def existing_plans(self):
+        return self._existing_plans
 
     async def worker_update_device_overlay(self, upserts, deletes, *, replace):
         self.overlay_calls.append((upserts, deletes, replace))
@@ -71,7 +76,12 @@ class FakeClient:
             "expires_at": None,
         }
 
-    async def get_instantiation_specs(self):
+    async def get_instantiation_specs(self, *, active_only=True):
+        # The new coordinator calls get_instantiation_specs(active_only=True)
+        # in lock_devices_for_plan (registry-membership filter) and
+        # active_only=False in compute_diff/apply_sync. Tests seed
+        # ``instantiation_specs`` with the set expected for whichever call
+        # they exercise; filtering happens outside this stub.
         return dict(self.instantiation_specs)
 
     async def get_changes_since(self, since_version):
@@ -159,11 +169,13 @@ def test_disabled_unlock_and_release_are_noops():
 def test_lock_devices_for_plan_records_bookkeeping(monkeypatch):
     monkeypatch.setattr(
         coord_mod, "extract_device_names_from_plan",
-        lambda item, *, existing_devices: ["det1", "det2"],
+        lambda item, *, existing_devices, existing_plans=None: ["det1", "det2"],
     )
 
     async def testing():
-        client = FakeClient()
+        # Registry-membership filter (new for 3.9): both detectors must be
+        # active in the registry for the lock to fire.
+        client = FakeClient(instantiation_specs={"det1": {}, "det2": {}})
         c = _coord(lock_scope="plan", client=client)
         await c.lock_devices_for_plan(
             {"name": "count", "item_uid": "uid-1", "args": [], "kwargs": {}}
@@ -178,11 +190,11 @@ def test_lock_devices_for_plan_records_bookkeeping(monkeypatch):
 def test_lock_devices_for_plan_settles_prior_debt_first(monkeypatch):
     monkeypatch.setattr(
         coord_mod, "extract_device_names_from_plan",
-        lambda item, *, existing_devices: ["detA"],
+        lambda item, *, existing_devices, existing_plans=None: ["detA"],
     )
 
     async def testing():
-        client = FakeClient()
+        client = FakeClient(instantiation_specs={"detA": {}})
         c = _coord(lock_scope="plan", client=client)
         # Pretend a previous plan's lock is still on the books.
         c._locked_devices = ["old"]
@@ -201,7 +213,7 @@ def test_lock_devices_for_plan_settles_prior_debt_first(monkeypatch):
 def test_lock_devices_for_plan_no_devices_takes_no_lock(monkeypatch):
     monkeypatch.setattr(
         coord_mod, "extract_device_names_from_plan",
-        lambda item, *, existing_devices: [],
+        lambda item, *, existing_devices, existing_plans=None: [],
     )
 
     async def testing():
@@ -633,11 +645,11 @@ def _held_coord(client, *, lease_ttl=30.0, epoch="epoch-1"):
 def test_lock_records_epoch_and_lease_and_starts_heartbeat(monkeypatch):
     monkeypatch.setattr(
         coord_mod, "extract_device_names_from_plan",
-        lambda item, *, existing_devices: ["det1"],
+        lambda item, *, existing_devices, existing_plans=None: ["det1"],
     )
 
     async def testing():
-        client = FakeClient()
+        client = FakeClient(instantiation_specs={"det1": {}})
         client.lock_epoch = "epoch-42"
         client.lease_ttl_seconds = 30.0
         c = _coord(lock_scope="plan", client=client)
@@ -656,11 +668,11 @@ def test_lock_records_epoch_and_lease_and_starts_heartbeat(monkeypatch):
 def test_no_heartbeat_when_lease_disabled(monkeypatch):
     monkeypatch.setattr(
         coord_mod, "extract_device_names_from_plan",
-        lambda item, *, existing_devices: ["det1"],
+        lambda item, *, existing_devices, existing_plans=None: ["det1"],
     )
 
     async def testing():
-        client = FakeClient()
+        client = FakeClient(instantiation_specs={"det1": {}})
         client.lease_ttl_seconds = 0.0  # leases disabled
         c = _coord(lock_scope="plan", client=client)
         await c.lock_devices_for_plan(

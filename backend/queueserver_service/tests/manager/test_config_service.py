@@ -644,7 +644,16 @@ async def test_get_instantiation_specs_rejects_non_dict():
 
 @pytest.mark.asyncio
 async def test_sync_with_prefetched_info_empty_bootstraps_without_probe():
-    """prefetched_info={} → skip GET /devices-info, go straight to upsert+changes."""
+    """prefetched_info={} → probe /devices-info to disambiguate empty from
+    all-disabled, then bootstrap only if /devices-info reports empty.
+
+    Pre-fix ``prefetched_info={}`` short-circuited to bootstrap without a
+    probe, but the manager fetches prefetched_info via
+    ``/devices/instantiation`` whose default is ``active_only=True`` — so an
+    all-disabled registry appeared empty and bootstrap re-enabled every
+    disabled device. Now an empty prefetched_info always re-probes via
+    ``/devices-info`` (which lists both active and inactive) before deciding.
+    """
     changes_payload = {
         "current_version": 1,
         "service_epoch": "2026-04",
@@ -652,6 +661,7 @@ async def test_sync_with_prefetched_info_empty_bootstraps_without_probe():
         "changes": [],
     }
     handlers = [
+        _json_response(200, {}),                  # GET /devices-info -> empty
         _json_response(201, {"success": True}),   # POST m1 (bootstrap)
         _json_response(200, changes_payload),     # GET /devices/changes
     ]
@@ -665,9 +675,9 @@ async def test_sync_with_prefetched_info_empty_bootstraps_without_probe():
         )
     assert state == ConfigServiceState(cursor=1, epoch="2026-04")
     methods = [c.method for c in responder.calls]
-    assert methods == ["POST", "GET"]  # no /devices-info probe
+    assert methods == ["GET", "POST", "GET"]
     paths = [c.url.path for c in responder.calls]
-    assert "/api/v1/devices-info" not in paths
+    assert paths[0] == "/api/v1/devices-info"
 
 
 @pytest.mark.asyncio
@@ -1118,7 +1128,7 @@ def _payload(spec=None, **metadata):
 def test_compute_diff_empty_inputs_returns_empty_diff():
     d = compute_diff({}, {})
     assert d.is_empty
-    assert d.to_dict() == {"added": [], "removed": [], "modified": []}
+    assert d.to_dict() == {"added": [], "removed": [], "modified": [], "disabled": []}
 
 
 def test_compute_diff_all_added():
