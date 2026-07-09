@@ -161,11 +161,11 @@ class DeviceWebSocketManager:
         try:
             pvs = await self.registry_client.get_device_pvs(device_name)
         except RuntimeError as exc:
-            logger.error("device_info_unreachable", device_name=device_name, error=str(exc))
+            logger.error("device_pvs_unreachable", device_name=device_name, error=str(exc))
             return None, "upstream_unreachable"
 
         if pvs is None:
-            logger.info("device_info_not_found", device_name=device_name)
+            logger.info("device_pvs_not_found", device_name=device_name)
             return None, "not_found"
         return pvs, None
 

@@ -108,6 +108,52 @@ async def test_http_provider_get_device_pvs_5xx_raises():
         await client.cleanup()
 
 
+async def test_http_provider_get_device_pvs_non_json_body_raises_runtime_error():
+    """Malformed JSON body from a 200 response must surface as RuntimeError
+    (the protocol's documented exception class) — not ValueError leaking to
+    callers that only catch RuntimeError (device socket's ``_fetch_device_pvs``)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"<html>oops</html>")
+
+    client = _http_registry(handler)
+    try:
+        with pytest.raises(RuntimeError, match="malformed"):
+            await client.get_device_pvs("m1")
+    finally:
+        await client.cleanup()
+
+
+async def test_http_provider_get_device_pvs_non_mapping_pvs_raises_runtime_error():
+    """A ``pvs`` value that isn't a mapping (e.g. list from a broken upstream)
+    must surface as RuntimeError — not AttributeError from ``.items()``."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"name": "m1", "pvs": ["BL:M1.RBV"]})
+
+    client = _http_registry(handler)
+    try:
+        with pytest.raises(RuntimeError, match="malformed"):
+            await client.get_device_pvs("m1")
+    finally:
+        await client.cleanup()
+
+
+async def test_http_provider_get_device_pvs_non_mapping_body_raises_runtime_error():
+    """A JSON body that isn't an object (e.g. list root) must surface as
+    RuntimeError — not AttributeError from ``.get(...)``."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=["not", "a", "mapping"])
+
+    client = _http_registry(handler)
+    try:
+        with pytest.raises(RuntimeError, match="malformed"):
+            await client.get_device_pvs("m1")
+    finally:
+        await client.cleanup()
+
+
 # ===== device socket resolves PVs in standalone (file) mode =====
 
 

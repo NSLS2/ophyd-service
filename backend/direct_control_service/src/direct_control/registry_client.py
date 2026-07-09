@@ -309,9 +309,22 @@ class RegistryClient:
                 f"Device-PV lookup for {device_name!r} returned HTTP {response.status_code}"
             )
 
-        pvs = response.json().get("pvs", {}) or {}
-        # Normalize to a plain str->str dict; the socket iterates .items().
-        return {str(component): str(pv) for component, pv in pvs.items()}
+        # Parse + normalize under one guard: any deviation from the documented
+        # shape (non-JSON body, non-mapping root, non-mapping ``pvs``, item
+        # values that don't str()-ify) is surfaced as RuntimeError so callers
+        # only ever have one exception class to catch, per the docstring
+        # contract.
+        try:
+            body = response.json()
+            pvs = body.get("pvs", {}) or {}
+            return {str(component): str(pv) for component, pv in pvs.items()}
+        except (ValueError, AttributeError, TypeError) as e:
+            logger.error(
+                "registry_device_pvs_malformed",
+                device_name=device_name,
+                error=str(e),
+            )
+            raise RuntimeError(f"Device-PV response for {device_name!r} is malformed: {e}") from e
 
     async def cleanup(self) -> None:
         """Cleanup HTTP client."""
