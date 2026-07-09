@@ -1,0 +1,31 @@
+# Standard permissive permissions from bluesky-queueserver's sample profile
+# collection. The RE Manager uses these to build the per-group lists of allowed
+# plans/devices that /api/plans/allowed and /api/devices/allowed return. The
+# frontend authenticates as the default "primary" group, which allows all IOS
+# plans and devices.
+user_groups:
+  root:  # Preliminary filtering applied to every group.
+    allowed_plans:
+      - null  # Allow all
+    forbidden_plans:
+      - ":^_"  # Names starting with '_'
+    allowed_devices:
+      - null  # Allow all
+    forbidden_devices:
+      - ":^_:?.*"  # Names starting with '_'
+    allowed_functions:
+      - null  # Allow all
+    forbidden_functions:
+      - ":^_"  # Names starting with '_'
+  primary:  # Default group used by the frontend.
+    allowed_plans:
+      - ":.*"  # Allow all plans
+    forbidden_plans:
+      - null
+    allowed_devices:
+      - ":?.*:depth=5"  # Allow all devices and subdevices (max depth 5)
+    forbidden_devices:
+      - null
+    allowed_functions:
+      - "function_sleep"
+      - ":^func_for_test"

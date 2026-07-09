@@ -1,0 +1,10 @@
+# The IOS profile calls nslsii.configure_base(..., publish_documents_with_kafka=True),
+# which reads this file. There is no Kafka broker in this pod, so publishing is
+# a no-op: nslsii catches the connection failure and continues (the RE Manager
+# still opens the environment). Point a broker here (e.g. kafka:9092) if you add
+# one. See BLUESKY_KAFKA_CONFIG_PATH in docker-compose.yaml.
+abort_run_on_kafka_exception: false
+bootstrap_servers:
+  - 127.0.0.1:9092
+runengine_producer_config:
+  security.protocol: PLAINTEXT

@@ -1,0 +1,129 @@
+# IOS queueserver demo pod for ophyd-service (phase 1).
+#
+# Stands up the REAL upstream bluesky-queueserver + bluesky-httpserver (NOT the
+# repo's queueserver_service) running the NSLS-II IOS profile collection, so a
+# frontend can drive the beamline through the httpserver's HTTP API. This is the
+# "can the old queueserver open the IOS profile?" check — configuration_service
+# and direct_control_service are intentionally NOT part of this pod.
+#
+# Mirrors the NSLS-II ansible `bsqs` role (pixi-installed profile `qs` env,
+# start-re-manager + uvicorn bluesky_httpserver), adapted for containers.
+#
+#   redis        — 6379 plain (RE Manager queue store) + 6380 TLS (profile RE.md)
+#   mongo        — databroker 'ios' tiled profile backend (empty catalog)
+#   blackhole    — catch-all IOC so every IOS PV resolves (phase 1 stand-in)
+#   queueserver  — bluesky-queueserver RE Manager, opens the IOS profile
+#   httpserver   — bluesky-httpserver, HTTP API for the frontend (port 60610)
+#
+# Relative paths assume this file lives at integration/pods/ios-queueserver/.
+#
+# Usage:
+#   ./run_demo.sh                       # build + up + open env + verify
+#   docker compose up --build           # build + up (open the env yourself)
+#   docker compose down -v              # stop + remove (incl. volumes)
+
+services:
+  redis:
+    build: ./redis
+    volumes:
+      - redis-certs:/certs
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 6379 ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mongo:
+    image: docker.io/mongo:6
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.runCommand({ping:1}).ok' | grep -q 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  blackhole:
+    build: ./ioc
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f blackhole_ioc > /dev/null"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  queueserver:
+    build:
+      context: .
+      dockerfile: Dockerfile.queueserver
+    command:
+      - pixi
+      - run
+      - --manifest-path
+      - /opt/bluesky/profile_collection/pixi.toml
+      - -e
+      - qs
+      - start-re-manager
+      - --config
+      - /etc/bluesky/queueserver-config.yml
+    environment:
+      # --- profile RE.md redis (TLS). nslsii.configure_base connects here. ---
+      REDIS_HOST: redis
+      REDIS_PORT: "6380"
+      REDIS_SECRET_FILE: /etc/bluesky/redis.secret
+      SSL_CERT_FILE: /certs/redis.crt
+      REQUESTS_CA_BUNDLE: /certs/redis.crt
+      # --- kafka (no broker in pod; publishing is a non-fatal no-op) ---
+      BLUESKY_KAFKA_CONFIG_PATH: /etc/bluesky/kafka.yml
+      # --- EPICS: resolve every PV against the catch-all IOC ---
+      EPICS_CA_ADDR_LIST: blackhole
+      EPICS_CA_AUTO_ADDR_LIST: "NO"
+      # --- headless Qt/matplotlib (profile imports pyqt GUI modules) ---
+      QT_QPA_PLATFORM: offscreen
+      MPLBACKEND: Agg
+    volumes:
+      - redis-certs:/certs:ro
+    healthcheck:
+      # Manager is ready once its ZMQ control socket answers a status request.
+      test: ["CMD-SHELL", "pixi run --manifest-path /opt/bluesky/profile_collection/pixi.toml -e qs qserver status > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 15s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      blackhole:
+        condition: service_healthy
+
+  httpserver:
+    build:
+      context: .
+      dockerfile: Dockerfile.queueserver
+    command:
+      - pixi
+      - run
+      - --manifest-path
+      - /opt/bluesky/profile_collection/pixi.toml
+      - -e
+      - qs
+      - uvicorn
+      - --host
+      - 0.0.0.0
+      - --port
+      - "60610"
+      - bluesky_httpserver.server:app
+    environment:
+      QSERVER_HTTP_SERVER_CONFIG: /etc/bluesky/httpserver-config.yml
+      QSERVER_ZMQ_CONTROL_ADDRESS: tcp://queueserver:60615
+      QSERVER_ZMQ_INFO_ADDRESS: tcp://queueserver:60625
+      # Single-user API key for write operations. MUST be alphanumeric only
+      # (the httpserver rejects other characters). Override for real use.
+      QSERVER_HTTP_SERVER_SINGLE_USER_API_KEY: iosdemosecretkey0123456789
+    ports:
+      - "60610:60610"
+    depends_on:
+      queueserver:
+        condition: service_healthy
+
+volumes:
+  redis-certs:

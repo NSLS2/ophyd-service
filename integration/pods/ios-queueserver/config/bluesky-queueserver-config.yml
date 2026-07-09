@@ -1,0 +1,31 @@
+# bluesky-queueserver RE Manager configuration for the IOS demo pod.
+#
+# Mirrors the NSLS-II ansible `bsqs` role's config, adapted for containers:
+#   * ZMQ control/info sockets bind on TCP (not IPC) so the httpserver
+#     container can reach the RE Manager over the compose network.
+#   * redis_addr points at the pod's redis service (the RE Manager's own queue
+#     store). This is SEPARATE from the profile's RE.md redis, which the IOS
+#     profile connects to over TLS via the REDIS_* env vars in
+#     docker-compose.yaml.
+network:
+  zmq_control_addr: "tcp://*:60615"
+  zmq_info_addr: "tcp://*:60625"
+  zmq_publish_console: true
+  redis_addr: "redis:6379"
+
+worker:
+  use_ipython_kernel: false
+
+startup:
+  keep_re: true
+  ignore_invalid_plans: true
+  startup_dir: "/opt/bluesky/profile_collection/startup"
+  existing_plans_and_devices_path: "/tmp/existing_plans_and_devices.yaml"
+  user_group_permissions_path: "/etc/bluesky/user_group_permissions.yaml"
+
+operation:
+  print_console_output: true
+  console_logging_level: NORMAL
+  # Regenerate the plan/device lists from the profile every time the
+  # environment is opened, so the httpserver always reflects the profile.
+  update_existing_plans_and_devices: ENVIRONMENT_OPEN

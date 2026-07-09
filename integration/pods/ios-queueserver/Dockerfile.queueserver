@@ -1,0 +1,56 @@
+# Image that runs BOTH the bluesky-queueserver RE Manager and the
+# bluesky-httpserver, using the IOS profile collection's own pixi `qs`
+# environment. This mirrors the NSLS-II ansible `bsqs` role: clone the
+# profile collection, `pixi install -e qs`, then `pixi run -e qs
+# start-re-manager` / `uvicorn bluesky_httpserver.server:app`.
+#
+# The queueserver and httpserver services in docker-compose.yaml share this
+# one image and differ only by their `command:`.
+FROM debian:bookworm-slim
+
+# git      — clone the profile collection
+# curl/ca* — install pixi + TLS
+# procps   — pgrep for compose healthchecks
+# Qt/GL    — the IOS profile imports pyqt GUI modules at startup; even under
+#            QT_QPA_PLATFORM=offscreen the Qt plugin needs these shared libs.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git curl ca-certificates procps \
+        libgl1 libegl1 libglib2.0-0 libxkbcommon0 libdbus-1-3 libfontconfig1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pin pixi so the image is reproducible.
+ARG PIXI_VERSION=0.62.2
+RUN curl -fsSL https://pixi.sh/install.sh | PIXI_VERSION=v${PIXI_VERSION} PIXI_HOME=/opt/pixi bash \
+    && ln -s /opt/pixi/bin/pixi /usr/local/bin/pixi \
+    && pixi --version
+
+# Clone the profile collection (defaults mirror the ansible role: NSLS2 main).
+ARG PROFILE_REPO=https://github.com/NSLS2/ios-profile-collection.git
+ARG PROFILE_BRANCH=main
+RUN git clone --depth 1 -b ${PROFILE_BRANCH} ${PROFILE_REPO} /opt/bluesky/profile_collection
+
+# Solve + fetch the `qs` environment (bluesky-queueserver + bluesky-httpserver
+# + the full ophyd/nslsii/databroker stack the profile imports). This is the
+# large, slow, cacheable layer.
+WORKDIR /opt/bluesky/profile_collection
+RUN pixi install -e qs
+
+# Static configuration (kafka, permissions, tiled `ios` profile, olog, the
+# queueserver + httpserver config files). Runtime-generated secrets (the redis
+# TLS cert) come from a shared volume instead.
+ENV HOME=/opt/bluesky/home
+COPY config/home/ /opt/bluesky/home/
+COPY config/kafka.yml                     /etc/bluesky/kafka.yml
+COPY config/user_group_permissions.yaml   /etc/bluesky/user_group_permissions.yaml
+COPY config/bluesky-queueserver-config.yml /etc/bluesky/queueserver-config.yml
+COPY config/bluesky-httpserver-config.yml  /etc/bluesky/httpserver-config.yml
+
+# nslsii.open_redis_client() reads a password from REDIS_SECRET_FILE when
+# redis_ssl=True. The pod's redis has no password, so an empty file is correct.
+RUN : > /etc/bluesky/redis.secret
+
+# matplotlib needs a writable config dir; HOME is baked read-mostly.
+ENV MPLCONFIGDIR=/tmp/mpl
+
+# Default command is overridden per-service in docker-compose.yaml.
+CMD ["pixi", "run", "-e", "qs", "start-re-manager", "--help"]

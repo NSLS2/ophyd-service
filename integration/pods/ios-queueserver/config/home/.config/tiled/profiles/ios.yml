@@ -1,0 +1,10 @@
+ios:
+  direct:
+    authentication:
+      allow_anonymous_access: true
+    trees:
+      - tree: databroker.mongo_normalized:Tree.from_uri
+        path: /
+        args:
+          uri: mongodb://mongo:27017/metadatastore-local
+          asset_registry_uri: mongodb://mongo:27017/asset-registry-local

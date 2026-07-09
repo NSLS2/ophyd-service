@@ -1,0 +1,28 @@
+# bluesky-httpserver configuration for the IOS demo pod.
+#
+# Mirrors the NSLS-II ansible `bsqs` role's httpserver config. The httpserver
+# reaches the RE Manager over the compose network via TCP ZMQ sockets.
+#
+# Auth posture (same as the ansible deployment):
+#   * Anonymous clients may read status and console output only.
+#   * Reading the queue, allowed plans, and allowed devices, plus every write
+#     operation (environment open/close, queue add/start, etc.), requires the
+#     single-user API key (QSERVER_HTTP_SERVER_SINGLE_USER_API_KEY, set in
+#     docker-compose.yaml). The frontend sends it as `Authorization: ApiKey <key>`.
+qserver_zmq_configuration:
+  control_address: tcp://queueserver:60615
+  info_address: tcp://queueserver:60625
+
+authentication:
+  allow_anonymous_access: true
+
+api_access:
+  policy: bluesky_httpserver.authorization:BasicAPIAccessControl
+  args:
+    roles:
+      unauthenticated_public:
+        scopes_add: read:console
+      unauthenticated_single_user:
+        scopes_remove:
+          - write:scripts
+          - user:apikeys
