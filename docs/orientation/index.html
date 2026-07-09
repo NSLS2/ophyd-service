@@ -44,7 +44,7 @@ remediation lands.</p>
 <h2>The 30-second picture</h2>
 
 <figure class="figure">
-<svg viewBox="0 0 900 480" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Overview diagram of the three backend services, hardware, and the frontend">
+<svg viewBox="0 0 900 500" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Overview diagram of the three backend services, hardware, and the frontend, with configuration in the middle">
   <!-- title -->
   <text x="450" y="26" class="svg-title" text-anchor="middle">One frontend · three backends · one set of hardware</text>
 
@@ -53,59 +53,59 @@ remediation lands.</p>
   <text x="450" y="82" class="svg-title svg-title-fe" text-anchor="middle">React + Finch frontend</text>
   <text x="450" y="102" class="svg-label-small" text-anchor="middle">browser, port 5173 in dev</text>
 
-  <!-- Config service -->
-  <rect x="30" y="200" width="240" height="90" rx="8" class="svg-box-config"/>
-  <text x="150" y="228" class="svg-title svg-title-config" text-anchor="middle">configuration_service</text>
-  <text x="150" y="250" class="svg-label" text-anchor="middle">"the source of truth"</text>
-  <text x="150" y="270" class="svg-label-small" text-anchor="middle">devices · PVs · locks · registry</text>
-  <text x="150" y="285" class="svg-label-small" text-anchor="middle">REST · port 8004</text>
+  <!-- Direct control (left) -->
+  <rect x="30" y="200" width="240" height="90" rx="8" class="svg-box-dc"/>
+  <text x="150" y="228" class="svg-title svg-title-dc" text-anchor="middle">direct_control_service</text>
+  <text x="150" y="250" class="svg-label" text-anchor="middle">"the live wire to hardware"</text>
+  <text x="150" y="270" class="svg-label-small" text-anchor="middle">read/write PVs · run device methods</text>
+  <text x="150" y="285" class="svg-label-small" text-anchor="middle">REST + WebSocket · port 8003</text>
 
-  <!-- Direct control -->
-  <rect x="330" y="200" width="240" height="90" rx="8" class="svg-box-dc"/>
-  <text x="450" y="228" class="svg-title svg-title-dc" text-anchor="middle">direct_control_service</text>
-  <text x="450" y="250" class="svg-label" text-anchor="middle">"the live wire to hardware"</text>
-  <text x="450" y="270" class="svg-label-small" text-anchor="middle">read/write PVs · run device methods</text>
-  <text x="450" y="285" class="svg-label-small" text-anchor="middle">REST + WebSocket · port 8003</text>
+  <!-- Configuration (middle) -->
+  <rect x="330" y="200" width="240" height="90" rx="8" class="svg-box-config"/>
+  <text x="450" y="228" class="svg-title svg-title-config" text-anchor="middle">configuration_service</text>
+  <text x="450" y="250" class="svg-label" text-anchor="middle">"the source of truth"</text>
+  <text x="450" y="270" class="svg-label-small" text-anchor="middle">devices · PVs · locks · registry</text>
+  <text x="450" y="285" class="svg-label-small" text-anchor="middle">REST · port 8004</text>
 
-  <!-- Queueserver -->
+  <!-- Queueserver (right) -->
   <rect x="630" y="200" width="240" height="90" rx="8" class="svg-box-qs"/>
   <text x="750" y="228" class="svg-title svg-title-qs" text-anchor="middle">queueserver_service</text>
   <text x="750" y="250" class="svg-label" text-anchor="middle">"the plan runner"</text>
   <text x="750" y="270" class="svg-label-small" text-anchor="middle">queue &amp; execute bluesky plans</text>
   <text x="750" y="285" class="svg-label-small" text-anchor="middle">REST + WebSocket · port 60610</text>
 
-  <!-- Frontend arrows down to each backend -->
-  <path d="M 400 115 L 200 200" class="svg-arrow-hot"/>
+  <!-- Frontend fan-out to each backend (aim at each service's true top-center) -->
+  <path d="M 350 115 L 150 200" class="svg-arrow-hot"/>
   <path d="M 450 115 L 450 200" class="svg-arrow-hot"/>
-  <path d="M 500 115 L 700 200" class="svg-arrow-hot"/>
+  <path d="M 550 115 L 750 200" class="svg-arrow-hot"/>
 
-  <!-- Side A (config <-> DC), curly arrow between them -->
-  <path d="M 270 235 L 330 235" class="svg-arrow"/>
-  <path d="M 330 255 L 270 255" class="svg-arrow"/>
-  <text x="300" y="200" class="svg-label" text-anchor="middle" fill="var(--fg-soft)">Side A</text>
+  <!-- Side A: direct_control <-> configuration (short, bidirectional) -->
+  <text x="300" y="192" class="svg-label" text-anchor="middle" fill="var(--fg-soft)">Side A</text>
+  <text x="300" y="208" class="svg-label-small" text-anchor="middle">lock check + PV lookup</text>
+  <path d="M 330 235 L 270 235" class="svg-arrow"/>
+  <path d="M 270 260 L 330 260" class="svg-arrow"/>
 
-  <!-- Side B (config <-> QS), long connector under the frontend arrows -->
-  <path d="M 270 375 Q 450 420 630 375" class="svg-arrow"/>
-  <path d="M 630 395 Q 450 440 270 395" class="svg-arrow"/>
-  <text x="450" y="420" class="svg-label" text-anchor="middle" fill="var(--fg-soft)">Side B</text>
-  <path d="M 150 290 L 150 375" class="svg-arrow"/>
-  <path d="M 750 290 L 750 375" class="svg-arrow"/>
+  <!-- Side B: configuration <-> queueserver (short, bidirectional) -->
+  <text x="600" y="192" class="svg-label" text-anchor="middle" fill="var(--fg-soft)">Side B</text>
+  <text x="600" y="208" class="svg-label-small" text-anchor="middle">device sync + per-plan locks</text>
+  <path d="M 570 235 L 630 235" class="svg-arrow"/>
+  <path d="M 630 260 L 570 260" class="svg-arrow"/>
 
-  <!-- EPICS hardware layer -->
-  <rect x="330" y="360" width="240" height="60" rx="8" class="svg-box-plain"/>
-  <text x="450" y="386" class="svg-title" text-anchor="middle">Beamline hardware (EPICS IOCs)</text>
-  <text x="450" y="404" class="svg-label-small" text-anchor="middle">motors · detectors · shutters · amplifiers</text>
+  <!-- EPICS hardware layer (centered beneath configuration) -->
+  <rect x="330" y="395" width="240" height="60" rx="8" class="svg-box-plain"/>
+  <text x="450" y="421" class="svg-title" text-anchor="middle">Beamline hardware (EPICS IOCs)</text>
+  <text x="450" y="440" class="svg-label-small" text-anchor="middle">motors · detectors · shutters · amplifiers</text>
 
-  <!-- DC to hardware -->
-  <path d="M 450 290 L 450 360" class="svg-arrow-hot"/>
-  <text x="465" y="325" class="svg-label-small">EPICS CA/PVA</text>
+  <!-- direct_control → hardware (direct EPICS transport) -->
+  <path d="M 200 290 L 380 395" class="svg-arrow-hot"/>
+  <text x="290" y="335" class="svg-label-small" text-anchor="middle">EPICS CA/PVA</text>
 
-  <!-- QS to hardware, via bluesky RunEngine in-process -->
-  <path d="M 700 290 Q 630 340 570 360" class="svg-arrow" stroke-dasharray="4 3"/>
-  <text x="640" y="330" class="svg-label-small">via bluesky RE</text>
+  <!-- queueserver → hardware (indirect, via bluesky RunEngine in the worker) -->
+  <path d="M 700 290 L 520 395" class="svg-arrow" stroke-dasharray="4 3"/>
+  <text x="610" y="335" class="svg-label-small" text-anchor="middle">via bluesky RE</text>
 
   <!-- arrow legend -->
-  <g transform="translate(30,435)">
+  <g transform="translate(30,480)">
     <line x1="0" y1="0" x2="30" y2="0" class="svg-arrow-hot"/>
     <text x="35" y="4" class="svg-label-small">frontend or hot user path</text>
     <line x1="240" y1="0" x2="270" y2="0" class="svg-arrow"/>
@@ -114,7 +114,13 @@ remediation lands.</p>
     <text x="515" y="4" class="svg-label-small">indirect / via ophyd RunEngine</text>
   </g>
 </svg>
-<figcaption>Figure 1 — The whole backend on one screen.</figcaption>
+<figcaption>Figure 1 — The whole backend on one screen. configuration_service
+sits in the middle because both hardware-facing services talk to it — Side A
+is direct_control ↔ configuration (lock check on every write), Side B is
+configuration ↔ queueserver (device sync + per-plan locks). Only
+direct_control drives hardware directly; queueserver reaches hardware
+indirectly through the bluesky RunEngine running in its worker
+process.</figcaption>
 </figure>
 
 <p><strong>The one-line summary:</strong> Configuration is the <em>book</em>
