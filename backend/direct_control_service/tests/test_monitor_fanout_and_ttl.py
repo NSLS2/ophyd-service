@@ -27,6 +27,8 @@ import json
 import time
 from unittest.mock import MagicMock
 
+import pytest
+
 from direct_control.config import Settings
 from direct_control.models import PVUpdate
 
@@ -401,3 +403,24 @@ def test_lifespan_skips_sweep_task_when_interval_is_zero(monkeypatch):
         # Explicit eviction still works.
         assert pv_monitor.evict_idle_monitors(idle_ttl=0.01) == ["BL:NO:SWEEP"]
         assert signal.destroyed
+
+
+def test_negative_sweep_interval_rejected_at_startup():
+    """A negative ``pv_monitor_sweep_interval`` must fail loud (Settings
+    validation error) instead of silently disabling the sweep — the
+    "interval > 0 enables the task" gate would otherwise treat -1 the same
+    as 0 and quietly leak monitors on a misconfigured deployment."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError, match="pv_monitor_sweep_interval"):
+        Settings(pv_monitor_sweep_interval=-1.0)
+
+
+def test_negative_idle_ttl_rejected_at_startup():
+    """A negative ``pv_monitor_idle_ttl`` must fail loud — every
+    callback-less monitor would otherwise be considered stale on the first
+    sweep (``now - touched`` is always positive), thrashing the cache."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError, match="pv_monitor_idle_ttl"):
+        Settings(pv_monitor_idle_ttl=-1.0)

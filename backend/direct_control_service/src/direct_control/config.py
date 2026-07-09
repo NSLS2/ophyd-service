@@ -2,7 +2,7 @@
 Configuration settings for Direct Device Control Service.
 """
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Shared 403/WS-error detail for read-only mode. Defined here (not in main) so
@@ -163,9 +163,12 @@ class Settings(BaseSettings):
     # subscribers keep their PVs alive regardless of idle time (any
     # ``_callbacks`` entry pins the monitor). Set the interval to 0 to
     # disable the sweep entirely (useful in tests where deterministic
-    # eviction is preferred).
-    pv_monitor_idle_ttl: float = 300.0
-    pv_monitor_sweep_interval: float = 60.0
+    # eviction is preferred). Both fields are validated non-negative at
+    # startup so a misconfigured negative value fails hard instead of
+    # silently disabling the sweep (interval < 0) or evicting every
+    # callback-less monitor on the first cycle (ttl < 0).
+    pv_monitor_idle_ttl: float = Field(300.0, ge=0.0)
+    pv_monitor_sweep_interval: float = Field(60.0, ge=0.0)
 
     # Maximum response bytesize for PV value endpoints (covers binary + JSON).
     # Oversized arrays return 400 with a "slice or raise the limit" message.
