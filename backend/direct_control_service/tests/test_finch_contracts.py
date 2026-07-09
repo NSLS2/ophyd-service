@@ -77,18 +77,17 @@ def test_device_update_event_type_and_device_field(client):
     ``device_name``. The ``event_type`` literal is our own stable
     convention from ``DeviceUpdate.event_type`` default.
     """
-    from direct_control.models import DeviceInfo
 
     app = client.app
     device_ws_manager = app.state.device_ws_manager
 
     async def _stub_fetch(device_name: str):
         return (
-            DeviceInfo(name=device_name, device_type="motor", pvs={"readback": "IOC:counter"}),
+            {"readback": "IOC:counter"},
             None,
         )
 
-    device_ws_manager._fetch_device_info = _stub_fetch  # type: ignore[method-assign]
+    device_ws_manager._fetch_device_pvs = _stub_fetch  # type: ignore[method-assign]
 
     with client.websocket_connect("/api/v1/device-socket") as ws:
         ws.send_json({"action": "subscribe", "device": "fake_motor"})

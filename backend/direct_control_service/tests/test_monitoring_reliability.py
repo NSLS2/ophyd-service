@@ -135,7 +135,10 @@ async def test_device_teardown_keeps_shared_pv_callback_of_other_device():
 
     mock_monitor = MockPVMonitor()
     manager = DeviceWebSocketManager(
-        pv_monitor=mock_monitor, device_controller=None, settings=Settings()
+        pv_monitor=mock_monitor,
+        device_controller=None,
+        settings=Settings(),
+        registry_client=object(),  # type: ignore[arg-type]
     )
 
     shared_pv = "BL:SHARED:CURRENT"
@@ -368,27 +371,25 @@ async def test_pv_socket_disconnect_during_subscribe_tears_down_ca_monitor():
 
 
 async def test_device_socket_disconnect_during_subscribe_tears_down_ca_monitors():
-    from direct_control.models import DeviceInfo
     from direct_control.monitoring.device_websocket_manager import DeviceWebSocketManager
 
     manager = DeviceWebSocketManager(
-        pv_monitor=MockPVMonitor(), device_controller=None, settings=Settings()
+        pv_monitor=MockPVMonitor(),
+        device_controller=None,
+        settings=Settings(),
+        registry_client=object(),  # type: ignore[arg-type]
     )
     manager._loop = asyncio.get_running_loop()
     manager._connections = {"client-a": _StubWS()}
     manager._device_subscriptions = {"client-a": set()}
 
     device = "dev_a"
-    device_info = DeviceInfo(
-        name=device,
-        device_type="motor",
-        pvs={"readback": "BL:DEV:RBV", "setpoint": "BL:DEV:VAL"},
-    )
+    device_info = {"readback": "BL:DEV:RBV", "setpoint": "BL:DEV:VAL"}
 
     async def _fake_fetch(name):
         return device_info, None
 
-    manager._fetch_device_info = _fake_fetch
+    manager._fetch_device_pvs = _fake_fetch
 
     class _DisconnectDuringGatherMonitor(_RealisticMockMonitor):
         """The only client disconnects while the device's PV subscribes are
@@ -427,23 +428,25 @@ async def test_device_socket_disconnect_during_failed_subscribe_returns_cleanly(
     """Device-gone branch must return cleanly even when every PV subscribe also
     failed, i.e. there are no succeeded teardowns to run.
     """
-    from direct_control.models import DeviceInfo
     from direct_control.monitoring.device_websocket_manager import DeviceWebSocketManager
 
     manager = DeviceWebSocketManager(
-        pv_monitor=MockPVMonitor(), device_controller=None, settings=Settings()
+        pv_monitor=MockPVMonitor(),
+        device_controller=None,
+        settings=Settings(),
+        registry_client=object(),  # type: ignore[arg-type]
     )
     manager._loop = asyncio.get_running_loop()
     manager._connections = {"client-a": _StubWS()}
     manager._device_subscriptions = {"client-a": set()}
 
     device = "dev_b"
-    device_info = DeviceInfo(name=device, device_type="motor", pvs={"readback": "BL:DEV2:RBV"})
+    device_info = {"readback": "BL:DEV2:RBV"}
 
     async def _fake_fetch(name):
         return device_info, None
 
-    manager._fetch_device_info = _fake_fetch
+    manager._fetch_device_pvs = _fake_fetch
 
     class _DisconnectThenFailMonitor(_RealisticMockMonitor):
         _guard = threading.Lock()

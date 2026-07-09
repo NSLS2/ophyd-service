@@ -341,6 +341,7 @@ async def lifespan(app: FastAPI):
         pv_monitor=pv_monitor,
         device_controller=device_controller,
         settings=settings,
+        registry_client=registry_client,
     )
     # Image-streaming sockets (finch camera-socket / tiff-socket). Read-only
     # EPICS monitors with their own raw-numpy path — see ImageStreamManager.
