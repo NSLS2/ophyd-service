@@ -55,6 +55,13 @@ git checkout simple-queueserver-ios-iocs
 <p>Two values are all the UI needs — put them in <code>.env</code> (use the generated key from step 2):</p>
 <pre>VITE_QSERVER_URL=http://localhost:60610
 VITE_QSERVER_API_KEY=&lt;paste HTTP_API_KEY from secrets.env&gt;</pre>
+<div class="note"><b>Dev vs. production URL.</b> This dev stack exposes the httpserver <b>directly</b> on the host at <code>http://localhost:60610</code> (no TLS, no proxy). In a real NSLS-II deployment the httpserver binds <code>localhost:60610</code> and is <b>not</b> reachable off-box; an <b>nginx reverse proxy terminates TLS on 443</b> and forwards to it (port 80 redirects to 443). The only thing the frontend changes between environments is the base URL:
+<table style="margin-top:6px">
+  <tr><th></th><th>Base URL the UI uses</th><th>What serves it</th></tr>
+  <tr><td><b>dev</b> (this stack)</td><td class="path">http://localhost:60610</td><td>httpserver, exposed directly on the host port</td></tr>
+  <tr><td><b>production</b></td><td class="path">https://&lt;qs-host&gt;/</td><td>nginx :443 (TLS) &rarr; proxy_pass &rarr; localhost:60610 httpserver</td></tr>
+</table>
+The API paths, the <code>Authorization: ApiKey …</code> header, and the request/response bodies are <b>identical</b> in both — nginx only adds TLS and the standard <code>Upgrade</code>/<code>Connection</code> headers so the live console stream keeps working. Set <code>VITE_QSERVER_URL</code> to <code>https://&lt;qs-host&gt;/</code> for production; everything else in this guide is unchanged.</div>
 <pre>const QS = import.meta.env.VITE_QSERVER_URL;
 const KEY = import.meta.env.VITE_QSERVER_API_KEY;
 const headers = { Authorization: `ApiKey ${KEY}`, "Content-Type": "application/json" };
