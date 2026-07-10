@@ -88,6 +88,11 @@ write operation — requires the single-user API key (`Authorization: ApiKey
 <key>`; default `iosdemosecretkey0123456789`, set in `docker-compose.yaml`). In
 practice the frontend sends the key on every request.
 
+A minimalist frontend setup + endpoint reference for building the React UI is
+in `frontend-tutorial.html` (open it in a browser). The httpserver also serves
+live interactive API docs at `http://localhost:60610/docs` and the spec at
+`/openapi.json`.
+
 ```bash
 KEY=iosdemosecretkey0123456789
 AUTH=(-H "Authorization: ApiKey $KEY")
