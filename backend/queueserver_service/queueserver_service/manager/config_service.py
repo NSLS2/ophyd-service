@@ -209,9 +209,25 @@ class ConfigServiceClient:
         """Return registry metadata keyed by device name (no instantiation specs)."""
         return await self._request("GET", "/api/v1/devices-info")
 
-    async def get_instantiation_specs(self) -> Dict[str, Dict[str, Any]]:
-        """Return ``{name: DeviceInstantiationSpec}`` for every device in the registry."""
-        body = await self._request("GET", "/api/v1/devices/instantiation")
+    async def get_instantiation_specs(
+        self, *, active_only: bool = True
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return ``{name: DeviceInstantiationSpec}`` for the registry.
+
+        ``active_only`` mirrors the config-service ``/devices/instantiation``
+        query parameter of the same name (default ``True`` there and here):
+        when ``True`` only active devices are returned, when ``False`` the
+        full registry incl. deliberately-disabled devices is returned. Use
+        ``active_only=False`` for the diff / sync path so a disabled device
+        is not accidentally re-enabled by falling into the ``added`` bucket.
+        The overlay-population path keeps the default ``True`` because
+        disabled devices are intentionally excluded from the worker.
+        """
+        body = await self._request(
+            "GET",
+            "/api/v1/devices/instantiation",
+            params={"active_only": "true" if active_only else "false"},
+        )
         if not isinstance(body, dict):
             raise ConfigServiceProtocolError(
                 f"/devices/instantiation returned non-dict body: {type(body).__name__}"
@@ -548,9 +564,15 @@ async def sync_devices_on_env_open(
     a payload for a device the manager thinks exists). Per the no-silent-
     fallback rule, we do not proceed with partial registry contents.
 
-    ``prefetched_info`` — when the manager already fetched /devices-info at
-    the start of env-open (Layer 2.6 consume-mode), pass the result here to
-    skip the redundant probe. ``None`` means "I don't know, ask the service".
+    ``prefetched_info`` — when the manager already fetched
+    ``/devices/instantiation`` at the start of env-open (Layer 2.6 consume-
+    mode), pass the result here to skip a redundant probe when the registry
+    is definitively non-empty. An **empty** ``prefetched_info`` is treated
+    as "unknown" and re-probes via ``/devices-info`` — the prefetch defaults
+    to ``active_only=True``, so an all-disabled registry looks empty via
+    the spec fetch but is present via ``/devices-info``; running bootstrap
+    against it would silently re-enable operator-disabled devices. ``None``
+    means the caller has no snapshot and always probes.
     """
     missing = [name for name in expected_device_names if name not in device_data]
     if missing:
@@ -560,11 +582,15 @@ async def sync_devices_on_env_open(
             f"per-device extraction failures): {sorted(missing)!r}"
         )
 
-    is_empty = (
-        len(prefetched_info) == 0
-        if prefetched_info is not None
-        else await client.is_registry_empty()
-    )
+    if prefetched_info:
+        # Definitively non-empty (active devices exist) — bootstrap not needed.
+        is_empty = False
+    else:
+        # None or empty dict — ask the service. ``is_registry_empty`` uses
+        # ``/devices-info`` which lists both active and inactive devices, so
+        # an all-disabled registry is correctly reported non-empty and the
+        # bootstrap does not re-enable it.
+        is_empty = await client.is_registry_empty()
     if is_empty:
         logger.info(
             "config-service registry is empty; bootstrapping %d device(s)",
@@ -695,11 +721,21 @@ class DeviceDiff:
     """Profile-collection vs config-service registry diff.
 
     ``added`` — names the running worker introspected that are NOT in the
-    registry. ``removed`` — names in the registry that the running worker
-    no longer reports. ``modified`` — entries whose normalized instantiation
+    registry. ``removed`` — active registry names the running worker no
+    longer reports (disabled-in-registry names are NOT included; they land
+    in ``disabled`` instead so ``apply_diff('all')`` cannot destroy the
+    operator's deliberate disable). ``modified`` — entries present on
+    both sides and active in the registry whose normalized instantiation
     spec differs between profile and registry; each item is a dict with
     ``name``, ``before`` (registry spec), ``after`` (worker spec), and
     ``fields_changed`` (sorted top-level keys whose values differ).
+    ``disabled`` — every registry device with ``spec.active is False``
+    (regardless of whether the worker also has it). Informational: not
+    touched by ``apply_diff`` under the ``all``/``additions_only``
+    strategies, so a deliberately-disabled device is neither re-enabled
+    (by upsert with ``active=True``) nor deleted from the registry.
+    Callers wanting to re-enable a disabled device must select it
+    explicitly via ``strategy='selected'``.
 
     Lists are sorted by name for reproducible logs and stable API output.
     """
@@ -707,6 +743,7 @@ class DeviceDiff:
     added: List[str]
     removed: List[str]
     modified: List[Dict[str, Any]]
+    disabled: List[str] = dataclasses.field(default_factory=list)
 
     @property
     def is_empty(self) -> bool:
@@ -717,6 +754,7 @@ class DeviceDiff:
             "added": list(self.added),
             "removed": list(self.removed),
             "modified": [dict(item) for item in self.modified],
+            "disabled": list(self.disabled),
         }
 
 
@@ -758,23 +796,37 @@ def compute_diff(
     Pure function. ``device_data`` is the worker payload dict the manager
     already carries on ``self._config_service_device_data`` (shape:
     ``{name: {"metadata": ..., "spec": ...}}``). ``registry_specs`` is
-    the result of ``ConfigServiceClient.get_instantiation_specs()``
-    (shape: ``{name: spec}``).
+    the result of ``ConfigServiceClient.get_instantiation_specs()`` —
+    call it with ``active_only=False`` here so disabled devices are
+    correctly recognized (see ``DeviceDiff.disabled``) instead of
+    landing in ``added`` and being silently re-enabled by
+    ``apply_diff('all')``.
 
-    The ``modified`` bucket only includes names present in both sides
-    whose specs differ. An entry whose worker payload carries no
-    ``spec`` is skipped from the modified pass (there's nothing
-    structural to compare); the name still appears in ``added`` if
-    missing from the registry.
+    Semantics:
+    - Every registry entry with ``spec.active is False`` goes into the
+      ``disabled`` bucket. It is EXCLUDED from ``added``/``removed``/
+      ``modified`` so the destructive strategies (``all``,
+      ``additions_only``) leave it alone.
+    - ``added`` = worker names not in the registry.
+    - ``removed`` = ACTIVE registry names the worker no longer reports.
+    - ``modified`` = names present on both sides, active in registry,
+      whose specs differ. An entry whose worker payload carries no
+      ``spec`` is skipped (there's nothing structural to compare); the
+      name still appears in ``added`` if missing from the registry.
     """
     profile_names = set(device_data.keys())
     registry_names = set(registry_specs.keys())
+    disabled_names = {
+        name for name, spec in registry_specs.items() if spec.get("active", True) is False
+    }
+    active_registry_names = registry_names - disabled_names
 
     added = sorted(profile_names - registry_names)
-    removed = sorted(registry_names - profile_names)
+    removed = sorted(active_registry_names - profile_names)
+    disabled = sorted(disabled_names)
 
     modified: List[Dict[str, Any]] = []
-    for name in sorted(profile_names & registry_names):
+    for name in sorted(profile_names & active_registry_names):
         after = _spec_from_device_payload(device_data[name])
         if after is None:
             continue
@@ -790,7 +842,7 @@ def compute_diff(
             }
         )
 
-    return DeviceDiff(added=added, removed=removed, modified=modified)
+    return DeviceDiff(added=added, removed=removed, modified=modified, disabled=disabled)
 
 
 def _validate_strategy(strategy: str) -> None:

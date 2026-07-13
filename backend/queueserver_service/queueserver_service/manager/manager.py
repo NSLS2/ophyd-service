@@ -675,6 +675,10 @@ class RunEngineManager(Process):
     def existing_devices(self) -> dict:
         return self._existing_devices
 
+    @property
+    def existing_plans(self) -> dict:
+        return self._existing_plans
+
     async def worker_update_device_overlay(self, upserts, deletes, *, replace):
         return await self._worker_command_update_device_overlay(
             upserts, deletes, replace=replace

@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 from .config_service import (
     ConfigServiceConflict,
+    ConfigServiceError,
     ConfigServiceSettings,
     ConfigServiceState,
     DeviceDiff,
@@ -52,6 +53,18 @@ class ConfigServiceHost(Protocol):
     @property
     def existing_devices(self) -> Dict[str, Any]:
         """The manager's current ``{name: device_info}`` allowed-devices dict."""
+        ...
+
+    @property
+    def existing_plans(self) -> Dict[str, Any]:
+        """The manager's current ``{name: plan_description}`` dict.
+
+        Used by ``lock_devices_for_plan`` so ``extract_device_names_from_plan``
+        can also visit decorator-defined default values (a plan submitted
+        without arguments whose parameters have ``default_defined_in_decorator``
+        defaults binds devices from those defaults — invisible to a scan of
+        ``plan['args']`` / ``plan['kwargs']`` alone).
+        """
         ...
 
     async def worker_update_device_overlay(
@@ -341,6 +354,25 @@ class ConfigServiceCoordinator:
         """Acquire per-plan locks for exactly the registered devices the plan
         references (lock scope "plan" only). Raises on ANY failure — the caller
         aborts the plan start. No silent fallback.
+
+        Two coordination-scope filters run before the lock request goes out:
+
+        1. Decorator defaults are unioned into the extracted device set via
+           ``existing_plans`` (see ``extract_device_names_from_plan``), so a
+           plan submitted without arguments whose parameters have
+           ``default_defined_in_decorator`` defaults locks those defaults too.
+
+        2. Names extracted from the plan are then intersected with the set of
+           **active** config-service registry devices. Profile-only devices
+           (worker knows about them, registry does not) and
+           deliberately-disabled registry devices are excluded from the lock
+           set and logged. This preserves the intent that ``worker ⊃ registry``
+           is an expected state (bootstrap only fills an empty registry; the
+           diff endpoints explicitly model an ``added`` bucket): the previous
+           behavior 404-blocked every plan referencing an unregistered device
+           until an operator ran a full ``config_service_sync``. Excluded
+           devices are logged at WARNING so an operator can see when
+           coordination is silently absent for a device the plan touches.
         """
         # Settle outstanding debt first: a previous plan whose unlock failed, or
         # an env-scope leftover. Also required for correctness — the lock
@@ -349,7 +381,9 @@ class ConfigServiceCoordinator:
             await self.unlock_devices()
 
         device_names = extract_device_names_from_plan(
-            item, existing_devices=self._host.existing_devices
+            item,
+            existing_devices=self._host.existing_devices,
+            existing_plans=self._host.existing_plans,
         )
         if not device_names:
             logger.info(
@@ -359,6 +393,43 @@ class ConfigServiceCoordinator:
             return
 
         client = await self.get_client()
+        # Fetch the ACTIVE registry membership so we can filter out names that
+        # would 404 (profile-only) or 409 (disabled) from the lock request.
+        # active_only=True is the right filter for lockability: a disabled
+        # device cannot be locked (config-service rejects with 409) and can't
+        # be reliably coordinated, so treat "disabled in registry" the same
+        # as "not in registry" from the per-plan lock's perspective.
+        try:
+            registry_specs = await client.get_instantiation_specs(active_only=True)
+        except Exception as ex:
+            # A registry-lookup failure at lock time is a coordination outage —
+            # propagate so the caller (queue-processing loop) surfaces it the
+            # same way as any other config-service failure, rather than
+            # silently over-locking against a stale set.
+            raise ConfigServiceError(
+                f"failed to fetch registry membership for per-plan lock filtering: {ex}"
+            ) from ex
+        registered_active = set(registry_specs.keys())
+
+        excluded = [name for name in device_names if name not in registered_active]
+        if excluded:
+            logger.warning(
+                "Plan %r references %d device(s) not active in the config-service "
+                "registry; excluding from per-plan lock (coordination NOT enforced "
+                "for these until they are registered/enabled): %s",
+                item.get("name"),
+                len(excluded),
+                excluded,
+            )
+        device_names = [name for name in device_names if name in registered_active]
+        if not device_names:
+            logger.warning(
+                "Plan %r has no registered active devices to lock after filtering; "
+                "no config-service locks taken",
+                item.get("name"),
+            )
+            return
+
         resp = await client.lock_devices(
             device_names, item_id=item["item_uid"], plan_name=item["name"]
         )
@@ -573,9 +644,16 @@ class ConfigServiceCoordinator:
 
 
     async def compute_diff_against_registry(self) -> DeviceDiff:
-        """Diff the worker's introspected devices against the registry (pure read)."""
+        """Diff the worker's introspected devices against the registry (pure read).
+
+        Fetches the FULL registry (``active_only=False``) so
+        deliberately-disabled devices are correctly assigned to
+        ``DeviceDiff.disabled`` rather than the actionable ``added`` /
+        ``removed`` / ``modified`` buckets. See ``compute_diff`` for the
+        semantics.
+        """
         client = await self.get_client()
-        registry_specs = await client.get_instantiation_specs()
+        registry_specs = await client.get_instantiation_specs(active_only=False)
         return compute_diff(self._device_data, registry_specs)
 
     async def apply_sync(self, *, strategy: str, selected) -> dict:
@@ -583,10 +661,15 @@ class ConfigServiceCoordinator:
         ``{"applied": ..., "diff_after": ...}``. Acquires the same sync lock as
         env-open so a concurrent env-open + manual sync don't race the registry.
         Assumes ``strategy``/``selected`` were already validated by the caller.
+
+        The diff is computed against the FULL registry (``active_only=False``)
+        so ``apply_diff`` under ``all`` / ``additions_only`` never touches a
+        deliberately-disabled device — it lives in ``DeviceDiff.disabled``,
+        not in an actionable bucket.
         """
         async with self._get_sync_alock():
             client = await self.get_client()
-            registry_specs = await client.get_instantiation_specs()
+            registry_specs = await client.get_instantiation_specs(active_only=False)
             diff_before = compute_diff(self._device_data, registry_specs)
             applied = await apply_diff(
                 client,
@@ -595,6 +678,6 @@ class ConfigServiceCoordinator:
                 strategy=strategy,
                 selected=selected,
             )
-            registry_after = await client.get_instantiation_specs()
+            registry_after = await client.get_instantiation_specs(active_only=False)
             diff_after = compute_diff(self._device_data, registry_after)
         return {"applied": applied, "diff_after": diff_after.to_dict()}
