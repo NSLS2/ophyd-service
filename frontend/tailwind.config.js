@@ -3,7 +3,7 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   corePlugins: {
     // finch.css already ships Tailwind's Preflight reset globally
-    // (imported in main.tsx), so we disable ours to avoid duplication.
+    // (imported in entry-client.tsx), so we disable ours to avoid duplication.
     preflight: false,
   },
   theme: {
