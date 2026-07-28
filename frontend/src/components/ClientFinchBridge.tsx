@@ -1,30 +1,39 @@
 import { useState, useEffect, ReactNode } from 'react';
 import { Routes, Route } from 'react-router';
-import type { RouteItem } from '@blueskyproject/finch';
+import type { FinchConfig, RouteItem } from '@blueskyproject/finch';
+import { loadFinch } from './finchLoader';
 
 interface FinchBridgeProps {
   routes: RouteItem[];
   headerTitle: string;
+  config?: FinchConfig;
   fallback?: ReactNode;
 }
 
 /**
  * Client-only bridge for @blueskyproject/finch
- * 
+ *
  * Finch touches `window` at module load time, which crashes Node.js SSR.
  * This component:
  * 1. Server-renders a basic route structure with auth context intact
- * 2. Client-side dynamically imports finch after hydration
- * 3. Seamlessly swaps in HubAppLayout once loaded
+ * 2. On the client, awaits the shared (memoized, modulepreloaded) finch import
+ * 3. Seamlessly swaps in HubAppLayout once it resolves
  */
-export function ClientFinchBridge({ routes, headerTitle, fallback }: FinchBridgeProps) {
+export function ClientFinchBridge({ routes, headerTitle, config, fallback }: FinchBridgeProps) {
   const [FinchModule, setFinchModule] = useState<any>(null);
 
   useEffect(() => {
-    // Dynamic import only executes in the browser
-    import('@blueskyproject/finch').then((finch) => {
-      setFinchModule(finch);
+    let cancelled = false;
+
+    loadFinch().then((finch) => {
+      if (!cancelled) setFinchModule(finch);
+    }).catch((error) => {
+      console.error('Failed to load Finch', error);
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Server-side and initial client render: use basic Routes fallback
@@ -41,9 +50,12 @@ export function ClientFinchBridge({ routes, headerTitle, fallback }: FinchBridge
     );
   }
 
-  // Once finch loads, render HubAppLayout
-  // Rely on the top-level FinchConfigProvider from entry-client.tsx
-  const { HubAppLayout } = FinchModule;
+  // Once Finch loads, render its provider and layout together.
+  const { FinchConfigProvider, HubAppLayout } = FinchModule;
 
-  return <HubAppLayout routes={routes} headerTitle={headerTitle} />;
+  return (
+    <FinchConfigProvider config={config ?? {}}>
+      <HubAppLayout routes={routes} headerTitle={headerTitle} />
+    </FinchConfigProvider>
+  );
 }

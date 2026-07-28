@@ -1,20 +1,30 @@
-// Entra ID roles from HAProxy
-export type EntraIDRole = 
-  | 'ios.operator'      // Standard IOS user
-  | 'ios.admin'         // IOS administrator
-  | 'skybeam.admin';    // All Skybeam apps admin
-
-export interface AuthData {
-  upn: string;              // BNL email (unique identifier)
-  name: string;             // User's real name
-  roles: EntraIDRole[];     // User's roles
-  givenName?: string;       // Optional: first name
-  familyName?: string;      // Optional: last name
+export interface AuthUser {
+  upn: string;
+  name: string;
+  givenName?: string;
+  familyName?: string;
 }
 
-// Declare global window type for auth data
-declare global {
-  interface Window {
-    __AUTH_DATA__?: AuthData;
-  }
+export interface AuthCapabilities {
+  canViewElementPicker: boolean;
+  canUseIosScan: boolean;
+  canAccessPresetsAdmin: boolean;
 }
+
+export interface AuthViewer {
+  status: 'authenticated';
+  authenticated: true;
+  user: AuthUser;
+  capabilities: AuthCapabilities;
+}
+
+export interface AuthDeniedState {
+  status: 'authFailed' | 'forbidden';
+  authenticated: false;
+  user?: AuthUser;
+  capabilities?: Partial<AuthCapabilities>;
+}
+
+export type AuthState =
+  | AuthDeniedState
+  | AuthViewer;

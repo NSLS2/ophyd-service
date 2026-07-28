@@ -1,55 +1,43 @@
-import { createContext, useContext, type ReactNode } from 'react';
-import type { AuthData, EntraIDRole } from '../types/auth';
+import { createContext, useContext, useState, type ReactNode } from 'react';
+import type { AuthState, AuthViewer } from '../types/auth';
 
-interface AuthContextValue extends AuthData {
-  hasRole: (role: EntraIDRole) => boolean;
-  isAdmin: () => boolean;
+interface AuthContextValue {
+  auth: AuthState;
+  viewer: AuthViewer | null;
+  isAuthenticated: () => boolean;
+  isAuthFailed: () => boolean;
+  isForbidden: () => boolean;
   canAccessPresetsAdmin: () => boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 interface AuthProviderProps {
-  authData: AuthData | null;
   children: ReactNode;
+  initialAuthState?: AuthState;
 }
 
-export function AuthProvider({ authData, children }: AuthProviderProps) {
-  // Treat missing/empty required fields as unauthenticated
-  const isMissingAuth =
-    !authData ||
-    !authData.upn ||
-    !Array.isArray(authData.roles) ||
-    authData.roles.length === 0;
+export function AuthProvider({ children, initialAuthState }: AuthProviderProps) {
+  const [auth] = useState<AuthState>(initialAuthState ?? { status: 'authFailed', authenticated: false });
 
-  if (isMissingAuth) {
-    // No auth data - render error or redirect
-    return (
-      <div style={{ padding: '2rem', textAlign: 'center' }}>
-        <h1>Authentication Required</h1>
-        <p>No authentication headers received from HAProxy.</p>
-        <p>This application requires Entra ID authentication.</p>
-      </div>
-    );
-  }
+  const viewer = auth.status === 'authenticated' ? auth : null;
 
-  const hasRole = (role: EntraIDRole): boolean => {
-    return authData.roles.includes(role);
-  };
+  const isAuthenticated = (): boolean => auth.status === 'authenticated';
 
-  const isAdmin = (): boolean => {
-    // skybeam.admin has all permissions, including ios.admin
-    return hasRole('ios.admin') || hasRole('skybeam.admin');
-  };
+  const isAuthFailed = (): boolean => auth.status === 'authFailed';
+
+  const isForbidden = (): boolean => auth.status === 'forbidden';
 
   const canAccessPresetsAdmin = (): boolean => {
-    return isAdmin();
+    return viewer?.capabilities.canAccessPresetsAdmin ?? false;
   };
 
   const value: AuthContextValue = {
-    ...authData,
-    hasRole,
-    isAdmin,
+    auth,
+    viewer,
+    isAuthenticated,
+    isAuthFailed,
+    isForbidden,
     canAccessPresetsAdmin,
   };
 

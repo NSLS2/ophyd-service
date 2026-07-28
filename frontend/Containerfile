@@ -60,9 +60,9 @@ COPY --from=build --chown="$USER:$USER" "/srv/$USER/frontend/dist" ./dist
 COPY --from=build --chown="$USER:$USER" "/srv/$USER/frontend/server.js" ./
 COPY --from=build --chown="$USER:$USER" "/srv/$USER/frontend/package.json" ./
 
-EXPOSE 5173
+EXPOSE 443
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:5173 || exit 1
+  CMD curl -fk https://localhost:443 || exit 1
 
 ENV NODE_ENV=production
 CMD ["node", "server.js"]

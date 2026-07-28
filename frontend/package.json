@@ -9,7 +9,7 @@
     "build:client": "vite build --outDir dist/client",
     "build:server": "vite build --outDir dist/server --ssr src/entry-server.tsx",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "NODE_ENV=production node server.js"
+    "preview": "NODE_ENV=production node server.js"  
   },
   "dependencies": {
     "@blueskyproject/finch": "^0.1.7",
