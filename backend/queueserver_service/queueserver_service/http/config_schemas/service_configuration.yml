@@ -83,7 +83,7 @@ properties:
               description: |
                 Type of Authenticator to use.
 
-                These are typically from the tiled.authenticators module,
+                These are typically from the queueserver_service.http.authenticators module,
                 though user-defined ones may be used as well.
 
                 This is given as an import path. In an import path, packages/modules
@@ -92,7 +92,7 @@ properties:
                 Example:
 
                 ```yaml
-                authenticator: queueserver_service.http.examples.DummyAuthenticator
+                authenticator: queueserver_service.http.authenticators:DummyAuthenticator
                 ```
                 args:
                   type: [object, "null"]
@@ -103,7 +103,7 @@ properties:
                     Example:
 
                     ```yaml
-                    authenticator: queueserver_service.http.examples.PAMAuthenticator
+                    authenticator: queueserver_service.http.authenticators:PAMAuthenticator
                     args:
                       service: "custom_service"
                     ```

@@ -18,7 +18,7 @@ so that:
 
 Every upstream ``bluesky_httpserver`` submodule maps 1:1 onto
 ``queueserver_service.http`` (``server``, ``config``, ``settings``,
-``authentication``, ``authenticators``, ``authorization``, ``core``,
+``authentication``, ``authenticators``, ``authorization``, ``protocols``, ``core``,
 ``schemas``, ``resources``, ``console_output``, ``utils``, ``app``, ``routers``,
 ``database``, ``config_schemas``). Rather than eagerly importing all of them --
 which would pull the entire FastAPI application stack on a bare
