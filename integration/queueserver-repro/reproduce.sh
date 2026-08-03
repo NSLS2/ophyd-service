@@ -114,7 +114,9 @@ OLOG_PORT="${OLOG_PORT:-8181}"
 # over the queueserver VM's dedicated EPICS NIC; here they are localhost:PORT).
 WITH_IOS_IOCS="${WITH_IOS_IOCS:-1}"
 IOC_BASE_PORT="${IOC_BASE_PORT:-5064}"
-IOS_IOCS="ioc_ios_pgm ioc_ios_curramp ioc_ios_epu ioc_ios_vortex ioc_ios_scaler ioc_ios_feedback"
+# ioc_ios_pgm must stay FIRST: the xspress3 sim is told the PGM's CA address
+# (ioc_port 0) so its ROI counts can follow the live energy during E_ramp.
+IOS_IOCS="ioc_ios_pgm ioc_ios_curramp ioc_ios_epu ioc_ios_vortex ioc_ios_scaler ioc_ios_feedback ioc_ios_xspress3"
 
 # The six realistic IOCs each cover one device family. Toggle them off to run
 # the blackhole alone (still opens the whole profile, just no realistic values).
@@ -563,6 +565,7 @@ start_iocs() {
                 continue
             fi
             setsid env EPICS_CA_SERVER_PORT="$port" \
+                XS3_PGM_ADDR="127.0.0.1:$(ioc_port 0)" \
                 pixi run --manifest-path "$PROFILE_DIR/pixi.toml" -e qs \
                 python "$IOC_DIR/$name.py" --list-pvs --interfaces 127.0.0.1 \
                 > "$RUN_DIR/iocs/$name.log" 2>&1 < /dev/null &

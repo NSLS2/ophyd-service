@@ -7,9 +7,9 @@ against the IOS profile collection — including the beamline's `E_ramp` plan.
 
 `reproduce.sh up` now also:
 
-- runs the six purpose-built IOS caproto IOCs (`iocs/ioc_ios_*.py`): `pgm`,
-  `curramp`, `epu`, `vortex`, `scaler`, `feedback` — each a separate Channel
-  Access server on its own port (`5064`, `5066`, …);
+- runs the seven purpose-built IOS caproto IOCs (`iocs/ioc_ios_*.py`): `pgm`,
+  `curramp`, `epu`, `vortex`, `scaler`, `feedback`, `xspress3` — each a
+  separate Channel Access server on its own port (`5064`, `5066`, …);
 - runs a catch-all **blackhole** IOC (`iocs/blackhole_ioc.py`) for every other
   PV the profile's ~100 devices force-connect at startup;
 - runs a **kafka** broker (RunEngine document publishing) and a minimal
@@ -29,6 +29,46 @@ realistic IOC is started with `--list-pvs`, its exact PV names are harvested,
 and the blackhole is told to **defer on exactly those PVs** (and only those).
 Result: realistic values where a real IOC exists (e.g. the scaler's `.TP`, the
 mono energy), spoofed zeros everywhere else, and the whole profile opens fast.
+
+## The Xspress3 sim (`ioc_ios_xspress3.py`): XAS_scan with real PFY/TFY
+
+The profile's `xs3` fluorescence detector (nslsii `build_xspress3_class`,
+1 channel, MCArois 1-4, HDF5 plugin) is what `XAS_scan` reads for PFY/TFY.
+The sim serves:
+
+- the **HDF5 file-plugin records as properly typed enums/strings** so
+  ophyd's FileStore staging (`auto_save='Yes'`, `file_write_mode='Stream'`,
+  `compression='zlib'`, ...) succeeds — the raw blackhole fabricated these
+  as floats, which crashed staging with `int(b'Yes', 0)`;
+- **trigger dynamics**: `det1:Acquire <- 1` acquires for `AcquireTime`, then
+  drops back to 0 (nslsii's `Xspress3Trigger` completes on that edge);
+- **energy-coupled ROI counts**: the sim polls the PGM sim's
+  `}}Enrgy-I` (address passed via `XS3_PGM_ADDR`; the PGM must stay first
+  in `IOS_IOCS`) and evaluates a synthetic absorption model
+  (edge step + white line + post-edge decay for Ti_L/O_K/Mn_L/Fe_L/Ni_L/Cu_L),
+  so an `E_ramp` across an edge traces real-looking XAS structure.
+  ROI names are served as `PFY`/`TFY`/`ELASTIC`/`BKG`.
+
+`iocs/verify_xs3_sim.py` is the acceptance check: it spawns the xs3 + PGM
+sims + blackhole, instantiates the profile's exact Xspress3 class, and
+asserts stage -> trigger/read below the Mn L3 edge -> slew onto the white
+line -> trigger/read shows the absorption jump.
+
+### Simulator abstraction levels (N3XTware FDR, Deliverable 4 alignment)
+
+The FDR's Device Simulators deliverable names four abstraction levels for
+simulators; this demo deliberately mixes two of them per the same
+vocabulary, selected per device by one configuration source (the harvested
+exclusion list):
+
+| Level (FDR D4) | Here |
+|---|---|
+| stand-in | the blackhole catch-all (name-inferred channel types) |
+| controls-level | the seven `ioc_ios_*.py` caproto IOCs (typed records, device dynamics) |
+
+Hybrid simulated/real operation (SC-D4-3) maps onto the same exclusion
+mechanism: a real IOC's PVs would be excluded from the blackhole exactly
+like a realistic sim's are today.
 
 ## What it takes to RUN a plan (beyond opening the profile)
 
