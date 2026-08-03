@@ -191,6 +191,7 @@ dev = [
     "happi>=3.0.1",
     "matplotlib>=3.11.0",
     "pandas>=3.0.3",
+    "pytest-asyncio>=1.4.0",
     "pytest-xprocess>=1.0.2",
     "respx>=0.23.1",
 ]

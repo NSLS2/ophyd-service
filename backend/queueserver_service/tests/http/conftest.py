@@ -1,21 +1,21 @@
 import os
 import time as ttime
-from typing import Any, Tuple
+from typing import Any
 
 import httpx
 import pytest
 import requests
-from cryptography.hazmat.primitives.asymmetric import rsa
-from jose.backends import RSAKey
 from queueserver_service.common.comms import zmq_single_request
-from respx import MockRouter
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 from tests.manager.common import set_qserver_zmq_encoding  # noqa: F401
 from xprocess import ProcessStarter
 
 import queueserver_service.http.server as bqss
-from queueserver_service.http.database.base import Base
+
+# NOTE: the auth/OIDC fixtures at the bottom of this file import their heavy,
+# test-only dependencies (cryptography, jose, respx) INSIDE the fixture bodies.
+# Keeping this module importable without them matters: the Side-B CI job (and
+# any minimal environment) collects tests/http for the OpenAPI drift test with
+# only the base install present.
 
 SERVER_ADDRESS = "localhost"
 # HTTP port for the xprocess-spawned test server. Default 60610 (the service
@@ -220,25 +220,29 @@ def oidc_well_known_url(oidc_base_url: str) -> str:
 
 
 @pytest.fixture
-def keys() -> Tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
+def keys():
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     public_key = private_key.public_key()
     return (private_key, public_key)
 
 
 @pytest.fixture
-def json_web_keyset(keys: Tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]) -> list[dict[str, Any]]:
+def json_web_keyset(keys) -> list[dict[str, Any]]:
+    from jose.backends import RSAKey
+
     _, public_key = keys
     return [RSAKey(key=public_key, algorithm="RS256").to_dict()]
 
 
 @pytest.fixture
 def mock_oidc_server(
-    respx_mock: MockRouter,
+    respx_mock,
     oidc_well_known_url: str,
     well_known_response: dict[str, Any],
     json_web_keyset: list[dict[str, Any]],
-) -> MockRouter:
+):
     respx_mock.get(oidc_well_known_url).mock(return_value=httpx.Response(httpx.codes.OK, json=well_known_response))
     respx_mock.get(well_known_response["jwks_uri"]).mock(
         return_value=httpx.Response(httpx.codes.OK, json={"keys": json_web_keyset})
@@ -248,6 +252,11 @@ def mock_oidc_server(
 
 @pytest.fixture
 def sqlite_session():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from queueserver_service.http.database.base import Base
+
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine)
