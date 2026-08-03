@@ -321,9 +321,9 @@ object.</p>
 <tr><td><code>GET /api/v1/devices/{name}/components</code></td>
     <td>Walk the ophyd device hierarchy (for the tree view).</td>
     <td>Nested-device navigation.</td></tr>
-<tr><td><code>POST /api/v1/devices/enrich</code></td>
-    <td>Given a list of device specs, connect them and report metadata.</td>
-    <td>Called <em>by</em> configuration during registry builds.</td></tr>
+<tr><td><code>POST /api/v1/devices/resolve</code></td>
+    <td>Resolve dotted device addresses to PV names by live introspection (handles ophyd FormattedComponent placeholders configuration's static resolver can't).</td>
+    <td>Registry lookups via the registry provider; instantiation local.</td></tr>
 </tbody>
 </table>
 

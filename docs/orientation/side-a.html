@@ -54,10 +54,10 @@ UI widget travels this seam.</p>
   <text x="450" y="132" class="svg-label" text-anchor="middle">2 · coordination gate</text>
   <text x="450" y="152" class="svg-label-small" text-anchor="middle">GET /devices/{name}/status  →  "locked by whom?"</text>
 
-  <!-- 3. enrichment (reverse) -->
-  <path d="M 300 195 L 600 195" class="svg-arrow"/>
-  <text x="450" y="188" class="svg-label" text-anchor="middle">3 · enrichment (reverse direction)</text>
-  <text x="450" y="208" class="svg-label-small" text-anchor="middle">POST /devices/enrich  →  "connect these and tell me their metadata"</text>
+  <!-- 3. live resolve (serves clients, reads registry via path 1) -->
+  <path d="M 600 195 L 300 195" class="svg-arrow"/>
+  <text x="450" y="188" class="svg-label" text-anchor="middle">3 · live device resolve (spec + PV-map reads)</text>
+  <text x="450" y="208" class="svg-label-small" text-anchor="middle">POST /devices/resolve on direct_control → registry lookups here, instantiation locally</text>
 
   <!-- 4. PV health -->
   <path d="M 600 240 L 300 240" class="svg-arrow"/>
@@ -66,7 +66,7 @@ UI widget travels this seam.</p>
 
   <!-- Note about direction -->
   <rect x="60" y="285" width="780" height="45" rx="6" class="svg-box-plain"/>
-  <text x="450" y="308" class="svg-label" text-anchor="middle">Convention · direct_control is the client on paths 1, 2, and 4. Only path 3 (enrichment) reverses.</text>
+  <text x="450" y="308" class="svg-label" text-anchor="middle">Convention · direct_control is the client on every path. Configuration never calls out.</text>
   <text x="450" y="324" class="svg-label-small" text-anchor="middle">All calls are HTTP; the shared retrying httpx client will be adopted on both sides during shared-package work.</text>
 </svg>
 <figcaption>Figure 1 — The four conversation types that make up Side A.</figcaption>
@@ -189,18 +189,25 @@ hits <code>GET /api/v1/devices/{name}/status</code> and inspects
 <p>The gate is opt-outable via <code>DIRECT_CONTROL_COORDINATION_CHECK_ENABLED=false</code>
 for testing, but in production it's always on.</p>
 
-<h3>3 · Enrichment — the reverse direction</h3>
+<h3>3 · Live device resolve — direct_control's side of the split</h3>
 
-<p>The one call where configuration acts as the client. When configuration
-is (re)building its registry from a profile, it needs to know each
-device's <em>live</em> metadata — connect status, PV list, alarm state.
-It POSTs a batch of device specs to
-<code>POST /api/v1/devices/enrich</code> on direct_control, which
-connects each one and returns the enriched view.</p>
+<p>Friendly-address resolution is split by what it needs.
+Configuration's <code>POST /api/v1/devices/resolve</code> is purely
+static — it walks device classes without opening EPICS connections, and
+an address that needs a <em>live</em> device (an ophyd
+<code>FormattedComponent</code> with a runtime placeholder like
+<code>{self.parent.prefix}</code>) comes back as the terminal outcome
+<code>needs_enrichment</code>.</p>
 
-<p>Configuration handles a direct_control outage gracefully: the batch
-is marked <code>enrichment_unavailable</code> instead of failing the
-whole registry load.</p>
+<p>Direct_control's <code>POST /api/v1/devices/resolve</code> handles
+those: it reads the device's instantiation spec and PV map from
+configuration (ordinary path-1 registry reads), instantiates the class
+via its ophyd-cache, and walks the attribute chain on the live object.
+Configuration never calls direct_control — for a while it had an
+opt-in reverse "enrichment" callback here, which was the only
+service-to-service cycle in the system, and it was removed in favor of
+this shape: every arrow points at configuration, and each service
+stays fully standalone.</p>
 
 <h3>4 · PV health reports</h3>
 
@@ -275,10 +282,10 @@ UI can highlight failing hardware.</p>
   <ol>
     <li><strong>Direct_control never writes without first asking configuration.</strong>
     That's the safety story — the gate can't be bypassed by any code path.</li>
-    <li><strong>Configuration never touches hardware directly.</strong>
-    When it needs live device metadata (enrichment), it asks direct_control.
-    When it wants to know if a PV is healthy, it consumes reports —
-    it doesn't ping.</li>
+    <li><strong>Configuration never touches hardware and never calls out.</strong>
+    It is a pure server: anything that needs a live device (resolve with
+    runtime placeholders, health probing) lives on direct_control's side,
+    and configuration only ever consumes reports — it doesn't ping.</li>
   </ol>
 </div>
 

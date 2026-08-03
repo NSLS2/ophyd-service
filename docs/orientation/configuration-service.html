@@ -145,9 +145,9 @@ and which running plan (if any) currently holds each device's exclusive lock.</p
 <tr><td><code>POST /api/v1/devices/unlock</code> / <code>force-unlock</code></td>
     <td>Release a lock cleanly, or forcibly (admin).</td>
     <td>queueserver on plan end · operator on cleanup</td></tr>
-<tr><td><code>POST /api/v1/devices/enrich</code></td>
-    <td>"Fill in these device specs with live metadata." Reverse call — config asks direct_control.</td>
-    <td>configuration → direct_control</td></tr>
+<tr><td><code>POST /api/v1/devices/resolve</code></td>
+    <td>Static friendly-address → PV resolution (class walk, never opens EPICS). Live-placeholder addresses return <code>needs_enrichment</code>; direct_control's own <code>/devices/resolve</code> handles those. Configuration never calls out.</td>
+    <td>UI / tooling</td></tr>
 <tr><td><code>POST /api/v1/pvs/{pv}/success</code> / <code>/failure</code></td>
     <td>Fire-and-forget health report.</td>
     <td>direct_control after every EPICS operation</td></tr>

@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer
 
 
 def _serialize_unix_epoch(value: datetime) -> float:
@@ -242,57 +242,11 @@ class PVSetBatchResponse(BaseModel):
     results: list[PVSetBatchItemResult]
 
 
-class EnrichmentSpec(BaseModel):
-    """One device-class + sub-path to enrich.
-
-    Sent by configuration_service to direct_control when the
-    configuration_service-side static resolver returns
-    ``needs_enrichment`` (typically an ophyd ``FormattedComponent`` with
-    runtime placeholders like ``{self.parent.prefix}``). Direct-control
-    instantiates the device class once via its ophyd-cache, walks the
-    sub-path with ``operator.attrgetter``, and reports the underlying PV.
-
-    ``sub_path`` is the dotted chain *after* the device name (since
-    direct-control has no registry of its own). For an address like
-    ``m1a.pit.actuate``, the head segment ``m1a`` is consumed by
-    configuration_service for the device lookup; direct-control receives
-    ``sub_path="pit.actuate"`` plus the class path and prefix.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    device_class_path: str = Field(
-        ..., description="Fully qualified import path of the device class."
-    )
-    prefix: str = Field(..., description="EPICS prefix the device is constructed with.")
-    sub_path: str = Field(
-        ...,
-        description=(
-            "Dotted attribute chain to walk on the instantiated device. "
-            "Empty string means the device IS the leaf signal."
-        ),
-    )
-
-
-class EnrichmentRequest(BaseModel):
-    """Batch enrichment request from configuration_service."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    items: list[EnrichmentSpec] = Field(
-        ...,
-        min_length=1,
-        max_length=200,
-        description="Specs to enrich, in caller order. Results match by index.",
-    )
-
-
 class EnrichmentResultItem(BaseModel):
-    """Per-item enrichment outcome.
+    """Outcome of walking one instantiated device to a leaf PV.
 
-    Results are returned in the same order as the request items so the
-    caller (configuration_service) can correlate by index — no
-    passthrough identifier needed.
+    Internal to the resolve pipeline (``_enrich_one``); results keep
+    request order so the endpoint can correlate by index.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -306,16 +260,73 @@ class EnrichmentResultItem(BaseModel):
     message: str | None = None
 
 
-class EnrichmentResponse(BaseModel):
-    """Aggregate enrichment response.
+class DeviceResolveOutcome(str, Enum):
+    """Per-address outcome of ``POST /api/v1/devices/resolve``."""
 
-    Per-item results in caller order. Resolution is read-only and never
-    halts — one bad item doesn't fail the others.
+    RESOLVED = "resolved"
+    DEVICE_NOT_FOUND = "device_not_found"
+    NO_INSTANTIATION_SPEC = "no_instantiation_spec"
+    NO_PREFIX = "no_prefix"
+    NO_SUCH_ATTR = "no_such_attr"
+    NOT_A_PV_LEAF = "not_a_pv_leaf"
+    INSTANTIATION_FAILED = "instantiation_failed"
+    REGISTRY_UNAVAILABLE = "registry_unavailable"
+
+
+class DeviceResolveRequest(BaseModel):
+    """Batch request to resolve dotted device addresses to PV names.
+
+    Each address is ``"<device>"`` or ``"<device>.<attr>.<attr>..."``.
+    The device head is looked up in the registry provider (the
+    configuration service in ``http`` mode, the local registry file in
+    ``file``/standalone mode); the device class is then instantiated via
+    the ophyd-cache and the attribute chain is walked to the leaf
+    signal's PV name. Live introspection means ophyd
+    ``FormattedComponent`` placeholders resolve here — unlike the
+    configuration service's static resolver, where they are a terminal
+    ``needs_enrichment`` outcome.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    results: list[EnrichmentResultItem]
+    addresses: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Dotted device addresses to resolve, e.g. 'm1a.pit.actuate'.",
+    )
+
+
+class DeviceResolveResultItem(BaseModel):
+    """One row in the batch resolve response, in request order.
+
+    ``ok`` is derived from ``outcome`` (``True`` iff ``resolved``) as a
+    computed field so it cannot drift from ``outcome``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    address: str
+    outcome: DeviceResolveOutcome
+    pv_name: str | None = None
+    message: str | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def ok(self) -> bool:
+        return self.outcome is DeviceResolveOutcome.RESOLVED
+
+
+class DeviceResolveResponse(BaseModel):
+    """Aggregate resolve response.
+
+    Always 200 — per-address outcomes are in the rows. Resolution is
+    read-only and never halts; one bad address doesn't fail the others.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    resolved: list[DeviceResolveResultItem]
 
 
 class DeviceCommandRequest(BaseModel):

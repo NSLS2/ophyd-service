@@ -119,16 +119,16 @@
         }
       }
     },
-    "/api/v1/devices/enrich": {
+    "/api/v1/devices/resolve": {
       "post": {
-        "summary": "Enrich Device Paths",
-        "description": "Resolve dotted device paths to PV names by live ophyd introspection.\n\nDesigned for configuration_service to call when its static resolver\ncan't fill in an ophyd ``FormattedComponent`` placeholder. For each\n``{device_class_path, prefix, sub_path}`` spec, this endpoint\ninstantiates the device class (cached after the first call) and\nwalks the sub-path to the leaf signal, returning the underlying\nEPICS PV name.\n\nThe endpoint is read-only \u2014 it does not write or subscribe \u2014 but\ninstantiating classic-ophyd compound devices does open EPICS Channel\nAccess connections (to fetch type/units/limits during the lazy\n``Component`` materialization). Each first-touched device pays a\n``wait_for_connection`` of up to a few hundred ms; subsequent items\non the cached device are fast. We run the whole batch on a worker\nthread via ``asyncio.to_thread`` so the event loop stays responsive\nfor other HTTP requests + WebSocket monitor traffic during the wait.\nPer-device serialization stays inside ``OphydDeviceCache``'s lock,\nso we don't introduce concurrent first-touches on the same device.\nFailures are returned per-item; the batch never halts on first error.",
-        "operationId": "enrich_device_paths_api_v1_devices_enrich_post",
+        "summary": "Resolve Device Paths",
+        "description": "Resolve dotted device addresses to PV names by live introspection.\n\nFor each ``\"<device>[.<attr>...]\"`` address: look the device up in\nthe registry provider (configuration service in ``http`` mode, the\nlocal registry file in ``file``/standalone mode), instantiate its\nclass via the ophyd-cache, walk the attribute chain, and return the\nleaf signal's underlying EPICS PV name. Because the device is live,\nophyd ``FormattedComponent`` runtime placeholders resolve here \u2014 the\nconfiguration service's static resolver reports those as a terminal\n``needs_enrichment`` outcome and points callers at this endpoint.\n\nRead-only \u2014 no writes, no subscriptions \u2014 but instantiating\nclassic-ophyd compound devices does open EPICS Channel Access\nconnections (lazy ``Component`` materialization). Each\nfirst-touched device pays a ``wait_for_connection`` of up to a few\nhundred ms; subsequent addresses on the cached device are fast. The\ninstantiation/walk batch runs on a worker thread via\n``asyncio.to_thread`` so the event loop stays responsive for HTTP +\nWebSocket monitor traffic; per-device serialization stays inside\n``OphydDeviceCache``'s lock. Failures are per-item \u2014 the batch\nnever halts on first error.",
+        "operationId": "resolve_device_paths_api_v1_devices_resolve_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/EnrichmentRequest"
+                "$ref": "#/components/schemas/DeviceResolveRequest"
               }
             }
           },
@@ -140,7 +140,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EnrichmentResponse"
+                  "$ref": "#/components/schemas/DeviceResolveResponse"
                 }
               }
             }
@@ -680,50 +680,68 @@
         "title": "DeviceCommandResponse",
         "description": "Response from device command execution."
       },
-      "EnrichmentRequest": {
+      "DeviceResolveOutcome": {
+        "type": "string",
+        "enum": [
+          "resolved",
+          "device_not_found",
+          "no_instantiation_spec",
+          "no_prefix",
+          "no_such_attr",
+          "not_a_pv_leaf",
+          "instantiation_failed",
+          "registry_unavailable"
+        ],
+        "title": "DeviceResolveOutcome",
+        "description": "Per-address outcome of ``POST /api/v1/devices/resolve``."
+      },
+      "DeviceResolveRequest": {
         "properties": {
-          "items": {
+          "addresses": {
             "items": {
-              "$ref": "#/components/schemas/EnrichmentSpec"
+              "type": "string"
             },
             "type": "array",
             "maxItems": 200,
             "minItems": 1,
-            "title": "Items",
-            "description": "Specs to enrich, in caller order. Results match by index."
+            "title": "Addresses",
+            "description": "Dotted device addresses to resolve, e.g. 'm1a.pit.actuate'."
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "items"
+          "addresses"
         ],
-        "title": "EnrichmentRequest",
-        "description": "Batch enrichment request from configuration_service."
+        "title": "DeviceResolveRequest",
+        "description": "Batch request to resolve dotted device addresses to PV names.\n\nEach address is ``\"<device>\"`` or ``\"<device>.<attr>.<attr>...\"``.\nThe device head is looked up in the registry provider (the\nconfiguration service in ``http`` mode, the local registry file in\n``file``/standalone mode); the device class is then instantiated via\nthe ophyd-cache and the attribute chain is walked to the leaf\nsignal's PV name. Live introspection means ophyd\n``FormattedComponent`` placeholders resolve here \u2014 unlike the\nconfiguration service's static resolver, where they are a terminal\n``needs_enrichment`` outcome."
       },
-      "EnrichmentResponse": {
+      "DeviceResolveResponse": {
         "properties": {
-          "results": {
+          "resolved": {
             "items": {
-              "$ref": "#/components/schemas/EnrichmentResultItem"
+              "$ref": "#/components/schemas/DeviceResolveResultItem"
             },
             "type": "array",
-            "title": "Results"
+            "title": "Resolved"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "results"
+          "resolved"
         ],
-        "title": "EnrichmentResponse",
-        "description": "Aggregate enrichment response.\n\nPer-item results in caller order. Resolution is read-only and never\nhalts \u2014 one bad item doesn't fail the others."
+        "title": "DeviceResolveResponse",
+        "description": "Aggregate resolve response.\n\nAlways 200 \u2014 per-address outcomes are in the rows. Resolution is\nread-only and never halts; one bad address doesn't fail the others."
       },
-      "EnrichmentResultItem": {
+      "DeviceResolveResultItem": {
         "properties": {
-          "ok": {
-            "type": "boolean",
-            "title": "Ok"
+          "address": {
+            "type": "string",
+            "title": "Address"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/DeviceResolveOutcome"
           },
           "pv_name": {
             "anyOf": [
@@ -736,18 +754,6 @@
             ],
             "title": "Pv Name"
           },
-          "error_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error Type",
-            "description": "Short tag identifying the failure category when ok=false."
-          },
           "message": {
             "anyOf": [
               {
@@ -758,43 +764,22 @@
               }
             ],
             "title": "Message"
+          },
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "readOnly": true
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "address",
+          "outcome",
           "ok"
         ],
-        "title": "EnrichmentResultItem",
-        "description": "Per-item enrichment outcome.\n\nResults are returned in the same order as the request items so the\ncaller (configuration_service) can correlate by index \u2014 no\npassthrough identifier needed."
-      },
-      "EnrichmentSpec": {
-        "properties": {
-          "device_class_path": {
-            "type": "string",
-            "title": "Device Class Path",
-            "description": "Fully qualified import path of the device class."
-          },
-          "prefix": {
-            "type": "string",
-            "title": "Prefix",
-            "description": "EPICS prefix the device is constructed with."
-          },
-          "sub_path": {
-            "type": "string",
-            "title": "Sub Path",
-            "description": "Dotted attribute chain to walk on the instantiated device. Empty string means the device IS the leaf signal."
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "device_class_path",
-          "prefix",
-          "sub_path"
-        ],
-        "title": "EnrichmentSpec",
-        "description": "One device-class + sub-path to enrich.\n\nSent by configuration_service to direct_control when the\nconfiguration_service-side static resolver returns\n``needs_enrichment`` (typically an ophyd ``FormattedComponent`` with\nruntime placeholders like ``{self.parent.prefix}``). Direct-control\ninstantiates the device class once via its ophyd-cache, walks the\nsub-path with ``operator.attrgetter``, and reports the underlying PV.\n\n``sub_path`` is the dotted chain *after* the device name (since\ndirect-control has no registry of its own). For an address like\n``m1a.pit.actuate``, the head segment ``m1a`` is consumed by\nconfiguration_service for the device lookup; direct-control receives\n``sub_path=\"pit.actuate\"`` plus the class path and prefix."
+        "title": "DeviceResolveResultItem",
+        "description": "One row in the batch resolve response, in request order.\n\n``ok`` is derived from ``outcome`` (``True`` iff ``resolved``) as a\ncomputed field so it cannot drift from ``outcome``."
       },
       "HTTPValidationError": {
         "properties": {

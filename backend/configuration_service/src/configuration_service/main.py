@@ -21,7 +21,7 @@ import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, NamedTuple, TypeVar
+from typing import Annotated, TypeVar
 
 import structlog
 import yaml
@@ -34,11 +34,6 @@ from sqlalchemy.engine import Engine
 from .config import Settings
 from .db import make_engine
 from .device_registry_store import DeviceRegistryStore
-from .direct_control_client import (
-    DirectControlClient,
-    DirectControlUnavailable,
-    EnrichmentSpec,
-)
 from .loader import create_loader
 from .lock_manager import DeviceLockManager
 from .models import (
@@ -184,25 +179,10 @@ def _get_device_prefix(device: "DeviceMetadata", registry: "DeviceRegistry") -> 
     return prefix if prefix else None
 
 
-class _DeferredEnrichment(NamedTuple):
-    """One row in the resolve endpoint's deferred-enrichment queue.
-
-    ``result_idx`` is the index of the placeholder slot in ``results``;
-    ``address`` is the original frontend-facing string echoed back in
-    the response; ``cache_key`` is the ``(device_class, prefix, sub_path)``
-    triple used both as the direct-control request and the in-process
-    enrichment cache key.
-    """
-
-    result_idx: int
-    address: str
-    cache_key: tuple[str, str, str]
-
-
 def _resolve_prepare(
     addresses: list[str],
     registry: "DeviceRegistry",
-) -> tuple[dict[int, "PathResolveResultItem"], list[tuple[int, str, str, str, str]]]:
+) -> tuple[dict[int, "PathResolveResultItem"], list[tuple[int, str, str, str]]]:
     """Registry-lookup half of the resolve endpoint's first pass.
 
     Runs synchronously on the event loop (no awaits), so it can't interleave
@@ -210,16 +190,16 @@ def _resolve_prepare(
     Returns ``(early_results, to_resolve)``: ``early_results`` maps an address
     index to a terminal result (device-not-found / no-spec / no-prefix), and
     ``to_resolve`` carries the captured, immutable
-    ``(index, address, device_class, prefix, sub_path)`` tuples the blocking
+    ``(index, address, device_class, prefix)`` tuples the blocking
     second half needs — so the worker thread never touches the shared,
     mutable registry (which a concurrent multi-step update could leave in a
     transiently inconsistent state).
     """
     early: dict[int, PathResolveResultItem] = {}
-    to_resolve: list[tuple[int, str, str, str, str]] = []
+    to_resolve: list[tuple[int, str, str, str]] = []
 
     for idx, address in enumerate(addresses):
-        head, _, sub_path = address.partition(".")
+        head, _, _sub = address.partition(".")
         device = registry.get_device(head)
         if device is None:
             early[idx] = PathResolveResultItem(
@@ -252,7 +232,7 @@ def _resolve_prepare(
             )
             continue
 
-        to_resolve.append((idx, address, spec.device_class, prefix, sub_path))
+        to_resolve.append((idx, address, spec.device_class, prefix))
 
     return early, to_resolve
 
@@ -261,27 +241,27 @@ def _resolve_execute(
     total: int,
     early: dict[int, "PathResolveResultItem"],
     to_resolve: list[tuple[int, str, str, str, str]],
-    enrich_cache: dict,
-    enrichment_enabled: bool,
     allowlist,
-) -> tuple[list["PathResolveResultItem | None"], list[_DeferredEnrichment]]:
+) -> list["PathResolveResultItem | None"]:
     """Blocking half of the resolve endpoint's first pass.
 
     Runs in a worker thread — imports and (for ophyd-async) instantiates the
     device class, which is why it's kept off the event loop — using only the
     immutable values captured by ``_resolve_prepare``. It never reads the
-    shared registry, so it can't observe a mid-mutation view. Slots that need
-    live enrichment get a ``None`` placeholder plus a ``_DeferredEnrichment``
-    row for the async second pass.
+    shared registry, so it can't observe a mid-mutation view.
+
+    Resolution is purely static: ``needs_enrichment`` (an ophyd
+    ``FormattedComponent`` with a runtime placeholder) is a terminal
+    outcome here. Live resolution for those addresses is direct-control's
+    ``POST /api/v1/devices/resolve``, which instantiates the device.
     """
     results: list[PathResolveResultItem | None] = [None] * total
     for idx, item in early.items():
         results[idx] = item
 
-    deferred: list[_DeferredEnrichment] = []
     device_cache: dict = {}
 
-    for idx, address, device_class, prefix, sub_path in to_resolve:
+    for idx, address, device_class, prefix in to_resolve:
         resolution = resolve_path(
             address,
             device_class_path=device_class,
@@ -290,23 +270,6 @@ def _resolve_execute(
             allowlist=allowlist,
         )
 
-        # Enrichment path: needs_enrichment + client configured.
-        if resolution.outcome is Outcome.NEEDS_ENRICHMENT and enrichment_enabled:
-            cache_key = (device_class, prefix, sub_path)
-            cached_pv = enrich_cache.get(cache_key)
-            if cached_pv is not None:
-                results[idx] = PathResolveResultItem(
-                    address=address,
-                    outcome=Outcome.RESOLVED,
-                    pv_name=cached_pv,
-                )
-                continue
-            results[idx] = None  # placeholder filled in by second pass
-            deferred.append(
-                _DeferredEnrichment(result_idx=idx, address=address, cache_key=cache_key)
-            )
-            continue
-
         results[idx] = PathResolveResultItem(
             address=address,
             outcome=resolution.outcome,
@@ -314,7 +277,7 @@ def _resolve_execute(
             message=resolution.message,
         )
 
-    return results, deferred
+    return results
 
 
 def _apply_standalone_pvs(registry, pv_store: StandalonePVStore, log) -> None:
@@ -373,16 +336,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Receives caput outcome reports from direct-control and exposes the
     # state on /api/v1/pvs/{pv_name}/health + the device-status response.
     pv_health_container: dict[str, PVHealthManager] = {}
-
-    # Container for the optional direct-control client used by the path
-    # resolver's live-enrichment fallback. None if CONFIG_DIRECT_CONTROL_URL
-    # isn't set — needs_enrichment outcomes then remain unenriched.
-    direct_control_container: dict[str, DirectControlClient] = {}
-
-    # In-process cache for live-enrichment results, keyed by
-    # (device_class_path, prefix, sub_path). Survives across requests
-    # so a warm-cache resolve never re-calls direct-control.
-    enrichment_cache_container: dict[str, dict] = {}
 
     # The single SQLAlchemy engine shared by both persistent stores. Created in
     # the lifespan, disposed at shutdown.
@@ -483,23 +436,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Registry-mutation lock (created inside the running loop).
         registry_lock_container["lock"] = asyncio.Lock()
 
-        # Initialize direct-control client for resolver enrichment fallback.
-        # Opt-in: requires CONFIG_DIRECT_CONTROL_URL to be set.
-        if settings.direct_control_url:
-            direct_control_container["client"] = DirectControlClient(
-                base_url=settings.direct_control_url,
-                timeout=settings.direct_control_timeout,
-            )
-            logger.info(
-                "direct_control_client_initialized",
-                base_url=settings.direct_control_url,
-            )
-
-        # Empty enrichment cache. Lives for the lifetime of the process;
-        # explicit invalidation isn't wired up yet (a device-class deploy
-        # change would require a service restart to clear stale entries).
-        enrichment_cache_container["cache"] = {}
-
         yield
 
         # Cleanup
@@ -509,8 +445,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             registry_store_container["store"].close()
         if "engine" in engine_container:
             engine_container["engine"].dispose()
-        if "client" in direct_control_container:
-            await direct_control_container["client"].aclose()
         logger.info("configuration_service_shutdown")
         state_container.clear()
         registry_store_container.clear()
@@ -518,8 +452,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine_container.clear()
         lock_manager_container.clear()
         pv_health_container.clear()
-        direct_control_container.clear()
-        enrichment_cache_container.clear()
         registry_lock_container.clear()
 
     openapi_tags = [
@@ -583,8 +515,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # goes through Depends().
     app.state.state_container = state_container
     app.state.registry_store_container = registry_store_container
-    app.state.direct_control_container = direct_control_container
-    app.state.enrichment_cache_container = enrichment_cache_container
     app.state.lock_manager_container = lock_manager_container
 
     # Dependency injection function
@@ -2541,9 +2471,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         description=(
             "Walk the ophyd / ophyd-async device class for each address "
             "and return the underlying EPICS PV. Read-only, best-effort "
-            "per-item — no halt-on-error. Used by the frontend to translate "
-            "friendly addresses like 'vortex.mca.rois.roi2.lo_chan' into "
-            "the PV strings needed by direct-control's batch caput."
+            "per-item — no halt-on-error. Purely static: addresses that "
+            "need a live device (ophyd FormattedComponent placeholders) "
+            "return needs_enrichment; resolve those via direct-control's "
+            "POST /api/v1/devices/resolve instead."
         ),
         tags=["Device Components"],
     )
@@ -2552,7 +2483,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> PathResolveResponse:
         """Resolve a batch of dotted device addresses to PV names.
 
-        Two-pass resolution. First pass:
+        Static, single-pass resolution:
 
         1. Split off the head segment as the device name and look it up
            in the registry. Missing device → ``device_not_found``.
@@ -2563,17 +2494,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
            classic-ophyd class walker or the ophyd-async
            instantiate-then-walk path based on the class hierarchy.
 
-        First-pass resolution never opens EPICS connections. ophyd-async
-        classes are instantiated locally (no ``.connect()``) so their
+        Resolution never opens EPICS connections. ophyd-async classes
+        are instantiated locally (no ``.connect()``) so their
         Signal.source URIs can be read; classic-ophyd classes are walked
-        at class level.
-
-        Second pass (only if ``CONFIG_DIRECT_CONTROL_URL`` is set): any
-        ``needs_enrichment`` outcomes from the first pass are batched and
-        sent to direct-control's ``/api/v1/devices/enrich`` endpoint,
-        which instantiates the device against the live IOC and reads the
-        leaf signal's PV name. Successful enrichments are cached in-
-        process so subsequent identical addresses skip the round-trip.
+        at class level. Addresses that require a live device (an ophyd
+        ``FormattedComponent`` with a runtime placeholder) return the
+        terminal outcome ``needs_enrichment`` — direct-control's
+        ``POST /api/v1/devices/resolve`` performs live introspection for
+        those. The configuration service never calls other services.
 
         Top-level addresses (no sub-attribute) are framework-dependent:
         for classic ophyd they resolve to the device's prefix (the happi
@@ -2582,69 +2510,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         many signals and no canonical "the PV". Use
         ``<device>.<attr>`` instead for async devices.
         """
-        # Per-request cache for ophyd-async device instances. A batch that
-        # addresses the same device multiple times (e.g. motor.user_setpoint
-        # + motor.velocity) instantiates the class once and reuses it.
-        # Classic-ophyd resolution is purely static and ignores this cache.
-        dc_client = direct_control_container.get("client")
-        enrich_cache = enrichment_cache_container.get("cache", {})
-
-        # First pass, split so the registry is never read from a worker thread:
+        # Split so the registry is never read from a worker thread:
         # (1) look up device/spec/prefix synchronously on the event loop, where
         # no registry mutation can interleave (a consistent snapshot), then
         # (2) run the blocking class import/walk in a worker thread using only
-        # the captured immutable values. Slots that need enrichment get a
-        # placeholder + an entry in `deferred`.
+        # the captured immutable values.
         early, to_resolve = _resolve_prepare(request.addresses, state.registry)
-        results, deferred = await asyncio.to_thread(
+        results = await asyncio.to_thread(
             _resolve_execute,
             len(request.addresses),
             early,
             to_resolve,
-            enrich_cache,
-            dc_client is not None,
             settings.device_class_allowlist,
         )
-        if deferred:
-            specs = [
-                EnrichmentSpec(
-                    device_class_path=d.cache_key[0],
-                    prefix=d.cache_key[1],
-                    sub_path=d.cache_key[2],
-                )
-                for d in deferred
-            ]
-            try:
-                enrichments = await dc_client.enrich(specs)  # type: ignore[union-attr]
-            except DirectControlUnavailable as e:
-                # Mark every deferred slot as enrichment_unavailable.
-                for d in deferred:
-                    results[d.result_idx] = PathResolveResultItem(
-                        address=d.address,
-                        outcome=Outcome.ENRICHMENT_UNAVAILABLE,
-                        message=str(e),
-                    )
-            else:
-                for d, result in zip(deferred, enrichments, strict=True):
-                    if result.ok and result.pv_name:
-                        # Cache success; failures are not cached because
-                        # they may be transient (IOC down, etc.) and we
-                        # want them re-attempted on the next request.
-                        enrich_cache[d.cache_key] = result.pv_name
-                        results[d.result_idx] = PathResolveResultItem(
-                            address=d.address,
-                            outcome=Outcome.RESOLVED,
-                            pv_name=result.pv_name,
-                        )
-                    else:
-                        results[d.result_idx] = PathResolveResultItem(
-                            address=d.address,
-                            outcome=Outcome.ENRICHMENT_UNAVAILABLE,
-                            message=(
-                                f"direct-control enrichment failed: "
-                                f"{result.error_type}: {result.message}"
-                            ),
-                        )
 
         # Every slot is filled by now; the cast keeps the response model happy.
         return PathResolveResponse(resolved=[r for r in results if r is not None])

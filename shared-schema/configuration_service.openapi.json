@@ -1883,7 +1883,7 @@
           "Device Components"
         ],
         "summary": "Resolve Dotted Device Addresses to PV Names",
-        "description": "Walk the ophyd / ophyd-async device class for each address and return the underlying EPICS PV. Read-only, best-effort per-item \u2014 no halt-on-error. Used by the frontend to translate friendly addresses like 'vortex.mca.rois.roi2.lo_chan' into the PV strings needed by direct-control's batch caput.",
+        "description": "Walk the ophyd / ophyd-async device class for each address and return the underlying EPICS PV. Read-only, best-effort per-item \u2014 no halt-on-error. Purely static: addresses that need a live device (ophyd FormattedComponent placeholders) return needs_enrichment; resolve those via direct-control's POST /api/v1/devices/resolve instead.",
         "operationId": "resolve_device_paths_api_v1_devices_resolve_post",
         "requestBody": {
           "content": {
@@ -3486,11 +3486,10 @@
           "device_not_found",
           "import_failed",
           "no_such_attr",
-          "needs_enrichment",
-          "enrichment_unavailable"
+          "needs_enrichment"
         ],
         "title": "Outcome",
-        "description": "Per-address result kind.\n\n``NEEDS_ENRICHMENT`` and ``ENRICHMENT_UNAVAILABLE`` are distinct: the\nformer means we found a runtime placeholder we can't fill in\nstatically *and* live-enrichment isn't configured for this deploy;\nthe latter means enrichment was attempted (via the direct-control\nclient) and the call failed (network, timeout, 5xx). Frontends can\nbranch \u2014 needs_enrichment is a deploy-config gap while\nenrichment_unavailable is typically transient and worth a retry."
+        "description": "Per-address result kind.\n\n``NEEDS_ENRICHMENT`` is terminal here: the address hit an ophyd\n``FormattedComponent`` with a runtime placeholder that static\nintrospection cannot fill in. The configuration service never calls\nother services \u2014 live resolution for those addresses is\ndirect-control's ``POST /api/v1/devices/resolve``."
       },
       "PVAccessMode": {
         "type": "string",
