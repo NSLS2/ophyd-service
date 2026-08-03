@@ -83,6 +83,17 @@ def test_plugin_type_reports_hdf5_writer(db):
     assert channel.value == "NDFileHDF5"
 
 
+def test_asyn_ports_are_one_consistent_name(db):
+    """ophyd's validate_asyn_ports() requires each plugin's NDArrayPort to
+    match a sibling's PortName; one constant fabricated port satisfies every
+    device tree (fabricating the PV name made every port unique and failed
+    validation on ophyd versions that enforce it)."""
+    cam_port = db["XF:23ID2-ES{Xsp:1}:det1:PortName_RBV"]
+    plugin_src = db[_XS3_HDF + "NDArrayPort_RBV"]
+    assert isinstance(cam_port, ChannelString)
+    assert cam_port.value == plugin_src.value == "BHPORT"
+
+
 def test_rbv_suffix_collapses_onto_base_channel(db):
     """A record and its _RBV share one fabricated channel (readback echo)."""
     assert db[_XS3_HDF + "AutoSave_RBV"] is db[_XS3_HDF + "AutoSave"]

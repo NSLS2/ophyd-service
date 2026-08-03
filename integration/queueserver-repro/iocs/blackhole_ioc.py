@@ -87,7 +87,13 @@ def fabricate_channel(key):
                 return ChannelString(value=val)
         return ChannelString(value='NDPluginStats')
     if 'ArrayPort' in key or 'PortName' in key:
-        return ChannelString(value=key)
+        # One constant asyn port name keeps every fabricated AreaDetector
+        # plugin graph self-consistent: ophyd's validate_asyn_ports()
+        # requires each plugin's NDArrayPort to name a port some sibling
+        # (the cam) reports as its PortName. Fabricating the PV name here
+        # (the old behavior) made every port unique and failed validation
+        # on ophyd versions that enforce it.
+        return ChannelString(value='BHPORT')
     if 'EnableCallbacks' in key:
         return ChannelEnum(value=0, enum_strings=['Disabled', 'Enabled'])
     if 'BlockingCallbacks' in key or 'WaitForPlugins' in key:
