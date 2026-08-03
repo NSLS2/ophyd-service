@@ -2,12 +2,14 @@
 # the documentation) but not necessarily required for _using_ it.
 black!=25.11.0
 coverage
+cryptography
 flake8
 isort
 happi>=1.14.0
 pre-commit
 pytest
 pytest-asyncio
+respx
 pytest-xprocess
 pytest-split
 py

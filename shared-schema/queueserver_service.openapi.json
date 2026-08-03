@@ -5912,6 +5912,17 @@
               }
             ],
             "title": "Api Key Scopes"
+          },
+          "access_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Token"
           }
         },
         "type": "object",
@@ -6311,6 +6322,11 @@
           "revoked": {
             "type": "boolean",
             "title": "Revoked"
+          },
+          "state": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "State"
           }
         },
         "type": "object",

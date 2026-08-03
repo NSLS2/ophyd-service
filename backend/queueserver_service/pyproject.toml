@@ -59,6 +59,9 @@ dependencies = [
     # missing from httpserver's own requirements (upstream omission).
     "alembic",
     "bluesky-queueserver-api",
+    # cachetools: TTL cache on the OIDC JWKS key fetch (authenticators.py,
+    # tiled-v0.2.12 alignment).
+    "cachetools",
     "fastapi",
     "httpx",
     "ldap3",
@@ -179,3 +182,16 @@ force-exclude = '''
   )/
 )
 '''
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.22.1",
+    "cryptography>=50.0.0",
+    "h5py>=3.16.0",
+    "happi>=3.0.1",
+    "matplotlib>=3.11.0",
+    "pandas>=3.0.3",
+    "pytest-asyncio>=1.4.0",
+    "pytest-xprocess>=1.0.2",
+    "respx>=0.23.1",
+]

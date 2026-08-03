@@ -1,6 +1,8 @@
 import os
 import time as ttime
+from typing import Any
 
+import httpx
 import pytest
 import requests
 from queueserver_service.common.comms import zmq_single_request
@@ -9,8 +11,18 @@ from xprocess import ProcessStarter
 
 import queueserver_service.http.server as bqss
 
+# NOTE: the auth/OIDC fixtures at the bottom of this file import their heavy,
+# test-only dependencies (cryptography, jose, respx) INSIDE the fixture bodies.
+# Keeping this module importable without them matters: the Side-B CI job (and
+# any minimal environment) collects tests/http for the OpenAPI drift test with
+# only the base install present.
+
 SERVER_ADDRESS = "localhost"
-SERVER_PORT = "60610"
+# HTTP port for the xprocess-spawned test server. Default 60610 (the service
+# default); override with QSERVER_TEST_HTTP_PORT when something ELSE already
+# owns 60610 on this machine (e.g. another project's queueserver container) —
+# otherwise every request in the suite silently talks to the wrong server.
+SERVER_PORT = os.environ.get("QSERVER_TEST_HTTP_PORT", "60610")
 
 # Single-user API key used for most of the tests
 API_KEY_FOR_TESTS = "APIKEYFORTESTS"
@@ -195,3 +207,87 @@ def wait_for_ip_kernel_idle(timeout, polling_period=0.2, api_key=API_KEY_FOR_TES
             return True
 
     return False
+
+
+# ============================================================================
+# AUTH Test Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def oidc_well_known_url(oidc_base_url: str) -> str:
+    return f"{oidc_base_url}.well-known/openid-configuration"
+
+
+@pytest.fixture
+def keys():
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_key = private_key.public_key()
+    return (private_key, public_key)
+
+
+@pytest.fixture
+def json_web_keyset(keys) -> list[dict[str, Any]]:
+    from jose.backends import RSAKey
+
+    _, public_key = keys
+    return [RSAKey(key=public_key, algorithm="RS256").to_dict()]
+
+
+@pytest.fixture
+def mock_oidc_server(
+    respx_mock,
+    oidc_well_known_url: str,
+    well_known_response: dict[str, Any],
+    json_web_keyset: list[dict[str, Any]],
+):
+    respx_mock.get(oidc_well_known_url).mock(return_value=httpx.Response(httpx.codes.OK, json=well_known_response))
+    respx_mock.get(well_known_response["jwks_uri"]).mock(
+        return_value=httpx.Response(httpx.codes.OK, json={"keys": json_web_keyset})
+    )
+    return respx_mock
+
+
+@pytest.fixture
+def sqlite_session():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from queueserver_service.http.database.base import Base
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine)
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+        engine.dispose()
+
+
+# ============================================================================
+# OIDC Test Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def oidc_base_url() -> str:
+    """Base URL for mock OIDC provider."""
+    return "https://example.com/realms/example/"
+
+
+@pytest.fixture
+def well_known_response(oidc_base_url: str) -> dict:
+    """Mock OIDC well-known configuration response."""
+    return {
+        "id_token_signing_alg_values_supported": ["RS256"],
+        "issuer": oidc_base_url.rstrip("/"),
+        "jwks_uri": f"{oidc_base_url}protocol/openid-connect/certs",
+        "authorization_endpoint": f"{oidc_base_url}protocol/openid-connect/auth",
+        "token_endpoint": f"{oidc_base_url}protocol/openid-connect/token",
+        "device_authorization_endpoint": f"{oidc_base_url}protocol/openid-connect/auth/device",
+        "end_session_endpoint": f"{oidc_base_url}protocol/openid-connect/logout",
+    }
