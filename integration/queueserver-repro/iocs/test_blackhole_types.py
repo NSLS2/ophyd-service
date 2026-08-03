@@ -86,3 +86,87 @@ def test_plugin_type_reports_hdf5_writer(db):
 def test_rbv_suffix_collapses_onto_base_channel(db):
     """A record and its _RBV share one fabricated channel (readback echo)."""
     assert db[_XS3_HDF + "AutoSave_RBV"] is db[_XS3_HDF + "AutoSave"]
+
+
+# ---------------------------------------------------------------------------
+# Live Channel Access round-trip: the exact operation XAS_scan staging does.
+# ---------------------------------------------------------------------------
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture(scope="module")
+def live_blackhole():
+    """Run blackhole_ioc.py as a real CA server on an ephemeral port.
+
+    Yields (env, port) where env carries the EPICS_CA_* settings a client
+    needs. Skipped if the port comes up unusable in this sandbox.
+    """
+    import os
+    import subprocess
+    import sys
+    import time
+
+    port = _free_port()
+    env = dict(
+        os.environ,
+        EPICS_CA_SERVER_PORT=str(port),
+        EPICS_CA_ADDR_LIST=f"127.0.0.1:{port}",
+        EPICS_CA_AUTO_ADDR_LIST="NO",
+    )
+    proc = subprocess.Popen(
+        [sys.executable, str(_MODULE_PATH), "--interfaces", "127.0.0.1"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    time.sleep(1.5)  # caproto binds fast; generous for slow CI
+    try:
+        if proc.poll() is not None:
+            pytest.skip("blackhole IOC failed to start on an ephemeral port")
+        yield env
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def test_ca_write_yes_to_autosave_roundtrips(live_blackhole, monkeypatch):
+    """caput('Yes') to a fabricated AutoSave PV — the operation that raised
+    ``invalid literal for int() with base 0: b'Yes'`` before the fix."""
+    for key, value in live_blackhole.items():
+        if key.startswith("EPICS_CA"):
+            monkeypatch.setenv(key, value)
+    from caproto import ChannelType
+    from caproto.sync.client import read, write
+
+    pv = _XS3_HDF + "AutoSave"
+    write(pv, "Yes", notify=True)
+    response = read(pv, data_type=ChannelType.STRING)
+    assert response.data[0] == b"Yes"
+
+
+def test_ca_write_stage_sig_set_roundtrips(live_blackhole, monkeypatch):
+    """The other enum stage signals accept their ophyd-written strings."""
+    for key, value in live_blackhole.items():
+        if key.startswith("EPICS_CA"):
+            monkeypatch.setenv(key, value)
+    from caproto import ChannelType
+    from caproto.sync.client import read, write
+
+    for pv, value in [
+        (_XS3_HDF + "AutoIncrement", "Yes"),
+        (_XS3_HDF + "FileWriteMode", "Single"),
+        (_XS3_HDF + "BlockingCallbacks", "Yes"),
+    ]:
+        write(pv, value, notify=True)
+        response = read(pv, data_type=ChannelType.STRING)
+        assert response.data[0] == value.encode(), pv
