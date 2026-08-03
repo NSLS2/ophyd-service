@@ -73,7 +73,14 @@ class BlackholeDB(dict):
 
 
 def fabricate_channel(key):
-    """Infer a reasonable channel type from a PV name."""
+    """Infer a reasonable channel type from a PV name.
+
+    The AreaDetector file-plugin rules mirror the HEX simulated beamline's
+    spoof IOC: ophyd's FileStore stage_sigs write enum *strings* ('Yes',
+    'Single', ...) to these PVs, and a fabricated float channel turns that
+    into ``int(b'Yes', 0)`` -> ValueError at stage time (the XAS_scan /
+    Xspress3 HDF5-plugin failure; the SPECS HDF5 plugin stages the same way).
+    """
     if 'PluginType' in key:
         for pattern, val in PLUGIN_TYPE_PVS:
             if pattern.search(key):
@@ -81,12 +88,26 @@ def fabricate_channel(key):
         return ChannelString(value='NDPluginStats')
     if 'ArrayPort' in key or 'PortName' in key:
         return ChannelString(value=key)
-    if 'EnableCallbacks' in key or 'BlockingCallbacks' in key or 'WaitForPlugins' in key:
+    if 'EnableCallbacks' in key:
         return ChannelEnum(value=0, enum_strings=['Disabled', 'Enabled'])
+    if 'BlockingCallbacks' in key or 'WaitForPlugins' in key:
+        # ophyd writes 'Yes'/'No' strings to these, not 'Enabled'/'Disabled'.
+        return ChannelEnum(value=0, enum_strings=['No', 'Yes'])
+    if 'Auto' in key or 'LazyOpen' in key or 'SWMRMode' in key:
+        # AutoSave / AutoIncrement / LazyOpen / SWMRMode — file-plugin bo
+        # records staged as 'Yes'/'No'.
+        return ChannelEnum(value=0, enum_strings=['No', 'Yes'])
     if 'ImageMode' in key:
         return ChannelEnum(value=0, enum_strings=['Single', 'Multiple', 'Continuous'])
     if 'TriggerMode' in key:
         return ChannelEnum(value=0, enum_strings=['Internal', 'External'])
+    if 'FileWriteMode' in key or 'WriteMode' in key:
+        return ChannelEnum(value=0, enum_strings=['Single', 'Capture', 'Stream'])
+    if 'Compression' in key:
+        return ChannelEnum(value=0, enum_strings=['None', 'N-bit', 'szip', 'zlib', 'blosc'])
+    if 'FilePathExists' in key:
+        # ophyd verifies this readback is truthy before staging a file plugin.
+        return ChannelInteger(value=1)
     if 'ArraySize' in key:
         return ChannelData(value=10)
     if key.endswith('.EGU'):
