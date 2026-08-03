@@ -245,6 +245,44 @@ def test_resolve_registry_unavailable_fails_loud_per_item(client):
     assert "unavailable" in row["message"].lower()
 
 
+def test_resolve_memoizes_registry_lookups_per_device(client):
+    """A batch addressing the same device repeatedly hits the registry once
+    per lookup kind, not once per address (get_device_pvs has no client-side
+    cache, so without the memo a large single-device batch multiplies HTTP
+    calls against configuration_service)."""
+    from direct_control.main import get_registry_client
+
+    class _CountingRegistry(_SpecRegistry):
+        def __init__(self):
+            super().__init__()
+            self.spec_calls = 0
+            self.pvs_calls = 0
+
+        async def get_instantiation_spec(self, device_name):
+            self.spec_calls += 1
+            return await super().get_instantiation_spec(device_name)
+
+        async def get_device_pvs(self, device_name):
+            self.pvs_calls += 1
+            return await super().get_device_pvs(device_name)
+
+    counting = _CountingRegistry()
+    client.app.dependency_overrides[get_registry_client] = lambda: counting
+
+    r = client.post(
+        "/api/v1/devices/resolve",
+        json={
+            "addresses": ["dev_cpt.counter", "dev_cpt.m1", "dev_cpt.counter", "no_such_device.x"]
+        },
+    )
+    assert r.status_code == 200
+    rows = r.json()["resolved"]
+    assert [row["ok"] for row in rows] == [True, True, True, False]
+    # Two distinct heads -> two lookups of each kind, regardless of batch size.
+    assert counting.spec_calls == 2
+    assert counting.pvs_calls == 2
+
+
 def test_resolve_batch_with_mixed_outcomes(resolve_client):
     """Best-effort per item, response rows in request order."""
     r = resolve_client.post(

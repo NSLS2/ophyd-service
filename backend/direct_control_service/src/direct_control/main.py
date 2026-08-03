@@ -1259,26 +1259,43 @@ async def resolve_device_paths(
     rows: list[DeviceResolveResultItem | None] = [None] * len(request.addresses)
     to_walk: list[tuple[int, str, str, str, str]] = []  # idx, addr, class, prefix, sub
 
+    # Per-request memo of registry lookups keyed by device head: a batch that
+    # addresses the same device repeatedly (motor.user_setpoint +
+    # motor.velocity) hits the registry once instead of once per address —
+    # get_device_pvs has no client-side cache, so a 200-address single-device
+    # batch would otherwise cost up to 400 sequential HTTP calls. Failed
+    # lookups are memoized too, so an unreachable registry is reported per
+    # item without re-attempting per address.
+    lookup_memo: dict[str, tuple] = {}
+
     for idx, address in enumerate(request.addresses):
         head, _, sub_path = address.partition(".")
 
-        try:
-            spec = await registry_client.get_instantiation_spec(head)
-            pvs = await registry_client.get_device_pvs(head)
-        except RegistryValidationError:
+        if head in lookup_memo:
+            spec, pvs, lookup_error = lookup_memo[head]
+        else:
+            spec = pvs = lookup_error = None
+            try:
+                spec = await registry_client.get_instantiation_spec(head)
+                pvs = await registry_client.get_device_pvs(head)
+            except (RegistryValidationError, RuntimeError) as e:
+                lookup_error = e
+            lookup_memo[head] = (spec, pvs, lookup_error)
+
+        if isinstance(lookup_error, RegistryValidationError):
             rows[idx] = DeviceResolveResultItem(
                 address=address,
                 outcome=DeviceResolveOutcome.DEVICE_NOT_FOUND,
                 message=f"device '{head}' not found in registry",
             )
             continue
-        except RuntimeError as e:
+        if lookup_error is not None:
             # Registry backend unreachable/errored: fail loud per item,
             # never fabricate a static fallback (no silent degradation).
             rows[idx] = DeviceResolveResultItem(
                 address=address,
                 outcome=DeviceResolveOutcome.REGISTRY_UNAVAILABLE,
-                message=str(e),
+                message=str(lookup_error),
             )
             continue
 
