@@ -260,7 +260,7 @@ def get_current_principal(
     request: Request,
     security_scopes: SecurityScopes,
     access_token: str = Depends(oauth2_scheme),
-    decoded_access_token: str = Depends(get_decoded_access_token),
+    decoded_access_token: Optional[dict[str, Any]] = Depends(get_decoded_access_token),
     api_key: str = Depends(get_api_key),
     settings: BaseSettings = Depends(get_settings),
     authenticators=Depends(get_authenticators),
@@ -314,7 +314,7 @@ def get_current_principal_from_api_key(
     db,
     settings: BaseSettings,
     api_access_manager,
-) -> schemas.Principal or None:
+) -> Optional[schemas.Principal]:
     """
     Tiled is in a multi-user configuration with authentication providers.
     We store the hashed value of the API key secret.
@@ -357,7 +357,7 @@ def get_current_principal_from_api_key(
 
 def get_current_principal_from_single_user_api_key(
     api_key: str, settings: BaseSettings, api_access_manager
-) -> schemas.Principal or None:
+) -> Optional[schemas.Principal]:
     """Validates single user api key and sets the scopes and roles"""
     if secrets.compare_digest(api_key, settings.single_user_api_key):
         username = SpecialUsers.single_user.value
@@ -376,7 +376,7 @@ def get_current_principal_from_single_user_api_key(
 
 def get_current_principal_from_token(
     authenticators, access_token, decoded_access_token, settings, api_access_manager, request
-) -> schemas.Principal or None:
+) -> Optional[schemas.Principal]:
     """Get a principal from the stored token and set the scopes appropriately"""
 
     if "sub_typ" in decoded_access_token:
@@ -514,12 +514,21 @@ def get_current_principal_websocket(
     if not access_token and not api_key:
         return None
 
+    # Direct (non-FastAPI) call: the ``decoded_access_token`` dependency is not
+    # injected here, so decode the token explicitly. Leaving the parameter at
+    # its ``Depends(...)`` default would silently break Bearer auth on
+    # WebSockets — the sentinel object is truthy and reaches the token branch.
+    decoded_access_token = _decode_ws_access_token(access_token, settings)
+    if access_token is not None and decoded_access_token is None:
+        return None
+
     principal = None
     try:
         principal = get_current_principal(
             request=websocket,
             security_scopes=security_scopes,
             access_token=access_token,
+            decoded_access_token=decoded_access_token,
             api_key=api_key,
             settings=settings,
             authenticators=authenticators,
@@ -529,6 +538,25 @@ def get_current_principal_websocket(
         logger.info("WebSocket authentication failed: %s", ex.detail)
 
     return principal
+
+
+def _decode_ws_access_token(access_token, settings) -> Optional[dict[str, Any]]:
+    """Decode a Bearer token for a WebSocket auth path, or None if invalid.
+
+    Mirrors the ``get_decoded_access_token`` dependency the HTTP routes use,
+    but reports failure by returning None (the WS caller closes the socket)
+    instead of raising HTTP-flavored exceptions.
+    """
+    if not access_token:
+        return None
+    try:
+        return decode_token(access_token, settings.secret_keys, getattr(settings, "authenticator", None))
+    except ExpiredSignatureError:
+        logger.info("WebSocket authentication failed: access token has expired")
+        return None
+    except HTTPException as ex:
+        logger.info("WebSocket authentication failed: %s", ex.detail)
+        return None
 
 
 def authenticate_websocket_first_message(websocket, message):
@@ -561,12 +589,19 @@ def authenticate_websocket_first_message(websocket, message):
     if not api_key and not access_token:
         return None
 
+    # Same direct-call decoding as get_current_principal_websocket: the
+    # ``decoded_access_token`` dependency is not injected outside FastAPI.
+    decoded_access_token = _decode_ws_access_token(access_token, settings)
+    if access_token is not None and decoded_access_token is None:
+        return None
+
     security_scopes = SecurityScopes(scopes=[])
     try:
         return get_current_principal(
             request=websocket,
             security_scopes=security_scopes,
             access_token=access_token,
+            decoded_access_token=decoded_access_token,
             api_key=api_key,
             settings=settings,
             authenticators=authenticators,

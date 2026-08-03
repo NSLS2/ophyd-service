@@ -6326,8 +6326,7 @@
           "state": {
             "additionalProperties": true,
             "type": "object",
-            "title": "State",
-            "default": {}
+            "title": "State"
           }
         },
         "type": "object",

@@ -280,7 +280,7 @@ class Session(pydantic.BaseModel, **orm):
     uuid: uuid.UUID
     expiration_time: datetime
     revoked: bool
-    state: Dict = {}
+    state: Dict = pydantic.Field(default_factory=dict)
 
 
 class Principal(pydantic.BaseModel, **orm):

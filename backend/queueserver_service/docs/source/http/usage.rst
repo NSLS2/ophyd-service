@@ -169,7 +169,7 @@ If you are already in a browser context, open:
 
 This redirects to the OIDC provider login page and then back to the server callback.
 
-This can similarly be acheived using ``httpie`` by opening the URL in a browser after getting
+This can similarly be achieved using ``httpie`` by opening the URL in a browser after getting
 the authorization URI from the server::
 
   http POST http://localhost:60610/api/auth/provider/entra/authorize

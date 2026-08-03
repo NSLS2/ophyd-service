@@ -326,7 +326,7 @@ Example configuration (Google)::
     authentication:
       providers:
         - provider: google
-          authenticator: bluesky_httpserver.authenticators:OIDCAuthenticator
+          authenticator: queueserver_service.http.authenticators:OIDCAuthenticator
           args:
             audience: <google-client-id>
             client_id: <google-client-id>
@@ -365,7 +365,7 @@ Example configuration (Microsoft Entra ID)::
     authentication:
       providers:
         - provider: entra
-          authenticator: bluesky_httpserver.authenticators:EntraAuthenticator
+          authenticator: queueserver_service.http.authenticators:EntraAuthenticator
           args:
             audience: 00000000-0000-0000-0000-000000000000
             client_id: 00000000-0000-0000-0000-000000000000

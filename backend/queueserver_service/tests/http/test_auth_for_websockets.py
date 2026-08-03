@@ -231,16 +231,30 @@ def test_websocket_apikey_query_and_precedence(monkeypatch):
 
     captured = {}
 
-    def _fake_get_current_principal(*, api_key, access_token, **kwargs):
+    def _fake_get_current_principal(*, api_key, access_token, decoded_access_token=None, **kwargs):
         captured["api_key"] = api_key
         captured["access_token"] = access_token
+        captured["decoded_access_token"] = decoded_access_token
         return object() if api_key else None
 
     monkeypatch.setattr(auth, "get_current_principal", _fake_get_current_principal)
 
+    # Direct WS calls decode the Bearer token themselves (the FastAPI
+    # ``decoded_access_token`` dependency is not injected outside routes) —
+    # regression guard: leaving it at the Depends(...) default broke WS
+    # Bearer auth by routing the sentinel object into the token branch.
+    def _fake_decode_token(token, secret_keys, proxied_authenticator=None):
+        if token == "SOME.JWT.TOKEN":
+            return {"sub": "decoded-subject"}
+        raise auth.ExpiredSignatureError("bad token")
+
+    monkeypatch.setattr(auth, "decode_token", _fake_decode_token)
+
+    from types import SimpleNamespace
+
     class _App:
         dependency_overrides = {
-            auth.get_settings: lambda: object(),
+            auth.get_settings: lambda: SimpleNamespace(secret_keys=["test-secret"], authenticator=None),
             auth.get_authenticators: lambda: {},
             auth.get_api_access_manager: lambda: object(),
         }
@@ -259,18 +273,27 @@ def test_websocket_apikey_query_and_precedence(monkeypatch):
     auth.get_current_principal_websocket(websocket=ws, scopes=["read:monitor"])
     assert captured["api_key"] == "HEADERKEY"
 
-    # A Bearer token is forwarded as an access token, never as an API key.
-    # (Bearer support on WebSockets arrived with the tiled-aligned auth stack —
-    # upstream PR #81; previously bearer auth was unsupported on this path.)
+    # A Bearer token is forwarded as an access token — decoded — never as an
+    # API key. (Bearer support on WebSockets arrived with the tiled-aligned
+    # auth stack — upstream PR #81; previously bearer auth was unsupported
+    # on this path.)
     ws = _make_websocket(app, headers=[(b"authorization", b"Bearer SOME.JWT.TOKEN")])
     assert auth.get_current_principal_websocket(websocket=ws, scopes=["read:monitor"]) is None
     assert captured["api_key"] is None
     assert captured["access_token"] == "SOME.JWT.TOKEN"
+    assert captured["decoded_access_token"] == {"sub": "decoded-subject"}
+
+    # An invalid/expired Bearer token fails closed before reaching principal
+    # resolution.
+    captured.clear()
+    ws = _make_websocket(app, headers=[(b"authorization", b"Bearer BAD.TOKEN")])
+    assert auth.get_current_principal_websocket(websocket=ws, scopes=["read:monitor"]) is None
+    assert captured == {}
 
     # No credentials at all -> no key.
     ws = _make_websocket(app)
     assert auth.get_current_principal_websocket(websocket=ws, scopes=["read:monitor"]) is None
-    assert captured["api_key"] is None
+    assert captured == {}
 
 
 # ============================================================================

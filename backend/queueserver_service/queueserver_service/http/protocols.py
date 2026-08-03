@@ -1,5 +1,5 @@
 from abc import ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from fastapi import Request
@@ -10,7 +10,7 @@ class UserSessionState:
     """Data transfer class to communicate custom session state information."""
 
     user_name: str
-    state: dict = None
+    state: dict = field(default_factory=dict)
 
 
 class InternalAuthenticator(ABC):
