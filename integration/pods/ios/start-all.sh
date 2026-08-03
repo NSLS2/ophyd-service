@@ -29,6 +29,7 @@ echo ""
 echo "Queueserver (host):"
 echo "  - HTTP API: http://localhost:60610"
 echo "  - Swagger UI: http://localhost:60610/docs"
+echo "  - Tiled API: http://localhost:8000"
 
 if [ -f "$HOME/qs-repro/config/secrets.env" ]; then
     API_KEY=$(grep -oP 'HTTP_API_KEY=\K.*' "$HOME/qs-repro/config/secrets.env" 2>/dev/null || echo "<not found>")
@@ -45,6 +46,7 @@ echo "VITE_CONFIG_SERVICE_URL=http://localhost:8004"
 echo "VITE_DIRECT_CONTROL_SERVICE_URL=http://localhost:8003"
 echo "VITE_PRESETS_SERVICE_URL=http://localhost:8005"
 echo "VITE_QSERVER_URL=http://localhost:60610"
+echo "VITE_TILED_API_URL=http://localhost:8000/api/v1"
 echo "VITE_QSERVER_API_KEY=<paste API key from above>"
 echo ""
 echo "=========================================="

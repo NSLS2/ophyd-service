@@ -63,20 +63,20 @@ export function DetectorSettings() {
     setVortex((prev) => ({ ...prev, ...patch }))
 
   const gainRow = 'flex items-center justify-between gap-2 py-[0.55rem] px-1 border-b border-[#e3e8ec]'
-  const gainLabel = 'text-[0.9rem] text-brand-slate whitespace-nowrap'
+  const gainLabel = 'text-[1.1rem] text-brand-slate whitespace-nowrap'
   const gainControls = 'flex items-center gap-[0.35rem]'
-  const gainX = 'text-[#6b7280] text-[0.85rem]'
+  const gainX = 'text-[#6b7280] text-[1.05rem]'
   const rangeRow = 'flex items-center justify-between gap-2 py-[0.55rem] px-1 border-b border-[#e3e8ec]'
-  const rangeLabel = 'text-[0.9rem] font-semibold text-brand-slate whitespace-nowrap'
-  const rangeControls = 'flex items-center gap-[0.3rem] [&>div]:p-0 [&>div]:gap-1 [&>div]:border-b-0 [&_input]:w-[58px]'
-  const rangeSub = 'text-[0.8rem] text-[#6b7280]'
+  const rangeLabel = 'text-[1.1rem] text-brand-slate whitespace-nowrap'
+  const rangeControls = 'flex items-center gap-[0.3rem] [&>div]:p-0 [&>div]:gap-1 [&>div]:border-b-0 [&_input]:w-[68px]'
+  const rangeSub = 'text-[1rem] text-[#6b7280]'
   const card = 'bg-white border border-panel-border rounded-lg overflow-hidden'
-  const cardHeader = 'bg-brand-teal text-white px-3 py-[0.45rem] text-[0.85rem] font-bold'
+  const cardHeader = 'bg-brand-teal text-white px-3 py-[0.45rem] text-[1.05rem] font-bold'
   const cardBody = 'flex flex-col px-3 pt-2 pb-3'
 
   return (
-    <section className="detector-settings flex-[1.5_1_0] min-w-0 max-xl:w-full min-h-[32rem] flex flex-col bg-white border border-panel-border rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(16,92,120,0.08)]">
-      <div className="bg-brand-teal text-white text-center px-4 py-[0.7rem] text-base font-bold tracking-[0.02em]">Detector Settings</div>
+    <section className="detector-settings min-w-0 max-xl:w-full min-h-[clamp(24rem,42vh,32rem)] flex flex-col bg-white border border-panel-border rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(16,92,120,0.08)]">
+      <div className="bg-brand-teal text-white text-center px-4 py-[0.7rem] text-lg font-bold tracking-[0.02em]">Detector Settings</div>
       <div className="grid grid-cols-[2fr_1fr] gap-3 flex-1 px-4 pt-3 pb-4 max-lg:grid-cols-1">
         {/* ── Scalar Settings ─────────────────────────────────── */}
         <div className={card}>
