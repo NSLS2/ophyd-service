@@ -16,3 +16,6 @@ htmlcov/
 
 # OS
 .DS_Store
+
+# reflow2 design graph (local only, never pushed)
+.reflow2/
