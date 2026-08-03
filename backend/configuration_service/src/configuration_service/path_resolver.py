@@ -54,13 +54,11 @@ def device_class_allowed(device_class_path: str, allowlist: Sequence[str] | None
 class Outcome(str, Enum):
     """Per-address result kind.
 
-    ``NEEDS_ENRICHMENT`` and ``ENRICHMENT_UNAVAILABLE`` are distinct: the
-    former means we found a runtime placeholder we can't fill in
-    statically *and* live-enrichment isn't configured for this deploy;
-    the latter means enrichment was attempted (via the direct-control
-    client) and the call failed (network, timeout, 5xx). Frontends can
-    branch — needs_enrichment is a deploy-config gap while
-    enrichment_unavailable is typically transient and worth a retry.
+    ``NEEDS_ENRICHMENT`` is terminal here: the address hit an ophyd
+    ``FormattedComponent`` with a runtime placeholder that static
+    introspection cannot fill in. The configuration service never calls
+    other services — live resolution for those addresses is
+    direct-control's ``POST /api/v1/devices/resolve``.
     """
 
     RESOLVED = "resolved"
@@ -68,7 +66,6 @@ class Outcome(str, Enum):
     IMPORT_FAILED = "import_failed"
     NO_SUCH_ATTR = "no_such_attr"
     NEEDS_ENRICHMENT = "needs_enrichment"
-    ENRICHMENT_UNAVAILABLE = "enrichment_unavailable"
 
 
 @dataclass(frozen=True)

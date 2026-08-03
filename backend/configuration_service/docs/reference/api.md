@@ -120,4 +120,4 @@ Response — best-effort per item, no halt-on-failure:
 }
 ```
 
-Per-item `outcome` values: `resolved | device_not_found | import_failed | no_such_attr | needs_enrichment`. The last one means the path hit an ophyd `FormattedComponent` with `{}` interpolation placeholders (e.g. `{self.parent.prefix}`); static resolution can't continue, and a downstream service (direct-control) will need to instantiate the device to fill in the PV. Resolution never opens EPICS connections.
+Per-item `outcome` values: `resolved | device_not_found | import_failed | no_such_attr | needs_enrichment`. The last one means the path hit an ophyd `FormattedComponent` with `{}` interpolation placeholders (e.g. `{self.parent.prefix}`); static resolution can't continue — it is a terminal outcome here. Resolve such addresses via direct-control's `POST /api/v1/devices/resolve`, which instantiates the live device. Resolution never opens EPICS connections, and the configuration service never calls other services.
