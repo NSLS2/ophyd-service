@@ -2,6 +2,27 @@ import { useState } from 'react'
 import type { ScanPresetEntry } from '../../api/presets'
 import { NumberInput } from '../NumberInput'
 
+type ScanField = keyof Omit<ScanPresetEntry, 'edge_index'>
+
+/**
+ * Maps each writable Scan Parameter field to the dotted device address the
+ * configuration_service resolves to a live EPICS PV. Fields without an entry
+ * (scan_count, intervals, au_mesh) have no PV and stay preset-only.
+ *
+ * Note: `e_align` resolves to the mono energy setpoint — writing it MOVES the
+ * monochromator.
+ */
+export const SCAN_PARAM_ADDRESSES: Partial<Record<ScanField, string>> = {
+  start: 'pgm.fly.start_sig',
+  stop: 'pgm.fly.stop_sig',
+  velocity: 'pgm.fly.velocity',
+  deadband: 'epu1.flt.output_deadband',
+  epu1offset: 'epu1offset',
+  epu_table: 'epu1table',
+  e_align: 'pgm.energy.setpoint',
+  m1b1_sp: 'm1b1_setpoint',
+}
+
 export interface ScanParametersProps {
   data: Omit<ScanPresetEntry, 'edge_index'>
   onChange: (updated: Partial<Omit<ScanPresetEntry, 'edge_index'>>) => void

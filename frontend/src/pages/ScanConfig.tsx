@@ -2,11 +2,17 @@ import { useState, useEffect } from 'react'
 import type { ElementData } from '../components/ElementPicker'
 import { useFullPreset, type EdgeFullPreset, type ScanPresetEntry } from '../api/presets'
 import { getEdgesForElement } from '../api/edgeMapping'
-import { ScanParameters } from '../components/ScanParameters'
-import { DetectorSettings } from '../components/DetectorSettings'
+import { ScanParameters, SCAN_PARAM_ADDRESSES } from '../components/ScanParameters'
+import {
+  DetectorSettings,
+  detectorPresetToState,
+  buildDetectorCaputs,
+  DETECTOR_ADDRESSES,
+} from '../components/DetectorSettings'
 import { ControlsPanel } from '../components/ControlsPanel'
 import { Toast, type ToastType } from '../components/Toast'
 import { useQueueExecute, useStopScan, useAllowedPlans, isPlanAllowed, useQueueStatus } from '../api/queueserver'
+import { useResolveAddresses, usePvSetBatch, type PvCaput } from '../api/directControl'
 
 interface ScanConfigProps {
   element: ElementData
@@ -94,6 +100,8 @@ interface ToastState {
 
 function PresetPanels({ data }: { data: EdgeFullPreset }) {
   const [scanData, setScanData] = useState<Omit<ScanPresetEntry, 'edge_index'> | null>(data.scan)
+  const [detectorScalar, setDetectorScalar] = useState(() => detectorPresetToState(data.detector).scalar)
+  const [detectorVortex, setDetectorVortex] = useState(() => detectorPresetToState(data.detector).vortex)
   const [scanStatus, setScanStatus] = useState<'idle' | 'running'>('idle')
   const [activeScan, setActiveScan] = useState<'pd' | 'single' | null>(null)
   const [hasObservedManagerBusy, setHasObservedManagerBusy] = useState(false)
@@ -104,8 +112,47 @@ function PresetPanels({ data }: { data: EdgeFullPreset }) {
   const allowedPlans = allowedPlansData?.plans_allowed
   const { data: queueStatus } = useQueueStatus()
 
+  // Resolve the scan + detector device addresses to live PV names once, then
+  // caput them all in one fail-hard batch when the operator clicks Apply.
+  const scanAddresses = Object.values(SCAN_PARAM_ADDRESSES) as string[]
+  const detectorAddresses = Object.values(DETECTOR_ADDRESSES)
+  const { data: pvMap } = useResolveAddresses([...scanAddresses, ...detectorAddresses])
+  const applyBatch = usePvSetBatch()
+
   const showToast = (message: string, type: ToastType) => {
     setToast({ message, type })
+  }
+
+  const handleApply = async () => {
+    if (!pvMap) {
+      showToast('PV names not resolved yet — try again in a moment', 'warning')
+      return
+    }
+    const caputs: PvCaput[] = []
+    if (scanData) {
+      for (const [field, address] of Object.entries(SCAN_PARAM_ADDRESSES)) {
+        const pvName = pvMap[address]
+        if (!pvName) continue
+        caputs.push({ pv_name: pvName, value: scanData[field as keyof typeof scanData] as number })
+      }
+    }
+    caputs.push(...buildDetectorCaputs(detectorScalar, detectorVortex, pvMap))
+    if (caputs.length === 0) {
+      showToast('No writable PVs resolved for these fields', 'error')
+      return
+    }
+    try {
+      const result = await applyBatch.mutateAsync(caputs)
+      if (result.ok) {
+        showToast(`Applied ${result.applied} value${result.applied === 1 ? '' : 's'} to the beamline`, 'success')
+      } else {
+        const failed = result.results.find((r) => !r.success)
+        const reason = failed?.message || failed?.error_type || 'unknown error'
+        showToast(`Applied ${result.applied}/${result.requested}; ${failed?.pv_name ?? 'a PV'} failed: ${reason}`, 'error')
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to apply values', 'error')
+    }
   }
 
   // Check if RE Manager is busy (running or paused). Missing status means
@@ -233,7 +280,14 @@ function PresetPanels({ data }: { data: EdgeFullPreset }) {
         )}
 
         {/* Detector Presets — interactive component */}
-        <DetectorSettings />
+        <DetectorSettings
+          scalar={detectorScalar}
+          vortex={detectorVortex}
+          onScalarChange={(patch) => setDetectorScalar((prev) => ({ ...prev, ...patch }))}
+          onVortexChange={(patch) => setDetectorVortex((prev) => ({ ...prev, ...patch }))}
+          onApply={handleApply}
+          isApplying={applyBatch.isPending}
+        />
       </div>
 
       <div className="grid grid-cols-[minmax(0,1fr)_minmax(14rem,18rem)] gap-4 items-stretch max-lg:grid-cols-1">
