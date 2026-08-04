@@ -154,6 +154,10 @@ export interface DetectorSettingsProps {
   onApply?: () => void
   /** True while a caput batch is in flight; disables the Apply button. */
   isApplying?: boolean
+  /** Toggles the continuous Vortex acquisition loop (Erase/Start equivalent). */
+  onCount?: () => void
+  /** True while the acquisition loop is running; flips the button to "Stop". */
+  isCounting?: boolean
 }
 
 export function DetectorSettings({
@@ -163,6 +167,8 @@ export function DetectorSettings({
   onVortexChange,
   onApply,
   isApplying,
+  onCount,
+  isCounting,
 }: DetectorSettingsProps) {
   const patchScalar = onScalarChange
   const patchVortex = onVortexChange
@@ -312,10 +318,16 @@ export function DetectorSettings({
               onChange={(v) => patchVortex({ ipfyCounts: v })}
             />
             <button
-              className="mt-3 px-4 py-[0.55rem] bg-brand-cyan text-white rounded-md text-[0.9rem] font-semibold cursor-pointer transition-colors hover:bg-brand-teal"
+              className={`mt-3 px-4 py-[0.55rem] text-white rounded-md text-[0.9rem] font-semibold cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                isCounting
+                  ? 'bg-red-600 hover:bg-red-700'
+                  : 'bg-brand-cyan hover:bg-brand-teal'
+              }`}
               type="button"
+              onClick={onCount}
+              disabled={!onCount}
             >
-              Counter
+              {isCounting ? 'Stop' : 'Counter'}
             </button>
           </div>
         </div>

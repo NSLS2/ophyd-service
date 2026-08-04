@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { useOphydPVSocket, HistogramPlot } from '@blueskyproject/finch'
 import type { ElementData } from '../components/ElementPicker'
 import { useFullPreset, type EdgeFullPreset, type ScanPresetEntry } from '../api/presets'
 import { getEdgesForElement } from '../api/edgeMapping'
@@ -12,7 +13,7 @@ import {
 import { ControlsPanel } from '../components/ControlsPanel'
 import { Toast, type ToastType } from '../components/Toast'
 import { useQueueExecute, useStopScan, useAllowedPlans, isPlanAllowed, useQueueStatus } from '../api/queueserver'
-import { useResolveAddresses, usePvSetBatch, type PvCaput } from '../api/directControl'
+import { useResolveAddresses, usePvSetBatch, usePvSet, type PvCaput } from '../api/directControl'
 
 interface ScanConfigProps {
   element: ElementData
@@ -98,6 +99,18 @@ interface ToastState {
   type: ToastType
 }
 
+// Live-readback addresses for the Vortex MCA. Resolved to raw EPICS PV names
+// and streamed over Finch's ophyd WebSocket (not REST polling).
+const SPECTRUM_ADDRESS = 'vortex.mca.spectrum'
+const PFY_COUNT_ADDRESS = 'vortex.mca.rois.roi2.count'
+const IPFY_COUNT_ADDRESS = 'vortex.mca.rois.roi4.count'
+// How often to re-trigger the sim MCA while counting. In the simulated IOC the
+// spectrum + ROI sums only refresh on a write to the preset-real-time (PRTM)
+// PV, so the loop re-writes the same dwell to keep new frames coming.
+// PRODUCTION SWAP: replace this loop with a single write to the real
+// `EraseStart` PV; a real MCA streams ArrayData live during acquisition.
+const COUNT_INTERVAL_MS = 1000
+
 function PresetPanels({ data }: { data: EdgeFullPreset }) {
   const [scanData, setScanData] = useState<Omit<ScanPresetEntry, 'edge_index'> | null>(data.scan)
   const [detectorScalar, setDetectorScalar] = useState(() => detectorPresetToState(data.detector).scalar)
@@ -116,8 +129,70 @@ function PresetPanels({ data }: { data: EdgeFullPreset }) {
   // caput them all in one fail-hard batch when the operator clicks Apply.
   const scanAddresses = Object.values(SCAN_PARAM_ADDRESSES) as string[]
   const detectorAddresses = Object.values(DETECTOR_ADDRESSES)
-  const { data: pvMap } = useResolveAddresses([...scanAddresses, ...detectorAddresses])
+  const { data: pvMap } = useResolveAddresses([
+    ...scanAddresses,
+    ...detectorAddresses,
+    SPECTRUM_ADDRESS,
+    PFY_COUNT_ADDRESS,
+    IPFY_COUNT_ADDRESS,
+  ])
   const applyBatch = usePvSetBatch()
+
+  // ── Live Vortex counter (Erase/Start equivalent) ────────────────
+  const spectrumPv = pvMap?.[SPECTRUM_ADDRESS]
+  const pfyCountPv = pvMap?.[PFY_COUNT_ADDRESS]
+  const ipfyCountPv = pvMap?.[IPFY_COUNT_ADDRESS]
+  const prtmPv = pvMap?.[DETECTOR_ADDRESSES.vortexTime]
+
+  const socketPvs = useMemo(
+    () => [spectrumPv, pfyCountPv, ipfyCountPv].filter((p): p is string => Boolean(p)),
+    [spectrumPv, pfyCountPv, ipfyCountPv],
+  )
+  const { devices } = useOphydPVSocket(socketPvs)
+
+  const [isCounting, setIsCounting] = useState(false)
+  const pvSet = usePvSet()
+
+  // Keep the trigger logic in a ref so the interval always fires with the
+  // latest dwell value without restarting on every keystroke.
+  const triggerRef = useRef<() => void>(() => {})
+  triggerRef.current = () => {
+    if (!prtmPv) return
+    const dwell = Number(detectorVortex.vortexTime) || 1
+    pvSet.mutate({ pv_name: prtmPv, value: dwell })
+  }
+
+  useEffect(() => {
+    if (!isCounting) return
+    triggerRef.current()
+    const id = setInterval(() => triggerRef.current(), COUNT_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [isCounting])
+
+  // While counting, drive the PFY/IPFY count fields from the live ROI sums.
+  const pfyLive = pfyCountPv ? devices[pfyCountPv]?.value : undefined
+  const ipfyLive = ipfyCountPv ? devices[ipfyCountPv]?.value : undefined
+  useEffect(() => {
+    if (!isCounting) return
+    setDetectorVortex((prev) => ({
+      ...prev,
+      ...(typeof pfyLive === 'number' ? { pfyCounts: pfyLive } : {}),
+      ...(typeof ipfyLive === 'number' ? { ipfyCounts: ipfyLive } : {}),
+    }))
+  }, [isCounting, pfyLive, ipfyLive])
+
+  const handleCount = () => {
+    if (!isCounting && !prtmPv) {
+      showToast('Vortex trigger PV not resolved yet — try again in a moment', 'warning')
+      return
+    }
+    setIsCounting((c) => !c)
+  }
+
+  // The MCA spectrum arrives from the WebSocket as a JSON array of channel
+  // counts; the socket value type is scalar, so narrow it here.
+  const spectrumValue = spectrumPv ? (devices[spectrumPv]?.value as unknown) : undefined
+  const spectrumArray = Array.isArray(spectrumValue) ? (spectrumValue as number[]) : null
 
   const showToast = (message: string, type: ToastType) => {
     setToast({ message, type })
@@ -287,6 +362,8 @@ function PresetPanels({ data }: { data: EdgeFullPreset }) {
           onVortexChange={(patch) => setDetectorVortex((prev) => ({ ...prev, ...patch }))}
           onApply={handleApply}
           isApplying={applyBatch.isPending}
+          onCount={handleCount}
+          isCounting={isCounting}
         />
       </div>
 
@@ -294,7 +371,11 @@ function PresetPanels({ data }: { data: EdgeFullPreset }) {
         <section className="flex min-w-0 min-h-[clamp(18rem,32vh,24rem)] flex-col bg-white border border-panel-border rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(16,92,120,0.08)]" aria-label="Live Spectrum">
           <div className="bg-brand-teal text-white text-center px-4 py-[0.66rem] text-lg font-bold tracking-[0.02em]">Live Spectrum (Vortex MCA)</div>
           <div className="flex min-h-0 flex-1 px-4 pt-3 pb-4">
-            <div className="min-h-[14rem] flex-1 rounded-md border border-[#d9e0e5] bg-[linear-gradient(0deg,#f6f8fa_0,#f6f8fa_1px,transparent_1px,transparent_2rem),linear-gradient(90deg,#f6f8fa_0,#f6f8fa_1px,transparent_1px,transparent_2rem),linear-gradient(180deg,#ffffff,#fbfdff)]" />
+            <HistogramPlot
+              arrayData={spectrumArray}
+              title="Vortex MCA Spectrum"
+              className="min-h-[14rem] flex-1"
+            />
           </div>
         </section>
         <ControlsPanel onPdScan={handlePdScan} onSingleScan={handleSingleScan} onStop={handleStop} isRunning={scanStatus === 'running' || isManagerBusy} activeScan={activeScan} />

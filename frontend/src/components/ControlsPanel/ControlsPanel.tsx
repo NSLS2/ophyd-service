@@ -40,38 +40,42 @@ export function ControlsPanel({
       <div className="bg-brand-teal text-white text-center px-4 py-[0.66rem] text-lg font-bold tracking-[0.02em]">
         Controls
       </div>
-      <div className="flex flex-col flex-1 items-center justify-around gap-4 p-[0.9rem_0.8rem] max-md:p-[0.8rem_0.7rem] max-md:gap-2">
-        <button
-          className="flex w-full items-center gap-2 px-4 py-[0.65rem] border-none rounded-md text-white text-lg font-semibold leading-tight cursor-pointer transition-all active:scale-[0.98] bg-brand-cyan hover:bg-[#009dc8] disabled:opacity-50 disabled:cursor-not-allowed"
-          type="button"
-          onClick={onPdScan}
-          disabled={isRunning}
-        >
-          <ScanButtonContent label="PD Scan" isActive={activeScan === 'pd'} />
-        </button>
-        <button
-          className="flex w-full items-center gap-2 px-4 py-[0.65rem] border-none rounded-md text-white text-lg font-semibold leading-tight cursor-pointer transition-all active:scale-[0.98] bg-brand-cyan hover:bg-[#009dc8] disabled:opacity-50 disabled:cursor-not-allowed"
-          type="button"
-          onClick={onSingleScan}
-          disabled={isRunning}
-        >
-          <ScanButtonContent label="Single Scan" isActive={activeScan === 'single'} />
-        </button>
-        <button
-          className="w-full px-4 py-[0.65rem] border-none rounded-md text-white text-lg font-semibold leading-tight cursor-pointer transition-all active:scale-[0.98] mt-2 mb-2 bg-brand-teal hover:bg-[#0e5068] disabled:opacity-50 disabled:cursor-not-allowed"
-          type="button"
-          onClick={onAddToQueue}
-          disabled={isRunning}
-        >
-          Add to Queue
-        </button>
-        <button
-          className="w-full px-4 py-[0.65rem] border-none rounded-md text-white text-lg font-semibold leading-tight cursor-pointer transition-all active:scale-[0.98] bg-brand-red hover:bg-[#cc0000]"
-          type="button"
-          onClick={onStop}
-        >
-          Stop
-        </button>
+      <div className="flex flex-col flex-1 items-center justify-between p-[1.4rem_0.8rem] max-md:p-[1rem_0.7rem]">
+        <div className="flex w-full flex-col items-center gap-7 max-md:gap-4">
+          <button
+            className="flex w-full items-center gap-2 px-4 py-[0.65rem] border-none rounded-md text-white text-lg font-semibold leading-tight cursor-pointer transition-all active:scale-[0.98] bg-brand-cyan hover:bg-[#009dc8] disabled:opacity-50 disabled:cursor-not-allowed"
+            type="button"
+            onClick={onPdScan}
+            disabled={isRunning}
+          >
+            <ScanButtonContent label="PD Scan" isActive={activeScan === 'pd'} />
+          </button>
+          <button
+            className="flex w-full items-center gap-2 px-4 py-[0.65rem] border-none rounded-md text-white text-lg font-semibold leading-tight cursor-pointer transition-all active:scale-[0.98] bg-brand-cyan hover:bg-[#009dc8] disabled:opacity-50 disabled:cursor-not-allowed"
+            type="button"
+            onClick={onSingleScan}
+            disabled={isRunning}
+          >
+            <ScanButtonContent label="Single Scan" isActive={activeScan === 'single'} />
+          </button>
+        </div>
+        <div className="flex w-full flex-col items-center gap-10 max-md:gap-6">
+          <button
+            className="w-full px-4 py-[0.65rem] border-none rounded-md text-white text-lg font-semibold leading-tight cursor-pointer transition-all active:scale-[0.98] bg-brand-teal hover:bg-[#0e5068] disabled:opacity-50 disabled:cursor-not-allowed"
+            type="button"
+            onClick={onAddToQueue}
+            disabled={isRunning}
+          >
+            Add to Queue
+          </button>
+          <button
+            className="w-full px-4 py-[0.65rem] border-none rounded-md text-white text-lg font-semibold leading-tight cursor-pointer transition-all active:scale-[0.98] bg-brand-red hover:bg-[#cc0000]"
+            type="button"
+            onClick={onStop}
+          >
+            Stop
+          </button>
+        </div>
       </div>
     </section>
   )
