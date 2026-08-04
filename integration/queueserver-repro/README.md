@@ -13,12 +13,65 @@ beamline (see *Other beamlines*).
 
 ```bash
 ./reproduce.sh up        # clone + build env + provision deps + launch + open + verify
+./reproduce.sh smoke     # health checks: unit tests + xs3 acceptance + live round-trip
 ./reproduce.sh status    # containers, services, environment state
 ./reproduce.sh logs      # tail the RE Manager + HTTP server logs
 ./reproduce.sh verify    # re-print plan/device counts + HTTP API/key
 ./reproduce.sh down       # stop services + remove containers (keeps clone + env)
 ./reproduce.sh nuke       # down + delete the whole work directory
 ```
+
+## Safety rules (the sims wear real IOS PV names)
+
+The simulated IOCs and the blackhole answer to the **real IOS PV names** so
+the profile collection runs unmodified. Run on a host that routes to the IOS
+subnet with the wrong EPICS address list, and a "sim" write would drive real
+hardware. Two mechanisms make that impossible by construction, not by
+convention:
+
+1. **Local-only guard** (`iocs/localguard.py`, tested by
+   `iocs/test_localguard.py`): every repro entry point that acts as a CA
+   client — the RE worker launch, the xs3 sim's PGM energy follower,
+   `verify_xs3_sim.py` — forces `EPICS_CA_AUTO_ADDR_LIST=NO` and refuses to
+   start unless every `EPICS_CA_ADDR_LIST`/`EPICS_PVA_ADDR_LIST` entry is
+   loopback. The caproto IOCs themselves bind `--interfaces 127.0.0.1`.
+2. **Unmistakably fake identity + disposable data root**: every bring-up
+   stamps `RE.md` with a sentinel identity (`proposal_id=000000`,
+   `data_session=pass-000000`, `PI/cycle/endstation=SIMULATED`,
+   `simulated_beamline=true`), which lands in **every run start document**.
+   All sim-side paths live under one disposable root
+   (`SIM_DATA_ROOT`, default `~/qs-repro/sim-data`, marked with
+   `_SIMULATED_DATA_README`), which mimics the `/nsls2` tree the profile
+   names — under the sim root only.
+
+What a full plan run actually writes (audited against the IOS profile @
+`e817f98` and nslsii's `Xspress3HDF5Plugin`):
+
+- **No data files at all.** The sim xs3 serves the HDF plugin PVs but
+  performs no file IO, and `Xspress3HDF5Plugin.stage` creates no
+  directories client-side — so nothing can land in the real
+  `/nsls2/data3/ios/...` even on a facility host.
+- **Catalog documents** (mongo container) carry the profile's real-looking
+  `/nsls2/data3/ios/legacy/xspress3_data/...` resource paths for files that
+  do not exist; the sentinel identity in the same documents is what marks
+  them as simulation. Containers are removed by `down`/`nuke`.
+- **Caveat — profile export helpers**: the profile's manually-invoked
+  `save_xas_csv`/`save_all`/... (startup/97-misc.py, 99-settings.py) write
+  CSVs under `~/User_Data/<real user name>/...`. Never call them from a sim
+  session on a shared host; they are not part of `XAS_scan`/`E_ramp`.
+
+## Port map (all loopback)
+
+| Port | What |
+|------|------|
+| 5064, 5066, … (base + 2n) | realistic IOS caproto IOCs, one CA server each (`ioc_ios_pgm` first) |
+| base + 2·N(IOCs) | blackhole catch-all CA server |
+| 60610 | bluesky-httpserver HTTP API |
+| 60590 | redis — RE Manager queue/history store |
+| 6380 | redis (TLS) — `RE.md` metadata store |
+| 27017 | mongodb — databroker/tiled catalog |
+| 9092 | kafka (KRaft) — RunEngine document publishing |
+| 8181 | mock Olog server |
 
 ## Requirements
 

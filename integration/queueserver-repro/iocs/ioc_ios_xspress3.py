@@ -124,6 +124,11 @@ class _PgmEnergyFollower:
         self._lock = threading.Lock()
         addr = os.environ.get("XS3_PGM_ADDR", "").strip()
         if addr:
+            # This follower is a CA client aimed at a real IOS PV name:
+            # refuse anything but loopback (the guard exits the process).
+            import localguard
+
+            localguard.assert_loopback_addrs(addr.split(), "XS3_PGM_ADDR")
             # The threading-client Context reads EPICS_CA_* from the
             # environment; set it before the thread races Context().
             # (The caproto SERVER side never reads EPICS_CA_ADDR_LIST,

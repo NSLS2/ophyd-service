@@ -23,6 +23,13 @@ import sys
 import time
 
 IOC_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, IOC_DIR)
+
+# The sims reuse real IOS PV names: refuse to run against anything but
+# loopback before any CA client (ophyd, caproto.sync) reads the environment.
+from localguard import assert_local_epics  # noqa: E402
+
+assert_local_epics()
 
 def free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:

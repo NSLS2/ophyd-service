@@ -50,6 +50,11 @@ def _load_excluded_pvs():
 
 EXCLUDE_PVS = _load_excluded_pvs()
 
+# One constant asyn port name keeps every fabricated AreaDetector plugin graph
+# self-consistent (see fabricate_channel). Overridable so two fabricated
+# device trees can coexist without claiming the same port name.
+ASYN_PORT = os.environ.get("BLACKHOLE_ASYN_PORT", "BHPORT")
+
 
 class BlackholeDB(dict):
     """A pvdb that claims every PV except the exact ones a realistic IOC owns."""
@@ -93,7 +98,7 @@ def fabricate_channel(key):
         # (the cam) reports as its PortName. Fabricating the PV name here
         # (the old behavior) made every port unique and failed validation
         # on ophyd versions that enforce it.
-        return ChannelString(value='BHPORT')
+        return ChannelString(value=ASYN_PORT)
     if 'EnableCallbacks' in key:
         return ChannelEnum(value=0, enum_strings=['Disabled', 'Enabled'])
     if 'BlockingCallbacks' in key or 'WaitForPlugins' in key:

@@ -99,6 +99,17 @@ def test_rbv_suffix_collapses_onto_base_channel(db):
     assert db[_XS3_HDF + "AutoSave_RBV"] is db[_XS3_HDF + "AutoSave"]
 
 
+def test_asyn_port_name_is_env_overridable(monkeypatch):
+    """BLACKHOLE_ASYN_PORT renames the fabricated asyn port, so two
+    fabricated device trees can coexist without claiming the same name."""
+    monkeypatch.setenv("BLACKHOLE_ASYN_PORT", "BH2")
+    spec = importlib.util.spec_from_file_location("blackhole_ioc_bh2", _MODULE_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    db2 = mod.BlackholeDB()
+    assert db2["XF:23ID2-ES{Xsp:1}:det1:PortName_RBV"].value == "BH2"
+
+
 # ---------------------------------------------------------------------------
 # Live Channel Access round-trip: the exact operation XAS_scan staging does.
 # ---------------------------------------------------------------------------
