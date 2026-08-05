@@ -93,10 +93,9 @@ const serializeForHtml = (data) => JSON.stringify(data).replace(/</g, '\\u003c')
 const RELATIVE_URL_PARSE_BASE = 'http://bff.local';
 
 const isAdminPath = (url) => {
-  // originalUrl is relative and may carry a query string; reduce to the path and drop
-  // the deployment base (BASE) so the check works wherever the app is mounted.
   const pathname = new URL(url, RELATIVE_URL_PARSE_BASE).pathname;
-  const appPath = pathname.startsWith(basePath)
+  const hasBasePath = pathname === basePath || pathname.startsWith(basePath + '/');
+  const appPath = hasBasePath
     ? `/${pathname.slice(basePath.length).replace(/^\/+/, '')}`
     : pathname;
 
