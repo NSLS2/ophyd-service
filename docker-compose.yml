@@ -86,6 +86,10 @@ services:
       DIRECT_CONTROL_CONFIGURATION_SERVICE_URL: http://configuration_service:8004
       # Skip the coordination check — no EE service running in compose.
       DIRECT_CONTROL_COORDINATION_CHECK_ENABLED: "false"
+      # The service defaults to read-only until an operator opts in to writes.
+      # This stack only talks to the simulated IOC, so enable them — the same
+      # choice every integration pod makes.
+      DIRECT_CONTROL_GLOBAL_READ_ONLY: "false"
       # pyepics reads these. Point it at the compose-network IOC; disable
       # auto-addr so it doesn't broadcast on the host network.
       EPICS_CA_ADDR_LIST: ioc
