@@ -66,45 +66,59 @@ const normalizeUpn = (value) => {
   return isValidUpn(upn) ? upn : '';
 };
 
-const rolesAreValid = (roles) => (
-  roles.length > 0 && roles.every((role) => RECOGNIZED_ROLES.has(role))
+// Keep only roles we know about, warning on (and dropping) the rest rather than
+// rejecting the whole user when an unrecognized role is present.
+const getRecognizedRoles = (roles) => (
+  roles.filter((role) => {
+    if (RECOGNIZED_ROLES.has(role)) return true;
+    console.warn(`Ignoring unrecognized role: ${role}`);
+    return false;
+  })
 );
 
-const serializeForHtml = (data) => JSON.stringify(data).replace(/</g, '\\u003c');
+// operator:* are granted to every recognized role but not yet enforced by the
+// BFF; PV-write/scan authorization is a perimeter/backend concern for later.
+const rolesToScopes = (roles) => {
+  const scopes = new Set(['operator:read', 'operator:write']);
+  for (const role of roles) {
+    if (ADMIN_ROLES.has(role)) {
+      scopes.add('admin:read');
+      scopes.add('admin:write');
+    }
+  }
+  return [...scopes];
+};
 
-const isPresetsAdminPath = (url) => {
-  const pathname = new URL(url, 'http://localhost').pathname;
-  const appPath = basePath !== '/' && pathname.startsWith(basePath)
+const serializeForHtml = (data) => JSON.stringify(data).replace(/</g, '\\u003c');
+const RELATIVE_URL_PARSE_BASE = 'http://bff.local';
+
+const isAdminPath = (url) => {
+  // originalUrl is relative and may carry a query string; reduce to the path and drop
+  // the deployment base (BASE) so the check works wherever the app is mounted.
+  const pathname = new URL(url, RELATIVE_URL_PARSE_BASE).pathname;
+  const appPath = pathname.startsWith(basePath)
     ? `/${pathname.slice(basePath.length).replace(/^\/+/, '')}`
     : pathname;
 
-  return appPath === '/presets-admin' || appPath.startsWith('/presets-admin/');
+  return appPath === '/admin' || appPath.startsWith('/admin/');
 };
 
 const deriveAuthDecision = (req) => {
   const upn = normalizeUpn(getHeader(req, 'access-token-upn'));
   const name = normalizeHeaderValue(getHeader(req, 'access-token-name'), MAX_NAME_HEADER_LENGTH) || upn;
-  const roles = parseRoles(getHeader(req, 'access-token-roles'));
+  const recognizedRoles = getRecognizedRoles(parseRoles(getHeader(req, 'access-token-roles')));
 
-  if (!upn || !rolesAreValid(roles)) {
+  if (!upn || recognizedRoles.length === 0) {
     return null;
   }
 
-  const isAdmin = roles.some((role) => ADMIN_ROLES.has(role));
-
   return {
-    roles,
-    isAdmin,
+    scopes: rolesToScopes(recognizedRoles),
     user: {
       upn,
       name,
       givenName: normalizeOptionalHeaderValue(getHeader(req, 'access-token-given-name')),
       familyName: normalizeOptionalHeaderValue(getHeader(req, 'access-token-family-name')),
-    },
-    capabilities: {
-      canViewElementPicker: true,
-      canUseIosScan: true,
-      canAccessPresetsAdmin: isAdmin,
     },
   };
 };
@@ -113,32 +127,23 @@ const toClientAuthState = (authDecision) => ({
   status: 'authenticated',
   authenticated: true,
   user: authDecision.user,
-  capabilities: authDecision.capabilities,
+  scopes: authDecision.scopes,
 });
 
-const deriveDocumentAuthState = (req, url) => {
+const deriveDocumentAuthState = (req) => {
   const authDecision = deriveAuthDecision(req);
 
   if (!authDecision) {
-    return { status: 'authFailed', authenticated: false };
-  }
-
-  if (isPresetsAdminPath(url) && !authDecision.capabilities.canAccessPresetsAdmin) {
-    return {
-      status: 'forbidden',
-      authenticated: false,
-      user: authDecision.user,
-      capabilities: authDecision.capabilities,
-    };
+    return { status: 'unauthenticated', authenticated: false };
   }
 
   return toClientAuthState(authDecision);
 };
 
-const getDocumentStatusCode = (authState) => {
-  if (authState.status === 'authenticated') return 200;
-  if (authState.status === 'forbidden') return 403;
-  return 401;
+const getDocumentStatusCode = (authState, url) => {
+  if (authState.status !== 'authenticated') return 401;
+  if (isAdminPath(url) && !authState.scopes.includes('admin:read')) return 403;
+  return 200;
 };
 
 const createAuthStateScript = (authState) => (
@@ -147,14 +152,14 @@ const createAuthStateScript = (authState) => (
 
 const isWriteMethod = (method) => ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method.toUpperCase());
 
-const requirePresetsAdmin = (req, res, next) => {
+const requireAdminWrite = (req, res, next) => {
   if (!isWriteMethod(req.method)) {
     next();
     return;
   }
 
   const authDecision = deriveAuthDecision(req);
-  if (!authDecision?.capabilities.canAccessPresetsAdmin) {
+  if (!authDecision?.scopes.includes('admin:write')) {
     res.status(403).json({ detail: 'Preset write access requires an admin role.' });
     return;
   }
@@ -227,7 +232,7 @@ const PRESETS_TARGET = process.env.PRESETS_TARGET || 'http://localhost:8005';
 const CONFIG_TARGET  = process.env.CONFIG_TARGET  || 'http://localhost:8004';
 const CONTROL_TARGET = process.env.CONTROL_TARGET || 'http://localhost:8003';
 
-app.use('/api/presets', requirePresetsAdmin, createProxyMiddleware({
+app.use('/api/presets', requireAdminWrite, createProxyMiddleware({
   target: PRESETS_TARGET, changeOrigin: true,
   pathRewrite: (path) => '/api/v1' + path,
 }));
@@ -272,7 +277,7 @@ app.use(async (req, res) => {
       // Production: Use pre-built SSR bundle for fast server-side rendering
       template = templateHtml;
       render = (await import('./dist/server/entry-server.js')).render;
-      const authState = deriveDocumentAuthState(req, url);
+      const authState = deriveDocumentAuthState(req);
       const rendered = await render(url, authState);
       
       const html = template
@@ -280,14 +285,14 @@ app.use(async (req, res) => {
         .replace(`<!--app-html-->`, rendered.html ?? '')
         .replace(`<!--auth-state-->`, createAuthStateScript(authState));
       
-      res.status(getDocumentStatusCode(authState)).set({ 'Content-Type': 'text/html' }).send(html);
+      res.status(getDocumentStatusCode(authState, url)).set({ 'Content-Type': 'text/html' }).send(html);
     } else {
       // Development: Use Vite's SSR module loading with HMR
       template = await fs.readFile('./index.html', 'utf-8');
       template = await vite.transformIndexHtml(url, template);
       render = (await vite.ssrLoadModule('/src/entry-server.tsx')).render;
       
-      const authState = deriveDocumentAuthState(req, url);
+      const authState = deriveDocumentAuthState(req);
       const rendered = await render(url, authState);
       
       const html = template
@@ -295,7 +300,7 @@ app.use(async (req, res) => {
         .replace(`<!--app-html-->`, rendered.html ?? '')
         .replace(`<!--auth-state-->`, createAuthStateScript(authState));
       
-      res.status(getDocumentStatusCode(authState)).set({ 'Content-Type': 'text/html' }).send(html);
+      res.status(getDocumentStatusCode(authState, url)).set({ 'Content-Type': 'text/html' }).send(html);
     }
   } catch (e) {
     vite?.ssrFixStacktrace(e);

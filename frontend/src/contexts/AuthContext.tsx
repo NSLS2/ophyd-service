@@ -1,13 +1,11 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
-import type { AuthState, AuthViewer } from '../types/auth';
+import type { AuthState, AuthScope, AuthUser } from '../types/auth';
 
 interface AuthContextValue {
   auth: AuthState;
-  viewer: AuthViewer | null;
+  user: AuthUser | null;
   isAuthenticated: () => boolean;
-  isAuthFailed: () => boolean;
-  isForbidden: () => boolean;
-  canAccessPresetsAdmin: () => boolean;
+  hasScope: (scope: AuthScope) => boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -18,27 +16,21 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children, initialAuthState }: AuthProviderProps) {
-  const [auth] = useState<AuthState>(initialAuthState ?? { status: 'authFailed', authenticated: false });
+  const [auth] = useState<AuthState>(initialAuthState ?? { status: 'unauthenticated', authenticated: false });
 
-  const viewer = auth.status === 'authenticated' ? auth : null;
+  const user = auth.status === 'authenticated' ? auth.user : null;
 
   const isAuthenticated = (): boolean => auth.status === 'authenticated';
 
-  const isAuthFailed = (): boolean => auth.status === 'authFailed';
-
-  const isForbidden = (): boolean => auth.status === 'forbidden';
-
-  const canAccessPresetsAdmin = (): boolean => {
-    return viewer?.capabilities.canAccessPresetsAdmin ?? false;
-  };
+  const hasScope = (scope: AuthScope): boolean => (
+    auth.status === 'authenticated' && auth.scopes.includes(scope)
+  );
 
   const value: AuthContextValue = {
     auth,
-    viewer,
+    user,
     isAuthenticated,
-    isAuthFailed,
-    isForbidden,
-    canAccessPresetsAdmin,
+    hasScope,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

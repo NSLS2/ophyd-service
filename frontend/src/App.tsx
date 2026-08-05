@@ -9,24 +9,6 @@ import PresetsAdmin from './pages/PresetsAdmin'
 function App() {
   const auth = useAuth()
 
-  if (auth.isAuthFailed()) {
-    return (
-      <div className="p-8 text-center">
-        <h1 className="text-2xl font-semibold text-gray-900">Authentication Required</h1>
-        <p className="mt-2 text-gray-600">This application requires a recognized Entra ID role.</p>
-      </div>
-    )
-  }
-
-  if (auth.isForbidden()) {
-    return (
-      <div className="p-8 text-center">
-        <h1 className="text-2xl font-semibold text-gray-900">Access Denied</h1>
-        <p className="mt-2 text-gray-600">You do not have permission to access this part of the application.</p>
-      </div>
-    )
-  }
-
   const allRoutes: RouteItem[] = [
     {
       path: '/',
@@ -43,7 +25,7 @@ function App() {
       isBackgroundTransparent: false,
     },
     {
-      path: '/presets-admin',
+      path: '/admin/presets',
       label: 'Presets Admin',
       element: <PresetsAdmin />,
       icon: <Table size={28} />,
@@ -51,14 +33,10 @@ function App() {
     },
   ]
 
-  // Filter routes based on user permissions
+  // Filter routes based on user scopes
   const routes = allRoutes.filter((route) => {
-    // Presets admin is only for admins
-    if (route.path === '/presets-admin') {
-      return auth.canAccessPresetsAdmin()
-    }
-    // All other routes are accessible to recognized users
-    return auth.isAuthenticated()
+    const isAdminRoute = route.path === '/admin' || route.path.startsWith('/admin/')
+    return isAdminRoute ? auth.hasScope('admin:read') : auth.isAuthenticated()
   })
 
   return (

@@ -5,26 +5,26 @@ export interface AuthUser {
   familyName?: string;
 }
 
-export interface AuthCapabilities {
-  canViewElementPicker: boolean;
-  canUseIosScan: boolean;
-  canAccessPresetsAdmin: boolean;
-}
+// operator:* are granted but not yet enforced by the BFF; PV-write/scan
+// authorization is a perimeter/backend concern handled in a later change.
+export type AuthScope =
+  | 'operator:read'
+  | 'operator:write'
+  | 'admin:read'
+  | 'admin:write';
 
 export interface AuthViewer {
   status: 'authenticated';
   authenticated: true;
   user: AuthUser;
-  capabilities: AuthCapabilities;
+  scopes: AuthScope[];
 }
 
-export interface AuthDeniedState {
-  status: 'authFailed' | 'forbidden';
+export interface AuthUnauthenticatedState {
+  status: 'unauthenticated';
   authenticated: false;
-  user?: AuthUser;
-  capabilities?: Partial<AuthCapabilities>;
 }
 
 export type AuthState =
-  | AuthDeniedState
+  | AuthUnauthenticatedState
   | AuthViewer;

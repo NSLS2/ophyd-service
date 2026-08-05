@@ -16,13 +16,13 @@ void loadFinch().catch(() => undefined)
 function readInitialAuthState(): AuthState {
   const element = document.getElementById('auth-state')
   if (!element?.textContent) {
-    return { status: 'authFailed', authenticated: false }
+    return { status: 'unauthenticated', authenticated: false }
   }
 
   try {
     return JSON.parse(element.textContent) as AuthState
   } catch {
-    return { status: 'authFailed', authenticated: false }
+    return { status: 'unauthenticated', authenticated: false }
   } finally {
     element.remove()
   }
