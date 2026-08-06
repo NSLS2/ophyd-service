@@ -28,3 +28,8 @@ export interface AuthUnauthenticatedState {
 export type AuthState =
   | AuthUnauthenticatedState
   | AuthViewer;
+
+// Single source of truth for "is this state authenticated"; also narrows to AuthViewer.
+export function isAuthenticatedState(state: AuthState): state is AuthViewer {
+  return state.status === 'authenticated';
+}

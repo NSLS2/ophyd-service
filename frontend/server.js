@@ -90,7 +90,8 @@ const rolesToScopes = (roles) => {
 };
 
 const serializeForHtml = (data) => JSON.stringify(data).replace(/</g, '\\u003c');
-const RELATIVE_URL_PARSE_BASE = 'http://bff.local';
+// Placeholder origin only — it lets `new URL()` parse relative request URLs; never dereferenced.
+const RELATIVE_URL_PARSE_BASE = 'http://placeholder.for.parsing.relative.url';
 
 const isAdminPath = (url) => {
   const pathname = new URL(url, RELATIVE_URL_PARSE_BASE).pathname;

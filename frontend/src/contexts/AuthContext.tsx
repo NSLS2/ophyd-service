@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import type { AuthState, AuthScope, AuthUser } from '../types/auth';
+import { isAuthenticatedState } from '../types/auth';
 
 interface AuthContextValue {
   auth: AuthState;
@@ -18,12 +19,12 @@ interface AuthProviderProps {
 export function AuthProvider({ children, initialAuthState }: AuthProviderProps) {
   const [auth] = useState<AuthState>(initialAuthState ?? { status: 'unauthenticated', authenticated: false });
 
-  const user = auth.status === 'authenticated' ? auth.user : null;
+  const user = isAuthenticatedState(auth) ? auth.user : null;
 
-  const isAuthenticated = (): boolean => auth.status === 'authenticated';
+  const isAuthenticated = (): boolean => isAuthenticatedState(auth);
 
   const hasScope = (scope: AuthScope): boolean => (
-    auth.status === 'authenticated' && auth.scopes.includes(scope)
+    isAuthenticatedState(auth) && auth.scopes.includes(scope)
   );
 
   const value: AuthContextValue = {
