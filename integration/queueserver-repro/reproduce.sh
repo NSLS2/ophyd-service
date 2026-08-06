@@ -49,6 +49,7 @@
 # Usage:
 #   ./reproduce.sh up          # provision + launch IOCs + services + open + verify
 #   ./reproduce.sh verify      # re-run the plan/device count check
+#   ./reproduce.sh smoke       # health checks: unit + xs3 acceptance + live round-trip
 #   ./reproduce.sh status      # show container + IOC + service + environment status
 #   ./reproduce.sh logs        # tail the RE Manager and HTTP server logs
 #   ./reproduce.sh down        # stop services + IOCs + remove containers
@@ -74,6 +75,9 @@
 #   WITH_OLOG=1                            # 0 = no mock Olog (plans may fail on the logbook callback)
 #   OLOG_PORT=8181                         # host port for the mock Olog server
 #   WITH_IOC=0                             # 1 = also run a caproto catch-all IOC
+#   SIM_DATA_ROOT=$QS_REPRO_HOME/sim-data  # disposable root for all simulated data paths
+#   SIM_PROPOSAL_ID=000000                 # sentinel proposal stamped into RE.md
+#   SIM_DATA_SESSION=pass-000000           # sentinel data session stamped into RE.md
 #
 set -euo pipefail
 
@@ -114,7 +118,9 @@ OLOG_PORT="${OLOG_PORT:-8181}"
 # over the queueserver VM's dedicated EPICS NIC; here they are localhost:PORT).
 WITH_IOS_IOCS="${WITH_IOS_IOCS:-1}"
 IOC_BASE_PORT="${IOC_BASE_PORT:-5064}"
-IOS_IOCS="ioc_ios_pgm ioc_ios_curramp ioc_ios_epu ioc_ios_vortex ioc_ios_scaler ioc_ios_feedback"
+# ioc_ios_pgm must stay FIRST: the xspress3 sim is told the PGM's CA address
+# (ioc_port 0) so its ROI counts can follow the live energy during E_ramp.
+IOS_IOCS="ioc_ios_pgm ioc_ios_curramp ioc_ios_epu ioc_ios_vortex ioc_ios_scaler ioc_ios_feedback ioc_ios_xspress3"
 
 # The six realistic IOCs each cover one device family. Toggle them off to run
 # the blackhole alone (still opens the whole profile, just no realistic values).
@@ -127,6 +133,17 @@ WITH_REALISTIC_IOCS="${WITH_REALISTIC_IOCS:-1}"
 # (no Channel Access duplicate-PV race), while still answering the sub-PVs of
 # those same devices that the realistic IOCs happen not to serve.
 WITH_BLACKHOLE="${WITH_BLACKHOLE:-1}"
+
+# Simulated-data confinement + sentinel identity. Nothing in the sim stack
+# writes real data files (the HDF plugin PVs are simulated), but a plan run
+# DOES emit catalog resource documents carrying the profile's real-looking
+# /nsls2/... paths, and RE.md identity (proposal_id, data_session, cycle)
+# lands in every run start document. So: every run is stamped with a sentinel
+# identity reserved for simulation, and the /nsls2 tree the profile names is
+# mimicked under one disposable sim root (never at the real /nsls2).
+SIM_DATA_ROOT="${SIM_DATA_ROOT:-$QS_REPRO_HOME/sim-data}"
+SIM_PROPOSAL_ID="${SIM_PROPOSAL_ID:-000000}"
+SIM_DATA_SESSION="${SIM_DATA_SESSION:-pass-000000}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IOC_DIR="${IOC_DIR:-$SCRIPT_DIR/iocs}"
@@ -378,6 +395,56 @@ EOF
 # ---------------------------------------------------------------------------
 # Infrastructure containers
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Simulated-data confinement + sentinel identity
+# ---------------------------------------------------------------------------
+prepare_sim_data_root() {
+    step "Sim data root (disposable, marked)"
+    # Mimic the tree the profile's xs3 HDF plugin names — under the sim root
+    # ONLY. No sim process ever touches the real /nsls2.
+    mkdir -p "$SIM_DATA_ROOT/nsls2/data3/${ENDSTATION}/legacy/xspress3_data"
+    cat > "$SIM_DATA_ROOT/_SIMULATED_DATA_README" <<EOF
+Everything under this tree was produced by the SIMULATED beamline stack
+(integration/queueserver-repro). Run identity is the simulation sentinel
+(proposal $SIM_PROPOSAL_ID / data session $SIM_DATA_SESSION), never a real
+proposal. Safe to delete at any time. 'reproduce.sh nuke' removes it when
+it lives at the default location under \$QS_REPRO_HOME; a custom
+SIM_DATA_ROOT outside that tree must be deleted by hand.
+EOF
+    ok "$SIM_DATA_ROOT (mimics /nsls2 under the sim root only)"
+}
+
+seed_sim_md() {
+    step "Sentinel simulation identity (RE.md)"
+    # RE.md is a RedisJSONDict over the TLS redis (nslsii.configure_base);
+    # every key lands in every run's start document. Stamp the sentinel on
+    # each bring-up so no sim run can carry a real-looking identity.
+    REDIS_HOST=localhost REDIS_PORT="$REDIS_TLS_PORT" \
+    REDIS_SECRET_FILE="$CONFIG_DIR/redis.secret" \
+    SSL_CERT_FILE="$CERT_DIR/redis.crt" \
+    SIM_PROPOSAL_ID="$SIM_PROPOSAL_ID" SIM_DATA_SESSION="$SIM_DATA_SESSION" \
+    pixi_qs python - <<'PY' || die "failed to stamp the sentinel identity into RE.md"
+import os
+
+from nslsii import open_redis_client
+from redis_json_dict import RedisJSONDict
+
+md = RedisJSONDict(redis_client=open_redis_client(redis_ssl=True), prefix="")
+sentinel = {
+    "proposal_id": os.environ["SIM_PROPOSAL_ID"],
+    "data_session": os.environ["SIM_DATA_SESSION"],
+    "PI": "SIMULATED",
+    "cycle": "0000-0",
+    "endstation": "SIMULATED",
+    "proposal_type": "SIMULATED",
+    "simulated_beamline": True,
+}
+md.update(sentinel)
+print("RE.md sentinel:", {k: md[k] for k in sentinel})
+PY
+    ok "every run start document now carries the SIMULATED sentinel identity"
+}
+
 ct_running() { docker_ ps --format '{{.Names}}' | grep -qx "$1"; }
 ct_exists()  { docker_ ps -a --format '{{.Names}}' | grep -qx "$1"; }
 
@@ -563,6 +630,7 @@ start_iocs() {
                 continue
             fi
             setsid env EPICS_CA_SERVER_PORT="$port" \
+                XS3_PGM_ADDR="127.0.0.1:$(ioc_port 0)" \
                 pixi run --manifest-path "$PROFILE_DIR/pixi.toml" -e qs \
                 python "$IOC_DIR/$name.py" --list-pvs --interfaces 127.0.0.1 \
                 > "$RUN_DIR/iocs/$name.log" 2>&1 < /dev/null &
@@ -635,6 +703,10 @@ start_services() {
         if [ "$WITH_IOS_IOCS" = "1" ]; then
             epics_auto="NO"
             epics_list="$(epics_addr_list)"
+            # The sims reuse real IOS PV names: refuse to hand the RE worker
+            # anything but loopback addresses (guard exits non-zero + loud).
+            pixi_qs python "$IOC_DIR/localguard.py" $epics_list \
+                || die "localguard refused the RE worker EPICS address list: '$epics_list'"
         fi
         setsid env \
             MPLBACKEND=Agg \
@@ -756,7 +828,9 @@ cmd_up() {
     clone_profile
     install_env
     gen_configs
+    prepare_sim_data_root
     start_infra
+    seed_sim_md
     start_olog
     start_iocs
     start_services
@@ -773,6 +847,87 @@ cmd_up() {
 }
 
 cmd_verify() { load_or_make_secrets; verify; }
+
+# ---------------------------------------------------------------------------
+# Smoke: one command that answers "is the stack healthy?"
+# Runs the repo checks (localguard refusal/pass, blackhole type rules, the
+# xs3 acceptance chain) plus a live CA round-trip against the running
+# blackhole. Everything is loopback-only. A check that cannot run (no stack,
+# no suitable python) FAILS the smoke with a note — a green smoke means
+# every check ran and passed, never that some were skipped.
+# ---------------------------------------------------------------------------
+smoke_runner() {
+    # A python with pytest + caproto: explicit override first, then the
+    # profile's qs env, then the host python3.
+    if [ -n "${SMOKE_PYTHON:-}" ]; then
+        "$SMOKE_PYTHON" -c "import pytest, caproto" >/dev/null 2>&1 \
+            || die "SMOKE_PYTHON=$SMOKE_PYTHON lacks pytest+caproto"
+        echo "$SMOKE_PYTHON"
+    elif [ -f "$PROFILE_DIR/pixi.toml" ] \
+        && pixi_qs python -c "import pytest, caproto" >/dev/null 2>&1; then
+        echo "pixi"
+    elif python3 -c "import pytest, caproto" >/dev/null 2>&1; then
+        echo "python3"
+    else
+        die "no python with pytest+caproto found (set SMOKE_PYTHON, or run '$0 up' so the profile qs env exists)"
+    fi
+}
+
+smoke_py() {
+    local runner="$1"; shift
+    if [ "$runner" = "pixi" ]; then pixi_qs python "$@"; else "$runner" "$@"; fi
+}
+
+cmd_smoke() {
+    step "Smoke checks (loopback-only)"
+    local runner fails=0
+    runner="$(smoke_runner)"
+    ok "python: $runner"
+
+    if smoke_py "$runner" -m pytest -q \
+        "$IOC_DIR/test_localguard.py" "$IOC_DIR/test_blackhole_types.py"; then
+        ok "unit: localguard refusal/pass + blackhole type rules"
+    else
+        note "unit tests FAILED"; fails=$((fails+1))
+    fi
+
+    if smoke_py "$runner" -c "import ophyd, nslsii" >/dev/null 2>&1; then
+        if smoke_py "$runner" "$IOC_DIR/verify_xs3_sim.py"; then
+            ok "xs3 acceptance: stage + trigger/read + absorption-edge jump"
+        else
+            note "xs3 acceptance FAILED"; fails=$((fails+1))
+        fi
+    else
+        note "xs3 acceptance CANNOT RUN: smoke python lacks ophyd+nslsii (run '$0 up' first)"
+        fails=$((fails+1))
+    fi
+
+    if pid_alive "$RUN_DIR/iocs/blackhole.pid"; then
+        local bhport; bhport="$(blackhole_port)"
+        if EPICS_CA_ADDR_LIST="127.0.0.1:$bhport" EPICS_CA_AUTO_ADDR_LIST=NO \
+            smoke_py "$runner" -c "$(cat <<'PY'
+from caproto import ChannelType
+from caproto.sync.client import read, write
+pv = "XF:23ID2-ES{Xsp:1}:HDF5:AutoSave"
+write(pv, "Yes", notify=True)
+r = read(pv, data_type=ChannelType.STRING)
+assert r.data[0] == b"Yes", r.data
+print("live round-trip OK:", pv)
+PY
+)"; then
+            ok "live blackhole round-trip: enum stage-signal write/read"
+        else
+            note "live blackhole round-trip FAILED"; fails=$((fails+1))
+        fi
+    else
+        note "live round-trip CANNOT RUN: blackhole not running (run '$0 up' first)"
+        fails=$((fails+1))
+    fi
+
+    [ "$fails" -eq 0 ] || die "smoke: $fails check(s) failed or could not run"
+    step "Smoke OK"
+    ok "all checks ran and passed"
+}
 
 cmd_status() {
     step "Containers"; docker_ ps --filter "name=${CT_PREFIX}-" \
@@ -823,15 +978,16 @@ cmd_nuke() {
     ok "removed $QS_REPRO_HOME"
 }
 
-usage() { sed -n '2,77p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; }
 
 case "${1:-up}" in
     up)      cmd_up ;;
     verify)  cmd_verify ;;
+    smoke|--smoke) cmd_smoke ;;
     status)  cmd_status ;;
     logs)    cmd_logs ;;
     down)    cmd_down ;;
     nuke)    cmd_nuke ;;
     -h|--help|help) usage ;;
-    *) die "unknown command '$1' (try: up | verify | status | logs | down | nuke)" ;;
+    *) die "unknown command '$1' (try: up | verify | smoke | status | logs | down | nuke)" ;;
 esac
