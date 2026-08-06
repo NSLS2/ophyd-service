@@ -5,9 +5,9 @@ import react from '@vitejs/plugin-react'
 // overridden via env vars so the dockerized dev server can reach sibling
 // services by their compose service names (localhost inside a container points
 // at the container itself, not the host).
-const PRESETS_TARGET = process.env.VITE_PRESETS_TARGET || 'http://localhost:8005'
-const CONFIG_TARGET = process.env.VITE_CONFIG_TARGET || 'http://localhost:8004'
-const CONTROL_TARGET = process.env.VITE_CONTROL_TARGET || 'http://localhost:8003'
+const PRESETS_TARGET = process.env.PRESETS_TARGET || 'http://localhost:8005'
+const CONFIG_TARGET = process.env.CONFIG_TARGET || 'http://localhost:8004'
+const CONTROL_TARGET = process.env.CONTROL_TARGET || 'http://localhost:8003'
 
 // https://vitejs.dev/config/
 export default defineConfig({
