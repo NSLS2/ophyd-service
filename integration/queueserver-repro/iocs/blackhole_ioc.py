@@ -100,7 +100,9 @@ def fabricate_channel(key):
         # on ophyd versions that enforce it.
         return ChannelString(value=ASYN_PORT)
     if 'EnableCallbacks' in key:
-        return ChannelEnum(value=0, enum_strings=['Disabled', 'Enabled'])
+        # Real AD NDPluginBase uses 'Disable'/'Enable' (ophyd stages the
+        # int 1, so either works live — match the real records anyway).
+        return ChannelEnum(value=0, enum_strings=['Disable', 'Enable'])
     if 'BlockingCallbacks' in key or 'WaitForPlugins' in key:
         # ophyd writes 'Yes'/'No' strings to these, not 'Enabled'/'Disabled'.
         return ChannelEnum(value=0, enum_strings=['No', 'Yes'])
@@ -115,7 +117,8 @@ def fabricate_channel(key):
     if 'FileWriteMode' in key or 'WriteMode' in key:
         return ChannelEnum(value=0, enum_strings=['Single', 'Capture', 'Stream'])
     if 'Compression' in key:
-        return ChannelEnum(value=0, enum_strings=['None', 'N-bit', 'szip', 'zlib', 'blosc'])
+        # Real NDFileHDF5 capitalizes 'Blosc'.
+        return ChannelEnum(value=0, enum_strings=['None', 'N-bit', 'szip', 'zlib', 'Blosc'])
     if 'FilePathExists' in key:
         # ophyd verifies this readback is truthy before staging a file plugin.
         return ChannelInteger(value=1)

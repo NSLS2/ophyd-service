@@ -48,12 +48,14 @@ def assert_loopback_addrs(addrs, context):
     """Exit(2) unless every address in ``addrs`` is loopback."""
     bad = [e for e in addrs if not _is_loopback(e)]
     if bad:
-        sys.exit(
+        print(
             "localguard: REFUSING to start — non-loopback EPICS address(es) "
             "%s (from %s). The IOS sim uses REAL beamline PV names; running "
             "its clients against a beamline network could drive real "
-            "devices. Use 127.0.0.1 entries only." % (bad, context)
+            "devices. Use 127.0.0.1 entries only." % (bad, context),
+            file=sys.stderr,
         )
+        sys.exit(2)
 
 
 def assert_local_epics(default_ca="127.0.0.1", default_pva="127.0.0.1"):

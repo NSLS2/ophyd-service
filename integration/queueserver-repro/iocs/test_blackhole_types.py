@@ -49,10 +49,10 @@ def db():
         # ophyd writes 'Yes'/'No' to these, not 'Enabled'/'Disabled'.
         (_XS3_HDF + "BlockingCallbacks", ChannelEnum, ("No", "Yes")),
         (_XS3_HDF + "WaitForPlugins", ChannelEnum, ("No", "Yes")),
-        # ... but EnableCallbacks really is Disabled/Enabled.
-        (_XS3_HDF + "EnableCallbacks", ChannelEnum, ("Disabled", "Enabled")),
+        # ... but EnableCallbacks is Disable/Enable (real AD NDPluginBase).
+        (_XS3_HDF + "EnableCallbacks", ChannelEnum, ("Disable", "Enable")),
         (_XS3_HDF + "FileWriteMode", ChannelEnum, ("Single", "Capture", "Stream")),
-        (_XS3_HDF + "Compression", ChannelEnum, ("None", "N-bit", "szip", "zlib", "blosc")),
+        (_XS3_HDF + "Compression", ChannelEnum, ("None", "N-bit", "szip", "zlib", "Blosc")),
         # File name/path/template stay long char waveforms; numbers stay ints.
         (_XS3_HDF + "FileTemplate", ChannelChar, None),
         (_XS3_HDF + "FileNumber", ChannelInteger, None),

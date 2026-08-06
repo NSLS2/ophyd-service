@@ -407,7 +407,9 @@ prepare_sim_data_root() {
 Everything under this tree was produced by the SIMULATED beamline stack
 (integration/queueserver-repro). Run identity is the simulation sentinel
 (proposal $SIM_PROPOSAL_ID / data session $SIM_DATA_SESSION), never a real
-proposal. Safe to delete at any time: 'reproduce.sh nuke' removes it.
+proposal. Safe to delete at any time. 'reproduce.sh nuke' removes it when
+it lives at the default location under \$QS_REPRO_HOME; a custom
+SIM_DATA_ROOT outside that tree must be deleted by hand.
 EOF
     ok "$SIM_DATA_ROOT (mimics /nsls2 under the sim root only)"
 }

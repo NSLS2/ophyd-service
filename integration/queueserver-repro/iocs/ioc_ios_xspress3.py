@@ -29,8 +29,9 @@ Dynamics (event-driven, deterministic per trigger):
 The HDF5 file plugin records (``HDF1:*``) are served as properly typed
 enum/char records so ophyd's FileStore staging writes
 (``auto_save='Yes'``, ``file_write_mode='Stream'``, ``compression='zlib'``,
-...) succeed; no file is actually written. Asyn port names are served as
-``XSP3`` on both the cam and the plugin so ``validate_asyn_ports`` holds.
+...) succeed; no file is actually written. The cam reports asyn port
+``XSP3``; the HDF plugin's own PortName is ``HDF1`` with its
+``NDArrayPort`` wired to ``XSP3``, so ``validate_asyn_ports`` holds.
 
 All PVs live in one flat PVGroup (the vortex-sim pattern): caproto
 re-expands prefixes on SubGroup nesting, which collides with the literal
