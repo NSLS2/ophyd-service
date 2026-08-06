@@ -14,14 +14,12 @@ export type AuthScope =
   | 'admin:write';
 
 export interface AuthViewer {
-  status: 'authenticated';
   authenticated: true;
   user: AuthUser;
   scopes: AuthScope[];
 }
 
 export interface AuthUnauthenticatedState {
-  status: 'unauthenticated';
   authenticated: false;
 }
 
@@ -31,5 +29,5 @@ export type AuthState =
 
 // Single source of truth for "is this state authenticated"; also narrows to AuthViewer.
 export function isAuthenticatedState(state: AuthState): state is AuthViewer {
-  return state.status === 'authenticated';
+  return state.authenticated;
 }

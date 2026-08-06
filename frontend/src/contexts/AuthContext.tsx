@@ -17,7 +17,7 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children, initialAuthState }: AuthProviderProps) {
-  const [auth] = useState<AuthState>(initialAuthState ?? { status: 'unauthenticated', authenticated: false });
+  const [auth] = useState<AuthState>(initialAuthState ?? { authenticated: false });
 
   const user = isAuthenticatedState(auth) ? auth.user : null;
 

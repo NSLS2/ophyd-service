@@ -124,7 +124,6 @@ const deriveAuthDecision = (req) => {
 };
 
 const toClientAuthState = (authDecision) => ({
-  status: 'authenticated',
   authenticated: true,
   user: authDecision.user,
   scopes: authDecision.scopes,
@@ -134,14 +133,14 @@ const deriveDocumentAuthState = (req) => {
   const authDecision = deriveAuthDecision(req);
 
   if (!authDecision) {
-    return { status: 'unauthenticated', authenticated: false };
+    return { authenticated: false };
   }
 
   return toClientAuthState(authDecision);
 };
 
 const getDocumentStatusCode = (authState, url) => {
-  if (authState.status !== 'authenticated') return 401;
+  if (!authState.authenticated) return 401;
   if (isAdminPath(url) && !authState.scopes.includes('admin:read')) return 403;
   return 200;
 };
