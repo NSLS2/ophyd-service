@@ -14,11 +14,12 @@ from bluesky_queueserver_api.zmq.aio import REManagerAPI
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from .authentication import Mode
+from .authenticators import ProxiedOIDCAuthenticator
 from .console_output import CollectPublishedConsoleOutput, ConsoleOutputStream, SystemInfoStream
 from .core import PatchedStreamingResponse
 from .database.core import purge_expired
 from .openapi_config import custom_openapi
+from .protocols import ExternalAuthenticator, InternalAuthenticator
 from .resources import SERVER_RESOURCES as SR
 from .routers import (
     admin as admin_router,
@@ -159,9 +160,9 @@ def build_app(authentication=None, api_access=None, resource_access=None, server
         logger.info("All custom routers are included successfully.")
 
     from .authentication import (
+        add_external_routes,
+        add_internal_routes,
         base_authentication_router,
-        build_auth_code_route,
-        build_handle_credentials_route,
         oauth2_scheme,
     )
 
@@ -175,44 +176,21 @@ def build_app(authentication=None, api_access=None, resource_access=None, server
         first_provider = authentication["providers"][0]["provider"]
         oauth2_scheme.model.flows.password.tokenUrl = f"/api/auth/provider/{first_provider}/token"
         # Authenticators provide Router(s) for their particular flow.
-        # Collect them in the authentication_router.
-
+        # Collect them in the authentication_router. The authenticator's
+        # class (InternalAuthenticator vs ExternalAuthenticator protocol)
+        # determines the routes it gets — the old per-instance `mode` flag
+        # is gone (upstream PR #81 / tiled v0.2.12 alignment).
         for spec in authentication["providers"]:
             provider = spec["provider"]
             authenticator = spec["authenticator"]
-            mode = authenticator.mode
-            if mode == Mode.password:
-                authentication_router.post(
-                    f"/provider/{provider}/token",
-                    summary=f"Exchange username+password for tokens ({provider})",
-                    description=(
-                        f"OAuth2 password-flow token endpoint for the `{provider}` "
-                        "authenticator. Form fields: `username`, `password`. Returns "
-                        "access + refresh tokens."
-                    ),
-                    tags=["Auth"],
-                )(build_handle_credentials_route(authenticator, provider))
-            elif mode == Mode.external:
-                auth_code_summary = f"Exchange an external-identity callback for a refresh token ({provider})"
-                auth_code_description = (
-                    f"External-identity auth-code endpoint for the `{provider}` authenticator. "
-                    "Accepts the callback from the upstream IdP (OIDC / LDAP / SAML) and "
-                    "returns a refresh token the client can use to obtain access tokens."
-                )
-                authentication_router.get(
-                    f"/provider/{provider}/code",
-                    summary=auth_code_summary,
-                    description=auth_code_description,
-                    tags=["Auth"],
-                )(build_auth_code_route(authenticator, provider))
-                authentication_router.post(
-                    f"/provider/{provider}/code",
-                    summary=auth_code_summary,
-                    description=auth_code_description,
-                    tags=["Auth"],
-                )(build_auth_code_route(authenticator, provider))
+            if isinstance(authenticator, InternalAuthenticator):
+                add_internal_routes(authentication_router, provider, authenticator)
+            elif isinstance(authenticator, ExternalAuthenticator):
+                add_external_routes(authentication_router, provider, authenticator)
+                if isinstance(authenticator, ProxiedOIDCAuthenticator):
+                    app.state.provider = provider
             else:
-                raise ValueError(f"unknown authentication mode {mode}")
+                raise ValueError(f"unknown authenticator type {type(authenticator)}")
             for custom_router in getattr(authenticator, "include_routers", []):
                 authentication_router.include_router(custom_router, prefix=f"/provider/{provider}")
 
@@ -256,9 +234,11 @@ def build_app(authentication=None, api_access=None, resource_access=None, server
             from .database import orm
             from .database.core import (  # make_admin_by_identity,
                 REQUIRED_REVISION,
+                DatabaseUpgradeNeeded,
                 UninitializedDatabase,
                 check_database,
                 initialize_database,
+                upgrade,
             )
 
             connect_args = {}
@@ -276,8 +256,17 @@ def build_app(authentication=None, api_access=None, resource_access=None, server
                 )
                 initialize_database(engine)
                 logger.info("Database initialized.")
+            except DatabaseUpgradeNeeded:
+                logger.info(f"Database at {redacted_url} is out of date. Upgrading to {REQUIRED_REVISION}...")
+                upgrade(engine, REQUIRED_REVISION)
+                logger.info("Database upgraded.")
             else:
                 logger.info(f"Connected to existing database at {redacted_url}.")
+            # Identity-based admin designation (qserver_admins/tiled_admins) is
+            # intentionally not supported: role assignment is delegated to the
+            # api_access policy managers and the admin Role DB table this relied on
+            # was removed. See the note in
+            # config_schemas/service_configuration.yml for the migration path.
             # SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
             # db = SessionLocal()
             # for admin in authentication.get("qserver_admins", []):
@@ -418,10 +407,30 @@ def build_app(authentication=None, api_access=None, resource_access=None, server
 
     @app.on_event("shutdown")
     async def shutdown_event():
-        await SR.RM.close()
-        await SR.console_output_loader.stop()
-        await SR.console_output_stream.stop()
-        await SR.system_info_stream.stop()
+        """Safely shutdown and perform the cleanup robustly
+
+        This change ensures that the application shuts down and cleans up resources even if there is
+        a problem, without silencing the errors.
+        """
+        for task in getattr(app.state, "tasks", []):
+            task.cancel()
+        for closer_name in (
+            "console_output_loader",
+            "console_output_stream",
+            "system_info_stream",
+        ):
+            closer = getattr(SR, closer_name, None)
+            if closer is not None:
+                try:
+                    await closer.stop()
+                except Exception:
+                    logger.exception("Error stopping %s", closer_name)
+        rm = getattr(SR, "RM", None)
+        if rm is not None:
+            try:
+                await rm.close()
+            except Exception:
+                logger.exception("Error closing REManagerAPI connection")
 
     @lru_cache(1)
     def override_get_authenticators():

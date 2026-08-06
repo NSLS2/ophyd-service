@@ -66,6 +66,23 @@ class RegistryClient:
             )
         return self._client
 
+    async def _request(
+        self, method: str, path: str, *, timeout: float | None = None
+    ) -> httpx.Response:
+        """Issue a request to configuration_service through the shared client.
+
+        Every call routes through this one helper (mirroring
+        queueserver_service's ``ConfigServiceClient._request``) so the HTTP
+        call surface stays consistent and analyzable rather than a
+        per-call-site local client handle. The only per-call override is
+        ``timeout`` (e.g. a short health-check probe); omit it to use the
+        client's configured timeout.
+        """
+        client = await self._get_client()
+        if timeout is None:
+            return await client.request(method, path)
+        return await client.request(method, path, timeout=timeout)
+
     def _cache_get(self, cache: dict[str, tuple[bool, float]], key: str) -> bool | None:
         """Check cache for a key, return None if expired or missing."""
         entry = cache.get(key)
@@ -94,8 +111,7 @@ class RegistryClient:
             raise RegistryValidationError(pv_name, "PV")
 
         try:
-            client = await self._get_client()
-            response = await client.get(f"/api/v1/pvs/{pv_name}")
+            response = await self._request("GET", f"/api/v1/pvs/{pv_name}")
 
             if response.status_code == 200:
                 now = time.monotonic()
@@ -156,8 +172,7 @@ class RegistryClient:
             raise RegistryValidationError(device_name, "Device")
 
         try:
-            client = await self._get_client()
-            response = await client.get(f"/api/v1/devices/{device_name}")
+            response = await self._request("GET", f"/api/v1/devices/{device_name}")
 
             if response.status_code == 200:
                 self._device_cache[device_name] = (True, time.monotonic())
@@ -193,9 +208,8 @@ class RegistryClient:
         if entry is not None and time.monotonic() - entry[1] <= self._cache_ttl:
             return entry[0]
 
-        client = await self._get_client()
         try:
-            response = await client.get(f"/api/v1/pvs/{pv_name}")
+            response = await self._request("GET", f"/api/v1/pvs/{pv_name}")
         except httpx.RequestError as e:
             logger.error("configuration_service_unavailable", error=str(e))
             raise RuntimeError("Configuration service unavailable") from e
@@ -244,9 +258,8 @@ class RegistryClient:
         if entry is not None and time.monotonic() - entry[1] <= self._cache_ttl:
             return entry[0]
 
-        client = await self._get_client()
         try:
-            response = await client.get(f"/api/v1/devices/{device_name}/instantiation")
+            response = await self._request("GET", f"/api/v1/devices/{device_name}/instantiation")
         except httpx.RequestError as e:
             logger.error("configuration_service_unavailable", error=str(e))
             raise RuntimeError("Configuration service unavailable") from e
@@ -278,6 +291,52 @@ class RegistryClient:
             raise RuntimeError(f"Instantiation spec for {device_name!r} is malformed: {e}") from e
         self._spec_cache[device_name] = (spec, time.monotonic())
         return spec
+
+    async def get_device_pvs(self, device_name: str) -> dict[str, str] | None:
+        """Fetch the device's component -> PV map from configuration_service.
+
+        Returns None when the device 404s (not registered). Returns the ``pvs``
+        mapping from the device document otherwise (an empty dict if the device
+        owns no PVs).
+
+        Raises:
+            RuntimeError: configuration_service unreachable or returned an
+                unexpected status.
+        """
+        try:
+            response = await self._request("GET", f"/api/v1/devices/{device_name}")
+        except httpx.RequestError as e:
+            logger.error("configuration_service_unavailable", error=str(e))
+            raise RuntimeError("Configuration service unavailable") from e
+
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            logger.warning(
+                "registry_device_pvs_unexpected_status",
+                device_name=device_name,
+                status_code=response.status_code,
+            )
+            raise RuntimeError(
+                f"Device-PV lookup for {device_name!r} returned HTTP {response.status_code}"
+            )
+
+        # Parse + normalize under one guard: any deviation from the documented
+        # shape (non-JSON body, non-mapping root, non-mapping ``pvs``, item
+        # values that don't str()-ify) is surfaced as RuntimeError so callers
+        # only ever have one exception class to catch, per the docstring
+        # contract.
+        try:
+            body = response.json()
+            pvs = body.get("pvs", {}) or {}
+            return {str(component): str(pv) for component, pv in pvs.items()}
+        except (ValueError, AttributeError, TypeError) as e:
+            logger.error(
+                "registry_device_pvs_malformed",
+                device_name=device_name,
+                error=str(e),
+            )
+            raise RuntimeError(f"Device-PV response for {device_name!r} is malformed: {e}") from e
 
     async def cleanup(self) -> None:
         """Cleanup HTTP client."""

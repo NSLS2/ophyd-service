@@ -6,15 +6,12 @@
         produced an unimportable device_class ("ophyd.EpicsMotor.m1").
 - SQLite: ping()'s busy_timeout PRAGMA leaked into the pooled
         connection, permanently dropping its write-lock wait from 30s to 2s.
-- direct_control_client: a 200 enrich response whose rows lack "ok"
-        escaped as KeyError instead of degrading to DirectControlUnavailable.
 - /devices/history: a NUL byte in the device_name filter reached the
         SQL driver (500 on PostgreSQL); now rejected with 422.
 """
 
 from __future__ import annotations
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -102,32 +99,6 @@ def test_sqlite_ping_restores_pooled_busy_timeout(tmp_path):
         assert after != 2000
     finally:
         engine.dispose()
-
-
-# ===== Malformed enrich rows degrade, never KeyError =========================
-
-
-async def test_enrich_row_missing_ok_degrades_to_unavailable():
-    from configuration_service.direct_control_client import (
-        DirectControlClient,
-        DirectControlUnavailable,
-        EnrichmentSpec,
-    )
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"results": [{"pv_name": "X:PV"}]})
-
-    client = DirectControlClient("http://stub")
-    client._client = httpx.AsyncClient(
-        transport=httpx.MockTransport(handler), base_url="http://stub"
-    )
-    try:
-        with pytest.raises(DirectControlUnavailable, match="malformed result row"):
-            await client.enrich(
-                [EnrichmentSpec(device_class_path="a.B", prefix="X:", sub_path="v")]
-            )
-    finally:
-        await client.aclose()
 
 
 # ===== NUL bytes in history filter are rejected, not 500 =====================

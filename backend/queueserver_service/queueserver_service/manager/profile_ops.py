@@ -453,8 +453,14 @@ def load_startup_script(script_path, *, enable_local_imports=True, nspace=None):
             #   the script is executed again.
             for key in list(sys.modules.keys()):
                 if key not in sm_keys:
-                    # print(f"Deleting the key '{key}'")
-                    del sys.modules[key]
+                    # Make sure the module is local before deleting it.
+                    # Do not delete common library modules (on Python >= 3.13
+                    # stdlib/lazy imports can first appear here and evicting
+                    # them breaks subsequent loads).
+                    fl = getattr(sys.modules[key], "__file__", None)
+                    if fl and fl.startswith(p):
+                        # print(f"Deleting the key '{key}'")
+                        del sys.modules[key]
 
             sys.path.remove(p)
 
@@ -653,8 +659,13 @@ def load_script_into_existing_nspace(
             #   the script is executed again.
             for key in list(sys.modules.keys()):
                 if key not in sm_keys:
-                    print(f"Deleting the key '{key}'")
-                    del sys.modules[key]
+                    # Make sure the module is local before deleting it.
+                    # Do not delete common library modules (on Python >= 3.13
+                    # stdlib/lazy imports can first appear here and evicting
+                    # them breaks subsequent loads).
+                    fl = getattr(sys.modules[key], "__file__", None)
+                    if fl and fl.startswith(script_root_path):
+                        del sys.modules[key]
 
             sys.path.remove(script_root_path)
 
@@ -1374,7 +1385,7 @@ def _is_object_name_in_list(object_name, *, allowed_objects):
 _DOTTED_NAME_RE = re.compile(r"[_A-Za-z]\w*(\.[_A-Za-z]\w*)+")
 
 
-def extract_device_names_from_plan(plan, *, existing_devices):
+def extract_device_names_from_plan(plan, *, existing_devices, existing_plans=None):
     """
     Return a sorted list of ROOT device names referenced (as name strings) in
     ``plan['args']`` / ``plan['kwargs']``, matched against a tree of device
@@ -1394,6 +1405,17 @@ def extract_device_names_from_plan(plan, *, existing_devices):
     safe direction. Known under-match: parameters whose values are evaluated
     as complex expressions (e.g. ``"det1.val + 1"``) are not parsed; plain
     (dotted) names are covered.
+
+    ``existing_plans`` — when supplied and the plan is in it, decorator-defined
+    default values are also visited so devices bound via ``@parameter_annotation_decorator``
+    defaults (e.g. a ``count()`` submitted without arguments whose ``detectors``
+    kwarg defaults to ``[det1, det2]`` in the decorator) are included in the
+    lock set. Without this the manager relied only on ``plan['args']`` /
+    ``plan['kwargs']`` and any decorator-default device would slip through the
+    per-plan lock. Over-locking (visit every decorator default unconditionally,
+    even for parameters the caller explicitly passed) is intentional: matches
+    the args/kwargs pass and avoids reproducing the worker's positional binding
+    logic on the manager side.
     """
     found = set()
 
@@ -1421,6 +1443,27 @@ def extract_device_names_from_plan(plan, *, existing_devices):
 
     _visit(plan.get("args", []) or [])
     _visit(plan.get("kwargs", {}) or {})
+
+    if existing_plans is not None:
+        plan_name = plan.get("name")
+        plan_desc = existing_plans.get(plan_name) if plan_name else None
+        if plan_desc:
+            for p in plan_desc.get("parameters", []) or []:
+                if not p.get("default_defined_in_decorator", False):
+                    continue
+                if "default" not in p:
+                    continue
+                # ``default`` in the plan description is an encoded string
+                # (e.g. "'det1'", "[det1, det2]"). ast.literal_eval covers the
+                # literal cases; anything richer (a call expression) is not a
+                # device reference — skip on failure to keep the lock set from
+                # blocking a legitimate plan on a decoding blip.
+                try:
+                    decoded = _process_default_value(p["default"])
+                except Exception:
+                    continue
+                _visit(decoded)
+
     return sorted(found)
 
 
@@ -3018,9 +3061,9 @@ def _process_plan(plan, *, existing_devices, existing_plans):
         else:
             # Replace each expression with a unique string in the form of '__CALLABLE<n>__'
             n_patterns = 0  # Number of detected callables
-            for type_name, type_patterns in type_patterns.items():
+            for type_name, type_pattern in type_patterns.items():
                 while True:
-                    pattern = _get_full_type_name(type_patterns, a_str)
+                    pattern = _get_full_type_name(type_pattern, a_str)
                     if not pattern:
                         break
                     try:

@@ -24,15 +24,20 @@ from pathlib import Path
 
 import pytest
 
-_IOC_PORT = 5064  # default EPICS CA
+# EPICS CA port for the test IOC. Default 5064 (the CA default); override
+# with DIRECT_CONTROL_TEST_IOC_PORT when something ELSE already owns 5064
+# on this machine (another project's sim IOC, a real gateway). The reuse
+# branch below assumes a bound port serves OUR PVs — a foreign IOC on 5064
+# makes every EPICS test hang on connect timeouts, so on a shared machine
+# prefer the override to the assumption.
+_IOC_PORT = int(os.environ.get("DIRECT_CONTROL_TEST_IOC_PORT", "5064"))
 _IOC_ADDR = f"localhost:{_IOC_PORT}"
 
-# NOTE: Hardcoded port 5064 (EPICS Channel Access default).
 # This fixture supports two modes of parallel testing:
 #   1. Single host, multiple containers: Each container gets its own isolated IOC
 #      on 5064 (the compose network isolates ports).
 #   2. Single machine, multiple processes: Parallel pytest runs on the same machine
-#      will reuse an existing IOC if one is already bound to 5064 (line 42-45).
+#      will reuse an existing IOC if one is already bound to the port (line 42-45).
 #      This assumes the IOC has compatible PVs (see test_ioc.py).
 #      If you need truly parallel tests on the same machine without reuse, run in
 #      separate containers or use pytest-xdist with worker isolation.
@@ -54,10 +59,13 @@ def test_ioc() -> Iterator[None]:
         return
 
     ioc_script = Path(__file__).parent / "test_ioc.py"
+    # caproto reads EPICS_CA_SERVER_PORT for the server-side bind, so the
+    # port override reaches the IOC subprocess through its environment.
     proc = subprocess.Popen(
         [sys.executable, str(ioc_script)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env={**os.environ, "EPICS_CA_SERVER_PORT": str(_IOC_PORT)},
     )
 
     # Wait for the IOC to bind. caproto starts fast; 3s is plenty.
@@ -94,6 +102,9 @@ def _epics_env(test_ioc):
     """
     os.environ["DIRECT_CONTROL_EPICS_CA_ADDR_LIST"] = _IOC_ADDR
     os.environ["DIRECT_CONTROL_EPICS_CA_AUTO_ADDR_LIST"] = "NO"
+    # Client-side default port, for CA paths that don't parse the explicit
+    # host:port out of the addr list (aioca name servers do; belt+braces).
+    os.environ["EPICS_CA_SERVER_PORT"] = str(_IOC_PORT)
     # Point at a harmless URL; the `client` fixture swaps the real
     # configuration_service client for a stub after lifespan runs.
     os.environ["DIRECT_CONTROL_CONFIGURATION_SERVICE_URL"] = "http://localhost:0"
@@ -130,6 +141,10 @@ class _StubRegistry:
     async def get_instantiation_spec(self, device_name: str):
         # No class info — device-level control paths get a clean 422; tests
         # that exercise live device control install a spec-bearing stub.
+        return None
+
+    async def get_device_pvs(self, device_name: str):
+        # No devices registered — resolve/device paths see "not found".
         return None
 
     async def cleanup(self) -> None:

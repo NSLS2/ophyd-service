@@ -119,7 +119,10 @@ async def test_device_socket_set_blocked_in_read_only():
 
     settings = Settings(configuration_service_url="http://x", global_read_only=True)
     mgr = DeviceWebSocketManager(
-        pv_monitor=Mock(), device_controller=AsyncMock(), settings=settings
+        pv_monitor=Mock(),
+        device_controller=AsyncMock(),
+        settings=settings,
+        registry_client=object(),  # type: ignore[arg-type]
     )
     ws = AsyncMock()
     await mgr._handle_set("cid", ws, {"device": "m1", "value": 1})

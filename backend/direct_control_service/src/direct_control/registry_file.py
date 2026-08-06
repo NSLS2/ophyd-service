@@ -102,6 +102,11 @@ class FileRegistryProvider:
         self._pv_owner: dict[str, str | None] = {}
         # device name -> instantiation spec, for devices that carry class info
         self._specs: dict[str, InstantiationSpec] = {}
+        # device name -> {component: pv}. The file format lists a device's PVs
+        # as bare PV strings (no logical component names), so the component key
+        # is the PV itself — enough for the monitoring socket, which only needs
+        # the set of PVs to subscribe.
+        self._device_pvs: dict[str, dict[str, str]] = {}
 
         devices = data.get("devices", [])
         if not isinstance(devices, list):
@@ -217,6 +222,8 @@ class FileRegistryProvider:
                 f"(already owned by {prior!r})"
             )
         self._pv_owner[pv] = owner
+        if owner is not None:
+            self._device_pvs.setdefault(owner, {})[pv] = pv
 
     async def validate_pv(self, pv_name: str) -> None:
         """Raise RegistryValidationError if the PV is not in the file registry."""
@@ -240,6 +247,13 @@ class FileRegistryProvider:
         """Return the device's spec, or None when its entry has no class info
         (PV-gateway-only device — device-level control unavailable)."""
         return self._specs.get(device_name)
+
+    async def get_device_pvs(self, device_name: str) -> dict[str, str] | None:
+        """Return the device's component -> PV map, or None if the device is not
+        in the registry file. Never raises (the file is loaded at startup)."""
+        if device_name not in self._devices:
+            return None
+        return dict(self._device_pvs.get(device_name, {}))
 
     async def cleanup(self) -> None:
         return None
