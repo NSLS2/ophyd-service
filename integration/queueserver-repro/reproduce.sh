@@ -495,11 +495,11 @@ start_infra() {
     # Single-node KRaft, as the NSLS-II profile-testing CI uses.
     if [ "$WITH_KAFKA" = "1" ]; then
         start_container "$CT_KAFKA" \
-            -p "${KAFKA_PORT}:9092" -p 9093:9093 \
+            -p "${KAFKA_PORT}:9092" \
             -e KAFKA_NODE_ID=1 \
             -e KAFKA_PROCESS_ROLES=broker,controller \
             -e KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093 \
-            -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \
+            -e KAFKA_ADVERTISED_LISTENERS="PLAINTEXT://localhost:${KAFKA_PORT}" \
             -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
             -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093 \
             -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT \
