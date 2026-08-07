@@ -481,8 +481,9 @@ def _coordinator(client, *, lock_scope="plan", existing_devices=None):
     )
 
     class _Host:
-        def __init__(self, devices: Dict[str, Any]):
+        def __init__(self, devices: Dict[str, Any], plans: Dict[str, Any] | None = None):
             self.existing_devices = devices or {}
+            self.existing_plans = plans or {}
 
         async def worker_update_device_overlay(self, *args, **kwargs):
             return None

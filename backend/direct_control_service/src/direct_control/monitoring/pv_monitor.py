@@ -9,6 +9,7 @@ Implements: PVMonitor protocol
 
 import os
 import threading
+import time
 from collections import defaultdict, deque
 from collections.abc import Callable
 from datetime import datetime
@@ -19,7 +20,14 @@ import structlog
 
 from .._array_metadata import describe_array
 from ..config import Settings
-from ..models import PVNotFoundError, PVReadError, PVUpdate, PVValue
+from ..models import (
+    ALARM_SEVERITY_NAMES,
+    ALARM_STATUS_NAMES,
+    PVNotFoundError,
+    PVReadError,
+    PVUpdate,
+    PVValue,
+)
 
 # Set EPICS env vars before importing ophyd/pyepics
 # pyepics reads these at import time
@@ -73,6 +81,17 @@ class PVMonitorManager:
         self._connection_status: dict[str, bool] = {}
         self._latest_values: dict[str, PVValue] = {}
         self._lock = threading.RLock()
+        # Per-PV lock serializing the (blocking) first connect for a PV so two
+        # concurrent first-touches don't open two CA connections. Held only
+        # around the connect + initial read, NOT ``self._lock`` — so a dead
+        # PV's connection timeout can't stall value/meta fan-out for others.
+        self._connect_locks: dict[str, threading.Lock] = {}
+        # Per-PV monotonic timestamp of the last subscribe / get_value touch.
+        # Drives the TTL sweep (``evict_idle_monitors``) that cleans up CA
+        # monitors created by callback-less subscribes from the REST
+        # ``get_monitored_pv_value`` endpoint — without it, every REST hit on
+        # an ad-hoc PV name would leak a monitor that nothing ever unsubscribes.
+        self._last_touched: dict[str, float] = {}
 
         logger.info(
             "ophyd_pv_monitor_initialized",
@@ -86,70 +105,139 @@ class PVMonitorManager:
         read_only: bool = False,
         on_error: Callable[[BaseException], None] | None = None,
     ) -> None:
+        # Fast path: already connected — just register the callback. Avoids
+        # taking the per-PV connect lock for the common repeat-subscribe case.
         with self._lock:
-            if pv_name not in self._signals:
-                logger.info("subscribing_to_pv", pv_name=pv_name)
+            if pv_name in self._signals:
+                self._last_touched[pv_name] = time.monotonic()
+                if callback:
+                    self._callbacks[pv_name].append(_Subscriber(callback, on_error))
+                return
 
-                signal = None
-                try:
-                    signal = (
-                        EpicsSignalRO(pv_name, name=pv_name)
-                        if read_only
-                        else EpicsSignal(pv_name, name=pv_name)
-                    )
-                    signal.wait_for_connection(timeout=5.0)
+        # Slow path: the blocking CA work — EpicsSignal construction,
+        # wait_for_connection (up to 5 s for a dead PV), and the initial read
+        # in _signal_to_pv_value — runs OUTSIDE self._lock. Holding self._lock
+        # across it would stall every PV's value/meta fan-out, which reacquires
+        # the same lock on the CA dispatch thread. A per-PV connect lock keeps
+        # concurrent first-touches on the same PV from opening two connections
+        # (mirrors OphydDeviceCache's per-key locking).
+        connect_lock = self._get_connect_lock(pv_name)
+        with connect_lock:
+            with self._lock:
+                if pv_name in self._signals:
+                    self._last_touched[pv_name] = time.monotonic()
+                    if callback:
+                        self._callbacks[pv_name].append(_Subscriber(callback, on_error))
+                    return
 
-                    if not signal.connected:
-                        logger.error("pv_connection_failed", pv_name=pv_name)
-                        raise PVNotFoundError(f"PV {pv_name} connection timeout")
+            logger.info("subscribing_to_pv", pv_name=pv_name)
+            signal = None
+            try:
+                signal = (
+                    EpicsSignalRO(pv_name, name=pv_name)
+                    if read_only
+                    else EpicsSignal(pv_name, name=pv_name)
+                )
+                signal.wait_for_connection(timeout=5.0)
 
-                    # Read initial value FIRST. If this fails (e.g. dtype
-                    # mismatch in _signal_to_pv_value), bail before
-                    # registering — leaving _signals populated with no
-                    # buffer would silently break later get_value() calls.
-                    initial_value = self._signal_to_pv_value(pv_name, signal)
+                if not signal.connected:
+                    logger.error("pv_connection_failed", pv_name=pv_name)
+                    raise PVNotFoundError(f"PV {pv_name} connection timeout")
 
+                # Read initial value FIRST. If this fails (e.g. dtype
+                # mismatch in _signal_to_pv_value), bail before registering —
+                # a signal left in _signals with no buffer would silently
+                # break later get_value() calls.
+                initial_value = self._signal_to_pv_value(pv_name, signal)
+            except Exception as e:
+                logger.error("pv_subscription_error", pv_name=pv_name, error=str(e))
+                if signal is not None:
+                    self._destroy_signal_quietly(signal, pv_name)
+                # Drop the connect lock for a PV that never established a
+                # subscription. No unsubscribe path reaches a failed PV, so
+                # without this a repeatedly-failing PV would leave its entry in
+                # _connect_locks forever. Guarded on _signals so we never remove
+                # the lock for a live subscription a racing subscriber committed.
+                with self._lock:
+                    if pv_name not in self._signals:
+                        self._connect_locks.pop(pv_name, None)
+                raise PVNotFoundError(f"PV {pv_name} subscription failed: {e}") from e
+
+            # Commit the connected signal + initial value under the lock. If a
+            # racing subscriber already committed one (possible if an
+            # interleaved unsubscribe recycled the connect lock), keep theirs
+            # and destroy ours — overwriting _signals would orphan a live CA
+            # connection with a callback that nothing can ever tear down.
+            stale_signal = None
+            with self._lock:
+                if pv_name in self._signals:
+                    stale_signal = signal
+                else:
                     self._signals[pv_name] = signal
                     self._connection_status[pv_name] = True
                     self._latest_values[pv_name] = initial_value
                     self._buffers[pv_name].append(initial_value)
+                    self._last_touched[pv_name] = time.monotonic()
 
-                    signal.subscribe(
-                        lambda value, timestamp=None, **kwargs: self._handle_value_update(
-                            pv_name, value, timestamp
-                        ),
-                        event_type="value",
-                    )
-                    signal.subscribe(
-                        lambda **kwargs: self._handle_meta_update(pv_name, **kwargs),
-                        event_type="meta",
-                    )
+                    # Registering the CA monitors is a local (non-blocking)
+                    # operation, so it's fine under the lock — but it can still
+                    # fail (e.g. the channel dropped between connect and
+                    # subscribe). Roll the commit back if it does: a signal left
+                    # in _signals with no live monitor would serve a frozen
+                    # cached value forever.
+                    try:
+                        signal.subscribe(
+                            lambda value, timestamp=None, **kwargs: self._handle_value_update(
+                                pv_name, value, timestamp
+                            ),
+                            event_type="value",
+                        )
+                        signal.subscribe(
+                            lambda **kwargs: self._handle_meta_update(pv_name, **kwargs),
+                            event_type="meta",
+                        )
+                    except Exception as e:
+                        logger.error("pv_subscription_error", pv_name=pv_name, error=str(e))
+                        self._signals.pop(pv_name, None)
+                        self._connection_status.pop(pv_name, None)
+                        self._latest_values.pop(pv_name, None)
+                        self._buffers.pop(pv_name, None)
+                        self._last_touched.pop(pv_name, None)
+                        # PV never subscribed — drop its connect lock too (see
+                        # the connect-failure path above for the rationale).
+                        self._connect_locks.pop(pv_name, None)
+                        self._destroy_signal_quietly(signal, pv_name)
+                        raise PVNotFoundError(f"PV {pv_name} subscription failed: {e}") from e
 
                     logger.info("pv_connected", pv_name=pv_name, connected=True)
 
-                except Exception as e:
-                    logger.error("pv_subscription_error", pv_name=pv_name, error=str(e))
-                    # Drop any bookkeeping registered before the failure — a
-                    # destroyed signal left in _signals would make every later
-                    # subscribe() for this PV attach callbacks to a dead
-                    # object and serve the stale cached value forever.
-                    self._signals.pop(pv_name, None)
-                    self._connection_status.pop(pv_name, None)
-                    self._latest_values.pop(pv_name, None)
-                    self._buffers.pop(pv_name, None)
-                    if signal is not None:
-                        try:
-                            signal.destroy()
-                        except Exception as destroy_err:  # noqa: BLE001
-                            logger.warning(
-                                "pv_signal_destroy_failed_on_subscribe_error",
-                                pv_name=pv_name,
-                                error=str(destroy_err),
-                            )
-                    raise PVNotFoundError(f"PV {pv_name} subscription failed: {e}") from e
+                if callback:
+                    self._callbacks[pv_name].append(_Subscriber(callback, on_error))
 
-            if callback:
-                self._callbacks[pv_name].append(_Subscriber(callback, on_error))
+        if stale_signal is not None:
+            self._destroy_signal_quietly(stale_signal, pv_name)
+
+    @staticmethod
+    def _destroy_signal_quietly(signal: EpicsSignal, pv_name: str) -> None:
+        """Best-effort CA teardown of a signal, logging (not raising) on error."""
+        try:
+            signal.destroy()
+        except Exception as destroy_err:  # noqa: BLE001
+            logger.warning("pv_signal_destroy_failed", pv_name=pv_name, error=str(destroy_err))
+
+    def _get_connect_lock(self, pv_name: str) -> threading.Lock:
+        """Return the per-PV connect lock, creating it on first use.
+
+        Guarded by ``self._lock`` only for the O(1) dict access — the actual
+        blocking connect runs under the returned lock, never under
+        ``self._lock``.
+        """
+        with self._lock:
+            lock = self._connect_locks.get(pv_name)
+            if lock is None:
+                lock = threading.Lock()
+                self._connect_locks[pv_name] = lock
+            return lock
 
     def _dispatch_subscriber(
         self,
@@ -191,6 +279,23 @@ class PVMonitorManager:
                     exc_info=True,
                 )
 
+    @staticmethod
+    def _alarm_update_fields(status: int, severity: int) -> dict:
+        """PVUpdate alarm fields derived from EPICS status/severity ints.
+
+        Populates both the raw ints (ophyd-websocket ``status``/``severity``)
+        and the friendly ``alarm_*`` fields the UI reads to show
+        MINOR/MAJOR/INVALID. Unknown codes leave the name as ``None`` rather
+        than fabricating a label.
+        """
+        return {
+            "status": status,
+            "severity": severity,
+            "alarm_severity": severity,
+            "alarm_severity_name": ALARM_SEVERITY_NAMES.get(severity),
+            "alarm_status": ALARM_STATUS_NAMES.get(status),
+        }
+
     def _handle_value_update(self, pv_name: str, value, timestamp):
         with self._lock:
             if pv_name not in self._signals:
@@ -200,13 +305,14 @@ class PVMonitorManager:
             converted_value = self._convert_value(value)
             ts = datetime.fromtimestamp(timestamp) if timestamp else datetime.now()
             read_access, write_access = self._extract_access_bits(pv_name)
+            status, severity = self._extract_alarm(pv_name)
 
             pv_value = PVValue(
                 pv_name=pv_name,
                 value=converted_value,
                 timestamp=ts,
-                status=0,
-                severity=0,
+                status=status,
+                severity=severity,
                 connected=True,
                 shape=shape,
                 dtype=dtype,
@@ -222,11 +328,10 @@ class PVMonitorManager:
                 pv=pv_name,
                 value=converted_value,
                 timestamp=ts,
-                status=0,
-                severity=0,
                 connected=True,
                 read_access=read_access,
                 write_access=write_access,
+                **self._alarm_update_fields(status, severity),
             )
             callbacks = list(self._callbacks.get(pv_name, []))
 
@@ -252,6 +357,7 @@ class PVMonitorManager:
             callbacks = list(self._callbacks.get(pv_name, []))
             latest = self._latest_values.get(pv_name)
             read_access, write_access = self._extract_access_bits(pv_name)
+            status, severity = self._extract_alarm(pv_name)
 
         if connected:
             logger.info("pv_reconnected", pv_name=pv_name)
@@ -260,15 +366,16 @@ class PVMonitorManager:
 
         # Broadcast the connection state change so subscribers see it without
         # waiting for the next value update (or forever, if there isn't one).
+        # The `connected` field is the authoritative disconnect signal; alarm
+        # fields carry the last-known CA alarm state.
         update = PVUpdate(
             pv=pv_name,
             value=latest.value if latest else None,
             timestamp=datetime.now(),
-            status=0,
-            severity=0,
             connected=connected,
             read_access=read_access,
             write_access=write_access,
+            **self._alarm_update_fields(status, severity),
         )
         for sub in callbacks:
             self._dispatch_subscriber(pv_name, sub, update, source="meta")
@@ -298,6 +405,34 @@ class PVMonitorManager:
         except Exception as e:  # noqa: BLE001
             logger.debug("access_bits_extraction_error", pv_name=pv_name, error=str(e))
             return False, False
+
+    def _extract_alarm(self, pv_name: str) -> tuple[int, int]:
+        """Read (status, severity) alarm ints from a subscribed signal's CA PV.
+
+        Caller must hold ``self._lock``. pyepics updates the underlying PV's
+        cached ``status``/``severity`` before invoking monitor callbacks, so
+        this is a non-blocking read of the latest CA alarm state (mirrors
+        ``_extract_access_bits``). Returns ``(0, 0)`` (== NO_ALARM) when the
+        signal is missing or extraction fails, rather than guessing an alarm.
+        Pre-fix, both handlers hardcoded ``status=0, severity=0``, so the UI
+        could never see MINOR/MAJOR/INVALID alarms.
+        """
+        signal = self._signals.get(pv_name)
+        if signal is None:
+            return 0, 0
+        try:
+            pv = getattr(signal, "_read_pv", None)
+            if pv is None:
+                return 0, 0
+            status = getattr(pv, "status", 0)
+            severity = getattr(pv, "severity", 0)
+            return (
+                int(status) if status is not None else 0,
+                int(severity) if severity is not None else 0,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.debug("alarm_extraction_error", pv_name=pv_name, error=str(e))
+            return 0, 0
 
     def _convert_value(self, value):
         # No int-array→ASCII heuristic. Pre-M11 we rendered any uint/int
@@ -339,6 +474,10 @@ class PVMonitorManager:
         # Defaulting write_access=True would let a UI render writable controls for a
         # PV we never confirmed write access on.
         read_access = write_access = False
+        # Default to NO_ALARM until EPICS confirms otherwise, so the initial
+        # snapshot carries the real alarm state (not a hardcoded 0/0 that would
+        # mask an already-alarming PV until the next monitor callback).
+        status = severity = 0
 
         try:
             pv = getattr(signal, "_read_pv", None)
@@ -352,6 +491,10 @@ class PVMonitorManager:
                 upper_disp_limit = getattr(pv, "upper_disp_limit", None)
                 read_access = getattr(pv, "read_access", False)
                 write_access = getattr(pv, "write_access", False)
+                pv_status = getattr(pv, "status", 0)
+                pv_severity = getattr(pv, "severity", 0)
+                status = int(pv_status) if pv_status is not None else 0
+                severity = int(pv_severity) if pv_severity is not None else 0
                 if enum_strs and isinstance(enum_strs, tuple):
                     enum_strs = list(enum_strs)
         except Exception as e:
@@ -361,8 +504,8 @@ class PVMonitorManager:
             pv_name=pv_name,
             value=value,
             timestamp=timestamp,
-            status=0,
-            severity=0,
+            status=status,
+            severity=severity,
             connected=signal.connected,
             shape=shape,
             dtype=dtype,
@@ -398,6 +541,12 @@ class PVMonitorManager:
                 self._connection_status.pop(pv_name, None)
                 self._buffers.pop(pv_name, None)
                 self._latest_values.pop(pv_name, None)
+                self._last_touched.pop(pv_name, None)
+                # Drop the connect lock too so it doesn't accumulate one entry
+                # per distinct PV ever seen. A concurrent re-subscribe simply
+                # recreates it; correctness there rests on the commit-time
+                # re-check in subscribe(), not on the lock's identity.
+                self._connect_locks.pop(pv_name, None)
 
         # destroy() does CA TCP teardown + drops pyepics _PVcache_ entry via
         # ophyd finalizers; run outside self._lock so concurrent subscribers
@@ -414,9 +563,11 @@ class PVMonitorManager:
         on-demand read fails."""
         with self._lock:
             if pv_name in self._latest_values:
+                self._last_touched[pv_name] = time.monotonic()
                 return self._latest_values[pv_name]
 
             if pv_name in self._signals:
+                self._last_touched[pv_name] = time.monotonic()
                 signal = self._signals[pv_name]
                 try:
                     pv_value = self._signal_to_pv_value(pv_name, signal)
@@ -427,6 +578,54 @@ class PVMonitorManager:
                 return pv_value
 
             return None
+
+    def evict_idle_monitors(self, idle_ttl: float) -> list[str]:
+        """Tear down CA monitors with no callbacks that have been idle for
+        longer than ``idle_ttl`` seconds. Returns the names of evicted PVs.
+
+        Targets the leak from callback-less subscribes: the REST endpoint
+        ``GET /api/v1/pvs/{pv_name}/value`` calls ``subscribe(pv_name)``
+        without a callback to warm the monitor, then returns the value — no
+        WS client ever unsubscribes it. Without periodic eviction each
+        distinct PV name a REST client asks about accumulates a CA
+        connection that outlives every request.
+
+        Skipped PVs:
+        - Any PV with ``_callbacks.get(pv_name)`` non-empty (a WS
+          subscriber is actively consuming updates; TTL doesn't apply).
+        - Any PV touched (subscribed or read) within ``idle_ttl``.
+
+        Runs the actual ``destroy()`` off ``self._lock`` so a slow CA
+        teardown can't stall in-flight subscribes / value fan-outs.
+        """
+        now = time.monotonic()
+        stale: list[tuple[str, EpicsSignal]] = []
+        with self._lock:
+            for pv_name in list(self._signals):
+                if self._callbacks.get(pv_name):
+                    continue
+                touched = self._last_touched.get(pv_name)
+                if touched is None:
+                    # Unknown-age monitor (shouldn't happen post-fix — every
+                    # commit path sets _last_touched — but be defensive so a
+                    # stray entry from an upgrade doesn't survive forever).
+                    touched = 0.0
+                if now - touched < idle_ttl:
+                    continue
+                signal = self._signals.pop(pv_name, None)
+                self._connection_status.pop(pv_name, None)
+                self._buffers.pop(pv_name, None)
+                self._latest_values.pop(pv_name, None)
+                self._last_touched.pop(pv_name, None)
+                self._callbacks.pop(pv_name, None)
+                self._connect_locks.pop(pv_name, None)
+                if signal is not None:
+                    stale.append((pv_name, signal))
+
+        for pv_name, signal in stale:
+            logger.info("evicting_idle_pv_monitor", pv_name=pv_name, idle_ttl=idle_ttl)
+            self._destroy_signal_quietly(signal, pv_name)
+        return [pv for pv, _ in stale]
 
     def get_buffer(self, pv_name: str) -> list[PVValue]:
         with self._lock:
@@ -449,6 +648,7 @@ class PVMonitorManager:
             self._connection_status.clear()
             self._buffers.clear()
             self._latest_values.clear()
+            self._connect_locks.clear()
 
         for signal in signals:
             try:

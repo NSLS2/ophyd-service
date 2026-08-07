@@ -245,7 +245,13 @@ class PipeJsonRpcReceive:
                         msg,
                     )
                 except EOFError:
-                    pass
+                    # Peer closed the pipe. 'poll()' would now report ready
+                    # immediately forever, so the loop must exit instead of
+                    # busy-spinning at 100% CPU. Mark the thread stopped so the
+                    # object doesn't believe a dead thread is still running.
+                    logger.info("Pipe closed by peer. Stopping the receiving thread.")
+                    self._thread_running = False
+                    break
                 except Exception as ex:
                     logger.exception(
                         "Exception occurred while waiting for a message or receiving a message: %s", ex
@@ -344,6 +350,10 @@ class PipeJsonRpcSendAsync:
         self._thread_name = name
 
         self._fut_recv = None  # Future for waiting for incoming messages
+        # Strong references to the detached tasks created for received/sent
+        # callbacks. Without this the event loop only keeps a weak reference and
+        # a task may be garbage-collected mid-execution (see asyncio docs).
+        self._background_tasks = set()
         # Lock that prevents sending of the next message before response
         #   to the previous message is received.
         self._lock_comm = asyncio.Lock()
@@ -509,8 +519,13 @@ class PipeJsonRpcSendAsync:
                         ppfl(response),
                     )
                 else:
-                    # Accept the message. Otherwise wait for timeout
-                    self._fut_recv.set_result(response)
+                    # Accept the message. Otherwise wait for timeout. Guard against
+                    # a late/duplicate response arriving after 'wait_for' already
+                    # cancelled '_fut_recv' (set_result on a done/cancelled future
+                    # raises InvalidStateError; since this runs as a detached task
+                    # the error would just be swallowed as an unretrieved exception).
+                    if self._fut_recv is not None and not self._fut_recv.done():
+                        self._fut_recv.set_result(response)
                     self._expected_msg_id = None
             else:
                 # Missing ID: ignore the message
@@ -518,15 +533,29 @@ class PipeJsonRpcSendAsync:
         else:
             logger.error("Unexpected message received: %s. The message is ignored", ppfl(response))
 
+    def _on_background_task_done(self, task):
+        # Discard the strong reference and retrieve the exception (if any) so a
+        # failure in a detached callback doesn't surface as an unretrieved-task
+        # warning — it is logged here instead.
+        self._background_tasks.discard(task)
+        if not task.cancelled():
+            exc = task.exception()
+            if exc is not None:
+                logger.error("Exception in pipe callback task: %s", exc, exc_info=exc)
+
     def _conn_received(self, response):
-        asyncio.create_task(self._response_received(response))
+        task = asyncio.create_task(self._response_received(response))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_task_done)
 
     async def _response_sent(self, response, fut_send):
         if not fut_send.done():
             fut_send.set_result(True)  # The result value is not used
 
     def _conn_sent(self, response, fut_send):
-        asyncio.create_task(self._response_sent(response, fut_send))
+        task = asyncio.create_task(self._response_sent(response, fut_send))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_task_done)
 
     def _pipe_receive(self):
         while True:
@@ -538,7 +567,13 @@ class PipeJsonRpcSendAsync:
                     # Messages should be handled in the event loop
                     self._loop.call_soon_threadsafe(self._conn_received, msg)
                 except EOFError:
-                    pass
+                    # Peer closed the pipe. 'poll()' would now report ready
+                    # immediately forever, so the loop must exit instead of
+                    # busy-spinning at 100% CPU. Mark the thread stopped so the
+                    # object doesn't believe a dead thread is still running.
+                    logger.info("Pipe closed by peer. Stopping the receiving thread.")
+                    self._thread_running = False
+                    break
                 except Exception as ex:
                     logger.exception("Exception occurred while waiting for packet: %s", ex)
             if not self._thread_running:  # Exit thread

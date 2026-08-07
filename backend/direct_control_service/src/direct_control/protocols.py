@@ -119,6 +119,18 @@ class RegistryProvider(Protocol):
         """
         ...
 
+    async def get_device_pvs(self, device_name: str) -> dict[str, str] | None:
+        """Return the device's component-name -> PV-name map, or None when the
+        device is not registered. An empty mapping means the device exists but
+        owns no PVs. Used by the device-monitoring socket to know which PVs to
+        subscribe; keeps that lookup on the same registry abstraction as the
+        write path instead of a separate HTTP call (so it works in file /
+        standalone mode, where there is no configuration_service).
+
+        Raises RuntimeError if the registry backend is unreachable.
+        """
+        ...
+
     async def cleanup(self) -> None:
         """Cleanup resources (HTTP client, etc.)."""
         ...

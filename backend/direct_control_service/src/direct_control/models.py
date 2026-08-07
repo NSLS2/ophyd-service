@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer
 
 
 def _serialize_unix_epoch(value: datetime) -> float:
@@ -72,6 +72,34 @@ ALARM_SEVERITY_NAMES = {
     3: "INVALID",
 }
 
+# EPICS alarm status codes (menuAlarmStat) → name. Stable across EPICS Base
+# versions; used to render PVUpdate.alarm_status from the integer STAT the CA
+# monitor carries.
+ALARM_STATUS_NAMES = {
+    0: "NO_ALARM",
+    1: "READ",
+    2: "WRITE",
+    3: "HIHI",
+    4: "HIGH",
+    5: "LOLO",
+    6: "LOW",
+    7: "STATE",
+    8: "COS",
+    9: "COMM",
+    10: "TIMEOUT",
+    11: "HWLIMIT",
+    12: "CALC",
+    13: "SCAN",
+    14: "LINK",
+    15: "SOFT",
+    16: "BAD_SUB",
+    17: "UDF",
+    18: "DISABLE",
+    19: "SIMM",
+    20: "READ_ACCESS",
+    21: "WRITE_ACCESS",
+}
+
 
 # ===== Device Control Request/Response =====
 
@@ -116,6 +144,17 @@ class PVSetRequest(BaseModel):
     )
     ftype: int | None = Field(
         None, description="Force non-native DBR type (power-user knob; leave null for native)"
+    )
+    check_limits: bool | None = Field(
+        None,
+        description=(
+            "Per-request override for the ctrl-limit gate. None (default) uses "
+            "Settings.check_ctrl_limits. Explicitly False bypasses the check "
+            "even when the global setting is on — the escape hatch for values "
+            "known to be safe but outside the IOC-advertised range (e.g. an "
+            "operator override, or writing a raw byte to a record whose LOPR/"
+            "HOPR are miscalibrated). True forces the check on."
+        ),
     )
 
 
@@ -203,57 +242,11 @@ class PVSetBatchResponse(BaseModel):
     results: list[PVSetBatchItemResult]
 
 
-class EnrichmentSpec(BaseModel):
-    """One device-class + sub-path to enrich.
-
-    Sent by configuration_service to direct_control when the
-    configuration_service-side static resolver returns
-    ``needs_enrichment`` (typically an ophyd ``FormattedComponent`` with
-    runtime placeholders like ``{self.parent.prefix}``). Direct-control
-    instantiates the device class once via its ophyd-cache, walks the
-    sub-path with ``operator.attrgetter``, and reports the underlying PV.
-
-    ``sub_path`` is the dotted chain *after* the device name (since
-    direct-control has no registry of its own). For an address like
-    ``m1a.pit.actuate``, the head segment ``m1a`` is consumed by
-    configuration_service for the device lookup; direct-control receives
-    ``sub_path="pit.actuate"`` plus the class path and prefix.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    device_class_path: str = Field(
-        ..., description="Fully qualified import path of the device class."
-    )
-    prefix: str = Field(..., description="EPICS prefix the device is constructed with.")
-    sub_path: str = Field(
-        ...,
-        description=(
-            "Dotted attribute chain to walk on the instantiated device. "
-            "Empty string means the device IS the leaf signal."
-        ),
-    )
-
-
-class EnrichmentRequest(BaseModel):
-    """Batch enrichment request from configuration_service."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    items: list[EnrichmentSpec] = Field(
-        ...,
-        min_length=1,
-        max_length=200,
-        description="Specs to enrich, in caller order. Results match by index.",
-    )
-
-
 class EnrichmentResultItem(BaseModel):
-    """Per-item enrichment outcome.
+    """Outcome of walking one instantiated device to a leaf PV.
 
-    Results are returned in the same order as the request items so the
-    caller (configuration_service) can correlate by index — no
-    passthrough identifier needed.
+    Internal to the resolve pipeline (``_enrich_one``); results keep
+    request order so the endpoint can correlate by index.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -267,16 +260,73 @@ class EnrichmentResultItem(BaseModel):
     message: str | None = None
 
 
-class EnrichmentResponse(BaseModel):
-    """Aggregate enrichment response.
+class DeviceResolveOutcome(str, Enum):
+    """Per-address outcome of ``POST /api/v1/devices/resolve``."""
 
-    Per-item results in caller order. Resolution is read-only and never
-    halts — one bad item doesn't fail the others.
+    RESOLVED = "resolved"
+    DEVICE_NOT_FOUND = "device_not_found"
+    NO_INSTANTIATION_SPEC = "no_instantiation_spec"
+    NO_PREFIX = "no_prefix"
+    NO_SUCH_ATTR = "no_such_attr"
+    NOT_A_PV_LEAF = "not_a_pv_leaf"
+    INSTANTIATION_FAILED = "instantiation_failed"
+    REGISTRY_UNAVAILABLE = "registry_unavailable"
+
+
+class DeviceResolveRequest(BaseModel):
+    """Batch request to resolve dotted device addresses to PV names.
+
+    Each address is ``"<device>"`` or ``"<device>.<attr>.<attr>..."``.
+    The device head is looked up in the registry provider (the
+    configuration service in ``http`` mode, the local registry file in
+    ``file``/standalone mode); the device class is then instantiated via
+    the ophyd-cache and the attribute chain is walked to the leaf
+    signal's PV name. Live introspection means ophyd
+    ``FormattedComponent`` placeholders resolve here — unlike the
+    configuration service's static resolver, where they are a terminal
+    ``needs_enrichment`` outcome.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    results: list[EnrichmentResultItem]
+    addresses: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Dotted device addresses to resolve, e.g. 'm1a.pit.actuate'.",
+    )
+
+
+class DeviceResolveResultItem(BaseModel):
+    """One row in the batch resolve response, in request order.
+
+    ``ok`` is derived from ``outcome`` (``True`` iff ``resolved``) as a
+    computed field so it cannot drift from ``outcome``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    address: str
+    outcome: DeviceResolveOutcome
+    pv_name: str | None = None
+    message: str | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def ok(self) -> bool:
+        return self.outcome is DeviceResolveOutcome.RESOLVED
+
+
+class DeviceResolveResponse(BaseModel):
+    """Aggregate resolve response.
+
+    Always 200 — per-address outcomes are in the rows. Resolution is
+    read-only and never halts; one bad address doesn't fail the others.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    resolved: list[DeviceResolveResultItem]
 
 
 class DeviceCommandRequest(BaseModel):
@@ -443,6 +493,12 @@ class PVUpdate(BaseModel):
             timestamp=pv_value.timestamp,
             status=pv_value.status,
             severity=pv_value.severity,
+            # Derive the friendly alarm fields from the raw ints so the
+            # initial-subscribe snapshot carries the same alarm info the
+            # streaming updates do (not just status/severity integers).
+            alarm_severity=pv_value.severity,
+            alarm_severity_name=ALARM_SEVERITY_NAMES.get(pv_value.severity),
+            alarm_status=ALARM_STATUS_NAMES.get(pv_value.status),
             connected=pv_value.connected,
             units=pv_value.units,
             precision=pv_value.precision,
@@ -728,6 +784,14 @@ class DeviceDisabledError(ControlError):
     """Raised when device is administratively disabled in configuration_service."""
 
 
+class DeviceUnavailableError(ControlError):
+    """Raised when a device's coordination status is neither AVAILABLE,
+    LOCKED, nor DISABLED — e.g. UNKNOWN, where configuration_service returned
+    a state we don't model. The command is refused (maps to HTTP 409), but
+    this is an orchestration/coordination policy outcome, NOT a PV-health or
+    EPICS execution failure, so it must never be reported as PV health."""
+
+
 class CoordinationCheckError(ControlError):
     """Raised when coordination check fails."""
 
@@ -749,7 +813,20 @@ class ComponentNotFoundError(ControlError):
 
 
 class ValueLimitError(ControlError):
-    """Raised when value is outside PV limits."""
+    """Raised when a numeric PV write would land outside the IOC-advertised
+    control limits (``lower_ctrl_limit`` / ``upper_ctrl_limit``).
+
+    The write is refused *before* it reaches EPICS — the value never lands
+    on the IOC. Maps to HTTP 422 (well-formed request, rejected by the
+    ctrl-limit safety gate) and is NOT reported as a PV-health failure
+    (limit-guard rejections reflect operator input, not IOC health).
+
+    Skipped when the target PV has no advertised limits (records without
+    LOPR/HOPR, or ``lower_ctrl_limit == upper_ctrl_limit == 0`` which is
+    EPICS's "no limits enforced" convention), for non-numeric values, and
+    when the caller opts out via ``PVSetRequest.check_limits=False`` or the
+    ``check_ctrl_limits=False`` service setting.
+    """
 
 
 class MonitoringError(Exception):

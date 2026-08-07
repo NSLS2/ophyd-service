@@ -17,7 +17,7 @@
 #     test_authenticators.py.
 #
 # The suite is wall-clock-bound (many tests boot real RE manager processes),
-# so it is split into 3 parallel groups via pytest-split using the committed
+# so it is split into 6 parallel groups via pytest-split using the committed
 # .test_durations file. Regenerate via store_test_durations.sh when the
 # groups drift uneven.
 #
@@ -48,14 +48,14 @@ concurrency:
 
 jobs:
   queueserver-full-suite:
-    name: queueserver_service full pytest (group ${{ matrix.group }}/3)
+    name: queueserver_service full pytest (group ${{ matrix.group }}/6)
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
     strategy:
       fail-fast: false
       matrix:
-        group: [1, 2, 3]
+        group: [1, 2, 3, 4, 5, 6]
 
     services:
       redis:
@@ -106,12 +106,15 @@ jobs:
         # numpy is NOT pre-upgraded here: requirements-dev.txt pins it (and
         # bluesky / ophyd-async) to keep the suite's committed expectations
         # stable — see the comment block at the top of that file.
+        # -e ./bluesky-httpserver installs the bluesky-httpserver shim distribution
+        # (its bluesky-queueserver== pin is satisfied by the editable `.` install)
+        # so tests/http/test_bluesky_httpserver_shim.py can import it.
         run: |
           python -m pip install --upgrade pip setuptools
-          pip install -e . -e ../configuration_service -r requirements-dev.txt
+          pip install -e . -e ./bluesky-httpserver -e ../configuration_service -r requirements-dev.txt
 
-      - name: Run pytest (group ${{ matrix.group }}/3)
-        run: pytest -v --splits 3 --group ${{ matrix.group }}
+      - name: Run pytest (group ${{ matrix.group }}/6)
+        run: pytest -v --splits 6 --group ${{ matrix.group }}
 
   queueserver-ipykernel:
     name: queueserver_service ipykernel-worker pytest
@@ -158,3 +161,54 @@ jobs:
         # plain-Python worker in the jobs above. Running the WHOLE suite in
         # both modes is a possible future expansion (doubles CI cost).
         run: USE_IPYKERNEL=true pytest -v tests/manager/test_ip_kernel_func.py
+
+  queueserver-side-c:
+    name: queueserver_service side-C api-client compat pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend/queueserver_service
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/queueserver_service/pyproject.toml
+            backend/queueserver_service/requirements-dev.txt
+            backend/configuration_service/pyproject.toml
+
+      - name: Install queueserver + dev deps + sibling configuration_service
+        run: |
+          python -m pip install --upgrade pip setuptools
+          pip install -e . -e ../configuration_service -r requirements-dev.txt
+
+      - name: Run the side-C bluesky-queueserver-api HTTP compat tests
+        # Drives the real PyPI client (bluesky_queueserver_api.http.REManagerAPI)
+        # against a live manager + HTTP server, covering the operational API
+        # surface (API-key mode) and token/session auth. These files also run in
+        # the full suite above; this is the fast, dedicated acceptance gate for
+        # the HTTP contract as the 0MQ transport is retired.
+        run: |
+          pytest -v \
+            tests/http/test_side_c_api_client_compat.py \
+            tests/http/test_side_c_auth.py

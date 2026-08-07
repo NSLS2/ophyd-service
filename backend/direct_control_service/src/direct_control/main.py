@@ -36,8 +36,11 @@ from .models import (
     DeviceDisabledError,
     DeviceLockedError,
     DeviceNotInstantiableError,
-    EnrichmentRequest,
-    EnrichmentResponse,
+    DeviceResolveOutcome,
+    DeviceResolveRequest,
+    DeviceResolveResponse,
+    DeviceResolveResultItem,
+    DeviceUnavailableError,
     EnrichmentResultItem,
     HealthResponse,
     MethodNotAllowedError,
@@ -50,6 +53,7 @@ from .models import (
     PVSetBatchResponse,
     PVSetRequest,
     PVSetResponse,
+    ValueLimitError,
 )
 from .ophyd_cache import OphydDeviceCache
 from .protocols import CoordinationService, DeviceControl, PVMonitor, RegistryProvider
@@ -340,6 +344,7 @@ async def lifespan(app: FastAPI):
         pv_monitor=pv_monitor,
         device_controller=device_controller,
         settings=settings,
+        registry_client=registry_client,
     )
     # Image-streaming sockets (finch camera-socket / tiff-socket). Read-only
     # EPICS monitors with their own raw-numpy path — see ImageStreamManager.
@@ -375,10 +380,41 @@ async def lifespan(app: FastAPI):
         coordination_enabled=settings.coordination_check_enabled,
     )
 
+    # Background sweep that evicts idle PV monitors (see Settings docstring).
+    # Disabled when the sweep interval is zero — tests drive eviction by
+    # calling pv_monitor.evict_idle_monitors() directly for determinism.
+    sweep_task: asyncio.Task | None = None
+    if settings.pv_monitor_sweep_interval > 0:
+
+        async def _pv_monitor_sweep() -> None:
+            interval = settings.pv_monitor_sweep_interval
+            ttl = settings.pv_monitor_idle_ttl
+            while True:
+                try:
+                    await asyncio.sleep(interval)
+                    evicted = await asyncio.to_thread(pv_monitor.evict_idle_monitors, ttl)
+                    if evicted:
+                        logger.info("pv_monitor_sweep_evicted", count=len(evicted), pvs=evicted)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    # Never let a sweep error kill the task — a broken sweep
+                    # should degrade to "no eviction" (the leak this fixes is
+                    # slow-drip, not fatal), not "no sweep task at all".
+                    logger.warning("pv_monitor_sweep_error", error=str(exc), exc_info=True)
+
+        sweep_task = asyncio.create_task(_pv_monitor_sweep(), name="pv_monitor_sweep")
+
     try:
         yield
     finally:
         logger.info("Shutting down service")
+        if sweep_task is not None:
+            sweep_task.cancel()
+            try:
+                await sweep_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
         # Drain in-flight PV-health reports before closing the httpx
         # client they need. 5s cap so a hung config-service can't block
         # shutdown indefinitely.
@@ -662,7 +698,7 @@ async def _map_registry_errors_to_http():
 
 
 def _raise_http_for_device_unavailable(
-    exc: "DeviceDisabledError | DeviceLockedError",
+    exc: "DeviceDisabledError | DeviceLockedError | DeviceUnavailableError",
     event_prefix: str,
     **log_fields: Any,
 ) -> None:
@@ -670,13 +706,19 @@ def _raise_http_for_device_unavailable(
 
     Disabled and locked are distinct enough that the frontend should branch
     on the status code (re-enable in config-service vs wait/retry), so they
-    map to different codes (409 / 423).
+    map to different codes (409 / 423). An unmodeled/UNKNOWN coordination
+    status (DeviceUnavailableError) is also a refusal-to-command, not a
+    service outage, so it maps to 409 too — and, like the others, it is NOT a
+    PV-health event.
     """
     if isinstance(exc, DeviceDisabledError):
         logger.warning(f"{event_prefix}_disabled", error=str(exc), **log_fields)
         raise HTTPException(status_code=409, detail=str(exc))
-    logger.warning(f"{event_prefix}_locked", error=str(exc), **log_fields)
-    raise HTTPException(status_code=423, detail=str(exc))
+    if isinstance(exc, DeviceLockedError):
+        logger.warning(f"{event_prefix}_locked", error=str(exc), **log_fields)
+        raise HTTPException(status_code=423, detail=str(exc))
+    logger.warning(f"{event_prefix}_unavailable", error=str(exc), **log_fields)
+    raise HTTPException(status_code=409, detail=str(exc))
 
 
 def _raise_http_for_coordination_failure(
@@ -838,12 +880,24 @@ async def set_pv(
 
     try:
         resp = await device_controller.set_pv(request)
-    except (DeviceDisabledError, DeviceLockedError) as e:
-        # Gate refusal — not a PV-health event.
+    except (DeviceDisabledError, DeviceLockedError, DeviceUnavailableError) as e:
+        # Gate refusal (disabled / locked / unmodeled-UNKNOWN status) — an
+        # orchestration-policy outcome, NOT a PV-health event.
         _raise_http_for_device_unavailable(e, "pv", pv_name=request.pv_name)
     except CoordinationCheckError as e:
         # Coordination unavailability — not a PV-health event.
         _raise_http_for_coordination_failure(e, pv_name=request.pv_name)
+    except ValueLimitError as e:
+        # Ctrl-limit rejection — the value never left this service, so it
+        # is neither an IOC health event nor a coordination event. Surface
+        # as 422 (well-formed request, safety gate refused it).
+        logger.info(
+            "set_pv_rejected_by_ctrl_limits",
+            pv_name=request.pv_name,
+            value=request.value,
+            error=str(e),
+        )
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         # An unexpected error after we got past the gates almost always
         # means a pyepics CA failure (timeout, put-rejected, etc.) —
@@ -964,11 +1018,33 @@ async def set_pv_batch(
                 applied_before_halt=applied,
             )
             break
+        except DeviceUnavailableError as e:
+            # Unmodeled/UNKNOWN coordination status — a gate refusal, not a
+            # PV-health event, so don't report PV health (matches /pv/set).
+            results.append(_batch_failure_result(item.pv_name, e, 409, coordination_checked=True))
+            logger.warning(
+                "pv_set_batch_device_unavailable",
+                pv_name=item.pv_name,
+                applied_before_halt=applied,
+            )
+            break
         except CoordinationCheckError as e:
             results.append(_batch_failure_result(item.pv_name, e, 503, coordination_checked=True))
             logger.error(
                 "pv_set_batch_coordination_failed",
                 pv_name=item.pv_name,
+                applied_before_halt=applied,
+                error=str(e),
+            )
+            break
+        except ValueLimitError as e:
+            # Ctrl-limit rejection: same policy as the single /pv/set path —
+            # 422, no PV-health report (the value never left this service).
+            results.append(_batch_failure_result(item.pv_name, e, 422, coordination_checked=True))
+            logger.info(
+                "pv_set_batch_rejected_by_ctrl_limits",
+                pv_name=item.pv_name,
+                value=item.value,
                 applied_before_halt=applied,
                 error=str(e),
             )
@@ -1108,44 +1184,178 @@ def _enrich_one(
     )
 
 
-@app.post("/api/v1/devices/enrich", response_model=EnrichmentResponse)
-async def enrich_device_paths(
-    request: EnrichmentRequest,
-    ophyd_cache: OphydDeviceCache = Depends(get_ophyd_cache),
-):
-    """Resolve dotted device paths to PV names by live ophyd introspection.
+def _derive_device_prefix(spec, pvs: dict[str, str] | None) -> str | None:
+    """Derive the EPICS prefix a device class should be constructed with.
 
-    Designed for configuration_service to call when its static resolver
-    can't fill in an ophyd ``FormattedComponent`` placeholder. For each
-    ``{device_class_path, prefix, sub_path}`` spec, this endpoint
-    instantiates the device class (cached after the first call) and
-    walks the sub-path to the leaf signal, returning the underlying
-    EPICS PV name.
+    Checks three sources in order (mirrors the configuration service's
+    ``_get_device_prefix`` so both surfaces agree on a device's prefix):
 
-    The endpoint is read-only — it does not write or subscribe — but
-    instantiating classic-ophyd compound devices does open EPICS Channel
-    Access connections (to fetch type/units/limits during the lazy
-    ``Component`` materialization). Each first-touched device pays a
-    ``wait_for_connection`` of up to a few hundred ms; subsequent items
-    on the cached device are fast. We run the whole batch on a worker
-    thread via ``asyncio.to_thread`` so the event loop stays responsive
-    for other HTTP requests + WebSocket monitor traffic during the wait.
-    Per-device serialization stays inside ``OphydDeviceCache``'s lock,
-    so we don't introduce concurrent first-touches on the same device.
-    Failures are returned per-item; the batch never halts on first error.
+    1. Explicit ``prefix`` key in the device's PV mapping
+    2. First positional arg of the instantiation spec (standard ophyd
+       pattern: ``EpicsMotor("XF:31ID-ED{Mtr}", name=...)``)
+    3. Longest common prefix across all of the device's PV names
     """
-    results: list[EnrichmentResultItem] = await asyncio.to_thread(
-        lambda: [
-            _enrich_one(
-                ophyd_cache,
-                item.device_class_path,
-                item.prefix,
-                item.sub_path,
+    if pvs and "prefix" in pvs:
+        return pvs["prefix"]
+
+    if spec.args:
+        first_arg = spec.args[0]
+        if isinstance(first_arg, str) and ":" in first_arg:
+            return first_arg
+
+    pv_names = list(pvs.values()) if pvs else []
+    if not pv_names:
+        return None
+    if len(pv_names) == 1:
+        return pv_names[0]
+
+    prefix = pv_names[0]
+    for pv in pv_names[1:]:
+        while not pv.startswith(prefix):
+            prefix = prefix[:-1]
+            if not prefix:
+                return None
+    return prefix or None
+
+
+_ENRICH_ERROR_OUTCOMES = {
+    "InstantiationFailed": DeviceResolveOutcome.INSTANTIATION_FAILED,
+    "NoSuchAttr": DeviceResolveOutcome.NO_SUCH_ATTR,
+    "NotAPVLeaf": DeviceResolveOutcome.NOT_A_PV_LEAF,
+}
+
+
+@app.post("/api/v1/devices/resolve", response_model=DeviceResolveResponse)
+async def resolve_device_paths(
+    request: DeviceResolveRequest,
+    ophyd_cache: OphydDeviceCache = Depends(get_ophyd_cache),
+    registry_client: RegistryClient = Depends(get_registry_client),
+):
+    """Resolve dotted device addresses to PV names by live introspection.
+
+    For each ``"<device>[.<attr>...]"`` address: look the device up in
+    the registry provider (configuration service in ``http`` mode, the
+    local registry file in ``file``/standalone mode), instantiate its
+    class via the ophyd-cache, walk the attribute chain, and return the
+    leaf signal's underlying EPICS PV name. Because the device is live,
+    ophyd ``FormattedComponent`` runtime placeholders resolve here — the
+    configuration service's static resolver reports those as a terminal
+    ``needs_enrichment`` outcome and points callers at this endpoint.
+
+    Read-only — no writes, no subscriptions — but instantiating
+    classic-ophyd compound devices does open EPICS Channel Access
+    connections (lazy ``Component`` materialization). Each
+    first-touched device pays a ``wait_for_connection`` of up to a few
+    hundred ms; subsequent addresses on the cached device are fast. The
+    instantiation/walk batch runs on a worker thread via
+    ``asyncio.to_thread`` so the event loop stays responsive for HTTP +
+    WebSocket monitor traffic; per-device serialization stays inside
+    ``OphydDeviceCache``'s lock. Failures are per-item — the batch
+    never halts on first error.
+    """
+    # Registry lookups first (async, provider-agnostic): one
+    # (device_class, prefix, sub_path) triple per address, or an early
+    # error row for addresses that can't reach instantiation.
+    rows: list[DeviceResolveResultItem | None] = [None] * len(request.addresses)
+    to_walk: list[tuple[int, str, str, str, str]] = []  # idx, addr, class, prefix, sub
+
+    # Per-request memo of registry lookups keyed by device head: a batch that
+    # addresses the same device repeatedly (motor.user_setpoint +
+    # motor.velocity) hits the registry once instead of once per address —
+    # get_device_pvs has no client-side cache, so a 200-address single-device
+    # batch would otherwise cost up to 400 sequential HTTP calls. Failed
+    # lookups are memoized too, so an unreachable registry is reported per
+    # item without re-attempting per address.
+    lookup_memo: dict[str, tuple] = {}
+
+    for idx, address in enumerate(request.addresses):
+        head, _, sub_path = address.partition(".")
+
+        if head in lookup_memo:
+            spec, pvs, lookup_error = lookup_memo[head]
+        else:
+            spec = pvs = lookup_error = None
+            try:
+                spec = await registry_client.get_instantiation_spec(head)
+                pvs = await registry_client.get_device_pvs(head)
+            except (RegistryValidationError, RuntimeError) as e:
+                lookup_error = e
+            lookup_memo[head] = (spec, pvs, lookup_error)
+
+        if isinstance(lookup_error, RegistryValidationError):
+            rows[idx] = DeviceResolveResultItem(
+                address=address,
+                outcome=DeviceResolveOutcome.DEVICE_NOT_FOUND,
+                message=f"device '{head}' not found in registry",
             )
-            for item in request.items
+            continue
+        if lookup_error is not None:
+            # Registry backend unreachable/errored: fail loud per item,
+            # never fabricate a static fallback (no silent degradation).
+            rows[idx] = DeviceResolveResultItem(
+                address=address,
+                outcome=DeviceResolveOutcome.REGISTRY_UNAVAILABLE,
+                message=str(lookup_error),
+            )
+            continue
+
+        if spec is None and pvs is None:
+            rows[idx] = DeviceResolveResultItem(
+                address=address,
+                outcome=DeviceResolveOutcome.DEVICE_NOT_FOUND,
+                message=f"device '{head}' not found in registry",
+            )
+            continue
+        if spec is None:
+            rows[idx] = DeviceResolveResultItem(
+                address=address,
+                outcome=DeviceResolveOutcome.NO_INSTANTIATION_SPEC,
+                message=(
+                    f"device '{head}' has no instantiation spec; "
+                    f"class-based resolution is unavailable for it"
+                ),
+            )
+            continue
+
+        prefix = _derive_device_prefix(spec, pvs)
+        if prefix is None:
+            rows[idx] = DeviceResolveResultItem(
+                address=address,
+                outcome=DeviceResolveOutcome.NO_PREFIX,
+                message=(
+                    f"device '{head}' has no derivable prefix "
+                    f"(checked pvs['prefix'], spec.args[0], longest common PV prefix)"
+                ),
+            )
+            continue
+
+        to_walk.append((idx, address, spec.device_class, prefix, sub_path))
+
+    # Blocking instantiate/walk phase off the event loop.
+    walked: list[EnrichmentResultItem] = await asyncio.to_thread(
+        lambda: [
+            _enrich_one(ophyd_cache, device_class, prefix, sub_path)
+            for _, _, device_class, prefix, sub_path in to_walk
         ]
     )
-    return EnrichmentResponse(results=results)
+
+    for (idx, address, _, _, _), result in zip(to_walk, walked, strict=True):
+        if result.ok and result.pv_name:
+            rows[idx] = DeviceResolveResultItem(
+                address=address,
+                outcome=DeviceResolveOutcome.RESOLVED,
+                pv_name=result.pv_name,
+            )
+        else:
+            rows[idx] = DeviceResolveResultItem(
+                address=address,
+                outcome=_ENRICH_ERROR_OUTCOMES.get(
+                    result.error_type or "", DeviceResolveOutcome.INSTANTIATION_FAILED
+                ),
+                message=f"{result.error_type}: {result.message}",
+            )
+
+    return DeviceResolveResponse(resolved=[r for r in rows if r is not None])
 
 
 @app.get("/api/v1/pv/{pv_name}/value")
@@ -1310,7 +1520,7 @@ async def execute_device_method(
 
     try:
         return await device_controller.execute_device_method(request)
-    except (DeviceDisabledError, DeviceLockedError) as e:
+    except (DeviceDisabledError, DeviceLockedError, DeviceUnavailableError) as e:
         _raise_http_for_device_unavailable(e, "device", device_name=request.device_name)
     except CoordinationCheckError as e:
         _raise_http_for_coordination_failure(e, device_name=request.device_name)
@@ -1347,7 +1557,7 @@ async def stop_device(
         return await device_controller.execute_device_method(
             DeviceCommandRequest(device_name=device_name, method="stop", args=[], kwargs={})
         )
-    except (DeviceDisabledError, DeviceLockedError) as e:
+    except (DeviceDisabledError, DeviceLockedError, DeviceUnavailableError) as e:
         _raise_http_for_device_unavailable(e, "device_stop", device_name=device_name)
     except CoordinationCheckError as e:
         _raise_http_for_coordination_failure(e, device_name=device_name)
@@ -1400,7 +1610,7 @@ async def access_nested_device(
             timestamp=datetime.now(),
             message=None,
         )
-    except (DeviceDisabledError, DeviceLockedError) as e:
+    except (DeviceDisabledError, DeviceLockedError, DeviceUnavailableError) as e:
         _raise_http_for_device_unavailable(e, "nested_device", device_path=device_path)
     except CoordinationCheckError as e:
         _raise_http_for_coordination_failure(e, device_path=device_path)

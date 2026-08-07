@@ -163,11 +163,37 @@ class RefreshToken(pydantic.BaseModel):
     refresh_token: str
 
 
+class DeviceCode(pydantic.BaseModel):
+    """Schema for device code token polling request."""
+
+    device_code: str
+
+
+class DeviceCodeResponse(pydantic.BaseModel):
+    """Schema for device code flow initiation response."""
+
+    authorization_uri: str
+    verification_uri: str
+    device_code: str
+    user_code: str
+    expires_in: int
+    interval: int
+
+
 class AuthenticationMode(str, enum.Enum):
     password = "password"
     external = "external"
 
 
+# NOTE: no route currently serves an "About"/discovery document. Upstream
+# tiled/bluesky-httpserver exposes an API-root "about" endpoint that lists the
+# configured authentication providers and their login endpoints so a generic
+# client can discover how to authenticate. The bluesky-queueserver-api client
+# (the frozen HTTP contract for this service) does NOT use it — it targets the
+# auth endpoints directly (e.g. /api/auth/provider/{provider}/token,
+# /api/auth/apikey), so the missing endpoint does not break the supported client.
+# These models are kept so the endpoint can be wired up (into a router returning
+# `About`) if a discovery-based client is ever needed.
 class AboutAuthenticationProvider(pydantic.BaseModel):
     provider: str
     mode: AuthenticationMode
@@ -254,6 +280,7 @@ class Session(pydantic.BaseModel, **orm):
     uuid: uuid.UUID
     expiration_time: datetime
     revoked: bool
+    state: Dict = pydantic.Field(default_factory=dict)
 
 
 class Principal(pydantic.BaseModel, **orm):
@@ -272,6 +299,7 @@ class Principal(pydantic.BaseModel, **orm):
     roles: Optional[List[str]] = []
     scopes: Optional[List[str]] = []
     api_key_scopes: Optional[Union[List[str], None]] = None
+    access_token: Optional[str] = None
 
     @classmethod
     def from_orm(cls, orm, latest_activity=None):

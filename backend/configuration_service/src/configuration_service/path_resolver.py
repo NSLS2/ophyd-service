@@ -29,6 +29,7 @@ from __future__ import annotations
 import importlib
 import re
 import string
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 
@@ -38,16 +39,26 @@ from enum import Enum
 _URI_SCHEME_RE = re.compile(r"^[a-z]+://")
 
 
+def device_class_allowed(device_class_path: str, allowlist: Sequence[str] | None) -> bool:
+    """True if ``device_class_path`` may be imported under ``allowlist``.
+
+    An empty/None allowlist disables the check (allow anything, the historical
+    behavior). Otherwise the path must start with one of the configured
+    import-path prefixes (e.g. ``"ophyd."``, ``"ophyd_async."``).
+    """
+    if not allowlist:
+        return True
+    return any(device_class_path.startswith(prefix) for prefix in allowlist)
+
+
 class Outcome(str, Enum):
     """Per-address result kind.
 
-    ``NEEDS_ENRICHMENT`` and ``ENRICHMENT_UNAVAILABLE`` are distinct: the
-    former means we found a runtime placeholder we can't fill in
-    statically *and* live-enrichment isn't configured for this deploy;
-    the latter means enrichment was attempted (via the direct-control
-    client) and the call failed (network, timeout, 5xx). Frontends can
-    branch — needs_enrichment is a deploy-config gap while
-    enrichment_unavailable is typically transient and worth a retry.
+    ``NEEDS_ENRICHMENT`` is terminal here: the address hit an ophyd
+    ``FormattedComponent`` with a runtime placeholder that static
+    introspection cannot fill in. The configuration service never calls
+    other services — live resolution for those addresses is
+    direct-control's ``POST /api/v1/devices/resolve``.
     """
 
     RESOLVED = "resolved"
@@ -55,7 +66,6 @@ class Outcome(str, Enum):
     IMPORT_FAILED = "import_failed"
     NO_SUCH_ATTR = "no_such_attr"
     NEEDS_ENRICHMENT = "needs_enrichment"
-    ENRICHMENT_UNAVAILABLE = "enrichment_unavailable"
 
 
 @dataclass(frozen=True)
@@ -82,12 +92,20 @@ def _split_address(address: str) -> tuple[str, str]:
     return head, tail
 
 
-def _import_class(device_class_path: str):
+def _import_class(device_class_path: str, allowlist: Sequence[str] | None = None):
     """Import ``module.ClassName`` and return the class object.
 
-    Raises ``ImportError`` (or ``AttributeError``) on failure — callers
-    translate those into ``Outcome.IMPORT_FAILED``.
+    When ``allowlist`` is non-empty, the import path must match one of its
+    prefixes — importing (and, for ophyd-async, instantiating) an arbitrary
+    class is a code-execution surface, so a locked-down deploy restricts it to
+    known device packages. Raises ``ImportError`` (or ``AttributeError``) on
+    failure — callers translate those into ``Outcome.IMPORT_FAILED``.
     """
+    if not device_class_allowed(device_class_path, allowlist):
+        raise ImportError(
+            f"device_class '{device_class_path}' is not in the configured "
+            f"allowlist of importable module prefixes"
+        )
     if "." not in device_class_path:
         raise ImportError(f"device_class '{device_class_path}' has no module prefix")
     module_name, class_name = device_class_path.rsplit(".", 1)
@@ -404,6 +422,7 @@ def resolve(
     device_class_path: str,
     prefix: str,
     device_cache: dict | None = None,
+    allowlist: Sequence[str] | None = None,
 ) -> Resolution:
     """Resolve a single dotted address to a PV name.
 
@@ -425,11 +444,15 @@ def resolve(
     path. Pass an empty dict per request to amortize instantiation across
     a batch of sibling addresses; the classic path is purely static and
     already costs nothing.
+
+    ``allowlist`` (optional) restricts which ``device_class_path`` prefixes
+    may be imported; an out-of-allowlist class returns ``IMPORT_FAILED``
+    instead of being imported.
     """
     _, sub_path = _split_address(address)
 
     try:
-        cls = _import_class(device_class_path)
+        cls = _import_class(device_class_path, allowlist)
     except (ImportError, AttributeError) as e:
         return Resolution(
             address=address,

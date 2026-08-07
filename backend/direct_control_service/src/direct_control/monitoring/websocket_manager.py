@@ -33,6 +33,8 @@ from ._envelopes import (
     send_error,
     send_event,
     send_payload_or_size_error,
+    send_text_or_size_error,
+    serialize_json_frame,
 )
 
 SUB_TYPE_META = "meta"
@@ -132,12 +134,37 @@ class WebSocketManager:
             self._connections.clear()
         await close_connections(sockets)
 
-    async def subscribe_pvs(self, client_id: str, pv_names: list[str]):
-        """Subscribe a client to PVs; runs blocking EPICS subscribes off-loop."""
+    async def subscribe_pvs(
+        self, client_id: str, pv_names: list[str], read_only: bool = False
+    ) -> list[tuple[str, str]]:
+        """Subscribe a client to PVs; runs blocking EPICS subscribes off-loop.
+
+        ``read_only`` is plumbed through to ``pv_monitor.subscribe`` so a
+        read-only subscription actually builds an ``EpicsSignalRO`` (no
+        writable channel) instead of only being cosmetically flagged.
+
+        Returns the list of ``(pv_name, error)`` for PVs whose EPICS subscribe
+        failed, so the caller can send an error envelope for those and confirm
+        ``subscribed`` only for the PVs that actually stuck.
+
+        Known limitation (pre-existing, see
+        ``test_pv_socket_failed_subscribe_rolls_back_raced_second_client``): a
+        second client that piggybacks on an in-flight first subscribe (the PV
+        is already in ``_pv_clients`` so it isn't in this call's ``new_pvs``)
+        does not observe that first subscribe's failure here — it's still
+        rolled back correctly, but only the initiating caller gets the failure
+        in its return value. Closing that fully needs per-PV in-flight
+        subscribe futures the piggybacking callers await.
+        """
+        failed_pvs: list[tuple[str, str]] = []
         async with self._lock:
             if client_id not in self._connections:
                 logger.warning("subscribe_unknown_client", client_id=client_id)
-                return
+                # The client is gone (e.g. it disconnected during shutdown
+                # between validation and here): report every requested PV as
+                # failed so the caller never confirms `subscribed` for a
+                # connection that no longer exists.
+                return [(pv, "client no longer connected") for pv in pv_names]
 
             new_pvs: list[
                 tuple[str, Callable[[PVUpdate], None], Callable[[BaseException], None]]
@@ -152,36 +179,82 @@ class WebSocketManager:
                     new_pvs.append((pv_name, callback, on_error))
                 self._pv_clients[pv_name].add(client_id)
 
-        # Run blocking EPICS subscribes outside the asyncio lock.
-        for pv_name, callback, on_error in new_pvs:
-            try:
-                await asyncio.to_thread(
-                    self.pv_monitor.subscribe, pv_name, callback, on_error=on_error
+        # Run blocking EPICS subscribes concurrently, outside the asyncio lock,
+        # so N new PVs pay connection latency in parallel instead of serially.
+        results = await asyncio.gather(
+            *(
+                asyncio.to_thread(
+                    self.pv_monitor.subscribe,
+                    pv_name,
+                    callback,
+                    read_only=read_only,
+                    on_error=on_error,
                 )
-                logger.info("subscribed_to_pv", pv_name=pv_name, client_id=client_id)
-            except Exception as e:  # noqa: BLE001
-                logger.error("pv_subscription_failed", pv_name=pv_name, error=str(e))
-                async with self._lock:
+                for pv_name, callback, on_error in new_pvs
+            ),
+            return_exceptions=True,
+        )
+
+        # Reconcile bookkeeping under the lock now that the (blocking) EPICS
+        # subscribes have returned. Two things can have happened while they
+        # were in flight — both handled here so no live CA monitor is orphaned:
+        #   * the subscribe failed → roll back every client that piggybacked
+        #     on this attempt (see the wholesale-rollback note below);
+        #   * every client that wanted this PV disconnected, or a later
+        #     subscriber took over the PV's callback slot → our just-registered
+        #     CA monitor is unreferenced and must be torn down immediately.
+        stale_teardowns: list[tuple[str, Callable[[PVUpdate], None]]] = []
+        async with self._lock:
+            for (pv_name, callback, _on_error), result in zip(new_pvs, results, strict=True):
+                still_ours = self._pv_callbacks.get(pv_name) is callback
+
+                if isinstance(result, BaseException):
+                    logger.error("pv_subscription_failed", pv_name=pv_name, error=str(result))
+                    failed_pvs.append((pv_name, str(result)))
+                    # subscribe() tore down its own signal before raising, so
+                    # there is no CA monitor to release here. Only roll back if
+                    # this PV's slot is still ours: if a later subscriber took
+                    # it over (a disconnect + resubscribe that raced this
+                    # failing attempt), our bookkeeping is already gone — don't
+                    # disturb theirs. When it is ours, roll back EVERY client in
+                    # the set, not just the initiator: a second client that
+                    # joined while the subscribe was in flight piggybacked on
+                    # this attempt, and leaving its _subscriptions entry would
+                    # give it a phantom subscription (counted toward its cap,
+                    # never delivered, never torn down). Cleared everywhere, a
+                    # later resubscribe retries the EPICS connection cleanly.
+                    if still_ours:
+                        self._pv_callbacks.pop(pv_name, None)
+                        affected = self._pv_clients.pop(pv_name, set())
+                        for affected_id in affected:
+                            if affected_id in self._subscriptions:
+                                self._subscriptions[affected_id].discard(pv_name)
+                    continue
+
+                if still_ours and self._pv_clients.get(pv_name):
+                    logger.info("subscribed_to_pv", pv_name=pv_name)
+                    continue
+
+                # Nobody references the monitor we just registered: either the
+                # PV lost all its clients (disconnect raced the subscribe), or a
+                # later subscriber replaced the callback slot (which would
+                # orphan ours forever, since teardown matches callbacks by
+                # identity). Only drop the bookkeeping if it is still ours.
+                if still_ours:
                     self._pv_callbacks.pop(pv_name, None)
-                    # Roll back EVERY client in this PV's set — not just the
-                    # one that initiated the EPICS subscribe. A second client
-                    # that joined while the subscribe was in flight piggybacks
-                    # on this attempt; popping only the set while leaving its
-                    # _subscriptions entry gave it a phantom subscription
-                    # (counted toward its cap, never delivered, never torn
-                    # down). Cleared everywhere, a later resubscribe retries
-                    # the EPICS connection cleanly for any of them.
-                    affected = self._pv_clients.pop(pv_name, set())
-                    for affected_id in affected:
-                        if affected_id in self._subscriptions:
-                            self._subscriptions[affected_id].discard(pv_name)
+                    self._pv_clients.pop(pv_name, None)
+                stale_teardowns.append((pv_name, callback))
+
+        # unsubscribe does blocking CA teardown; run off-loop, outside the lock.
+        for pv_name, callback in stale_teardowns:
+            await asyncio.to_thread(self.pv_monitor.unsubscribe, pv_name, callback)
 
         # Send current values in parallel. Read the connection once so the
         # per-PV value+meta sends don't reacquire the manager lock 2N times.
         async with self._lock:
             websocket = self._connections.get(client_id)
         if websocket is None:
-            return
+            return failed_pvs
 
         values = await asyncio.gather(
             *(asyncio.to_thread(self.pv_monitor.get_value, pv_name) for pv_name in pv_names),
@@ -194,6 +267,7 @@ class WebSocketManager:
             await self._send_meta_to_client(client_id, value, websocket=websocket)
 
         logger.info("client_subscribed", client_id=client_id, pv_count=len(pv_names))
+        return failed_pvs
 
     async def unsubscribe_pvs(self, client_id: str, pv_names: list[str]):
         to_teardown: list[tuple[str, Callable | None]] = []
@@ -256,8 +330,15 @@ class WebSocketManager:
     async def _broadcast_update(self, pv_name: str, update: PVUpdate):
         async with self._lock:
             client_ids = self._pv_clients.get(pv_name, set()).copy()
+        if not client_ids:
+            return
+        # Serialize once, fan out the resulting text to every subscribed
+        # client. Pre-C4 this ran ``model_dump`` + ``json.dumps`` per client;
+        # under a bursty PV with many subscribers that quadratic-in-clients
+        # cost dominated the CA callback thread.
+        text = serialize_json_frame(update.model_dump(mode="json", exclude_none=True))
         for client_id in client_ids:
-            await self._send_to_client(client_id, update)
+            await self._send_text_to_client(client_id, text, update.pv)
 
     async def _broadcast_pv_callback_error(self, pv_name: str, exc: BaseException) -> None:
         async with self._lock:
@@ -271,9 +352,32 @@ class WebSocketManager:
             log_fields={"pv_name": pv_name},
         )
 
+    async def _send_text_to_client(self, client_id: str, text: str, pv: str):
+        """Send a pre-serialized JSON frame to one WS client.
+
+        Broadcast fan-out call site; the caller has already serialized the
+        payload once and passes the same text to every subscriber."""
+        async with self._lock:
+            websocket = self._connections.get(client_id)
+        if not websocket:
+            return
+        await send_text_or_size_error(
+            websocket,
+            text,
+            log_event="websocket_send",
+            log_fields={"client_id": client_id, "pv": pv},
+            oversize_message="payload exceeds size limit; update dropped",
+            error_envelope_fields={"pv": pv},
+        )
+
     async def _send_to_client(
         self, client_id: str, update: PVUpdate, websocket: LockedWS | None = None
     ):
+        """Send a per-client PVUpdate via the JSON path.
+
+        Kept for the initial-value send in the subscribe handshake (one
+        client, one send — no fan-out to amortize). The broadcast path
+        pre-serializes and uses ``_send_text_to_client`` instead."""
         if websocket is None:
             async with self._lock:
                 websocket = self._connections.get(client_id)
@@ -391,6 +495,33 @@ class WebSocketManager:
             return False
         return True
 
+    async def _confirm_pv_subscribe(
+        self,
+        websocket: WebSocket,
+        requested_pvs: list[str],
+        failed: list[tuple[str, str]],
+        **event_fields: object,
+    ) -> None:
+        """Emit per-PV error envelopes for failed subscribes and confirm
+        ``subscribed`` only for the PVs that actually stuck.
+
+        Without this the client is told ``subscribed`` for a PV whose EPICS
+        subscribe raised and will then be silent forever, with no way to know
+        (the same failure class the device socket fixed via
+        ``_emit_failed_pv_envelopes``).
+        """
+        failed_names = {pv for pv, _ in failed}
+        for pv_name, error in failed:
+            await send_error(
+                websocket,
+                f"PV {pv_name} failed to subscribe: {error}",
+                pv=pv_name,
+                reason="pv_subscribe_failed",
+            )
+        stuck = [pv for pv in requested_pvs if pv not in failed_names]
+        if stuck:
+            await send_event(websocket, "subscribed", pv_names=stuck, **event_fields)
+
     async def _handle_subscribe(self, client_id: str, websocket: WebSocket, data: dict):
         pv_names = [data["pv"]] if data.get("pv") else data.get("pv_names", [])
 
@@ -399,8 +530,8 @@ class WebSocketManager:
             return
         if not await self._within_cap(client_id, websocket, len(valid_pvs)):
             return
-        await send_event(websocket, "subscribed", pv_names=valid_pvs)
-        await self.subscribe_pvs(client_id, valid_pvs)
+        failed = await self.subscribe_pvs(client_id, valid_pvs)
+        await self._confirm_pv_subscribe(websocket, valid_pvs, failed)
 
     async def _handle_unsubscribe(self, client_id: str, websocket: WebSocket, data: dict):
         pv_names = [data["pv"]] if data.get("pv") else data.get("pv_names", [])
@@ -428,7 +559,15 @@ class WebSocketManager:
                 await send_error(websocket, f"PV {pv} not connected", pv=pv, connected=False)
                 return
 
-            await self.subscribe_pvs(client_id, [pv])
+            failed = await self.subscribe_pvs(client_id, [pv])
+            if failed:
+                await send_error(
+                    websocket,
+                    f"PV {pv} failed to subscribe: {failed[0][1]}",
+                    pv=pv,
+                    reason="pv_subscribe_failed",
+                )
+                return
             await send_event(websocket, "subscribed", pv_names=[pv], connected=True)
 
         except Exception as e:  # noqa: BLE001
@@ -442,8 +581,8 @@ class WebSocketManager:
             return
         if not await self._within_cap(client_id, websocket, len(valid_pvs)):
             return
-        await self.subscribe_pvs(client_id, valid_pvs)
-        await send_event(websocket, "subscribed", pv_names=valid_pvs, read_only=True)
+        failed = await self.subscribe_pvs(client_id, valid_pvs, read_only=True)
+        await self._confirm_pv_subscribe(websocket, valid_pvs, failed, read_only=True)
 
     async def _handle_refresh(self, client_id: str, websocket: WebSocket, data: dict):
         pv = data.get("pv")

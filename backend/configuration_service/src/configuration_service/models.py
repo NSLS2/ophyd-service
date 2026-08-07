@@ -5,11 +5,12 @@ These models represent the core entities for the device/PV registry.
 """
 
 import logging
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 # Re-exported so the path-resolver response model has a single source of
 # truth for outcome values. Lazy to avoid pulling path_resolver's optional
@@ -17,6 +18,40 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 from .path_resolver import Outcome as PathResolveOutcome
 
 logger = logging.getLogger(__name__)
+
+# Printable ASCII with no whitespace, control chars, NUL, or high-bit
+# Unicode. Mirrors the standalone ``pv_name`` guard (see
+# StandalonePVCreateRequest) so device names and device-owned PV names are
+# held to the same standard: the alternatives (empty/whitespace names, NUL,
+# zero-width Unicode) all create registry entries that can't be addressed or
+# removed again.
+_PRINTABLE_ASCII_RE = re.compile(r"^[\x21-\x7e]+$")
+
+
+def _validate_device_name(value: str) -> str:
+    """Reject device names that create unaddressable registry entries.
+
+    ``/`` is disallowed in addition to the printable-ASCII rule because the
+    device routes use a plain ``{device_name}`` path param — a name with a
+    ``/`` could never be fetched, updated, or deleted again.
+    """
+    if not _PRINTABLE_ASCII_RE.match(value) or "/" in value:
+        raise ValueError(
+            "device name must be non-empty printable ASCII with no whitespace "
+            "or '/' (other values create registry entries that cannot be "
+            "addressed via /api/v1/devices/{device_name})"
+        )
+    return value
+
+
+def _validate_pv_value(value: str) -> str:
+    """Reject a device-owned PV name with the standalone-PV constraint."""
+    if not _PRINTABLE_ASCII_RE.match(value):
+        raise ValueError(
+            "PV name must be non-empty printable ASCII with no whitespace "
+            "(matches the standalone-PV constraint)"
+        )
+    return value
 
 
 class DeviceLabel(str, Enum):
@@ -66,6 +101,11 @@ class DeviceInstantiationSpec(BaseModel):
         description="Keyword arguments for device constructor (e.g., {'name': 'det1'})",
     )
     active: bool = Field(default=True, description="Whether this device should be instantiated")
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        return _validate_device_name(v)
 
     class Config:
         json_schema_extra = {
@@ -147,6 +187,18 @@ class DeviceMetadata(BaseModel):
         default=None, description="Functional grouping (from happi)"
     )
     documentation: str | None = Field(default=None, description="Device documentation/description")
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        return _validate_device_name(v)
+
+    @field_validator("pvs")
+    @classmethod
+    def _check_pvs(cls, v: dict[str, str]) -> dict[str, str]:
+        for pv in v.values():
+            _validate_pv_value(pv)
+        return v
 
     class Config:
         json_schema_extra = {
@@ -384,23 +436,16 @@ class DeviceRegistry(BaseModel):
         if meta is not None and meta.device_name is None:
             del self.pvs[pv_name]
 
-    def remove_device(self, name: str) -> bool:
-        """Remove device from registry including its instantiation spec and indexed PVs.
+    def _release_pv_ownership(self, name: str) -> None:
+        """Release the PVs owned by ``name`` in the index without destroying
+        entries that other devices or standalone registrations still need.
 
-        Args:
-            name: Device name to remove
-
-        Returns:
-            True if device was found and removed, False if not found
+        A PV another device also lists is REASSIGNED to that device; a PV
+        registered as standalone reverts to standalone (unowned); only PVs that
+        nobody else claims are dropped. Shared by ``remove_device`` and
+        ``update_device`` so that updating a device which drops a shared or
+        standalone PV re-homes that PV instead of deleting the surviving entry.
         """
-        if name not in self.devices:
-            return False
-
-        # Re-home or drop the PVs this device owns in the index. A PV that
-        # another device also lists is REASSIGNED to that device (pre-fix it
-        # was deleted, destroying the surviving owner's registry entry); a PV
-        # registered as standalone reverts to standalone; only PVs nobody
-        # else claims are dropped.
         owned = [pv_name for pv_name, pv_meta in self.pvs.items() if pv_meta.device_name == name]
         for pv_name in owned:
             new_owner = None
@@ -422,6 +467,21 @@ class DeviceRegistry(BaseModel):
             else:
                 del self.pvs[pv_name]
 
+    def remove_device(self, name: str) -> bool:
+        """Remove device from registry including its instantiation spec and indexed PVs.
+
+        Args:
+            name: Device name to remove
+
+        Returns:
+            True if device was found and removed, False if not found
+        """
+        if name not in self.devices:
+            return False
+
+        # Re-home or drop the PVs this device owns before removing it.
+        self._release_pv_ownership(name)
+
         # Remove instantiation spec
         self.instantiation_specs.pop(name, None)
 
@@ -433,7 +493,7 @@ class DeviceRegistry(BaseModel):
     def update_device(
         self, device: DeviceMetadata, instantiation_spec: DeviceInstantiationSpec | None = None
     ) -> bool:
-        """Update an existing device by removing old PV indexes and re-adding.
+        """Update an existing device by re-homing old PV indexes and re-adding.
 
         Args:
             device: Updated device metadata
@@ -445,12 +505,11 @@ class DeviceRegistry(BaseModel):
         if device.name not in self.devices:
             return False
 
-        # Remove old PV indexes for this device
-        pv_names_to_remove = [
-            pv_name for pv_name, pv_meta in self.pvs.items() if pv_meta.device_name == device.name
-        ]
-        for pv_name in pv_names_to_remove:
-            del self.pvs[pv_name]
+        # Release the device's current PV ownership (re-homing shared/standalone
+        # entries rather than destroying them), then re-add. add_device re-claims
+        # the PVs this device still lists; any PV dropped by the update stays with
+        # its surviving owner or reverts to standalone.
+        self._release_pv_ownership(device.name)
 
         # Re-add with updated data
         self.add_device(device, instantiation_spec)
@@ -584,6 +643,14 @@ class DeviceMetadataUpdate(BaseModel):
     location_group: str | None = _partial_field(DeviceMetadata, "location_group")
     functional_group: str | None = _partial_field(DeviceMetadata, "functional_group")
     documentation: str | None = _partial_field(DeviceMetadata, "documentation")
+
+    @field_validator("pvs")
+    @classmethod
+    def _check_pvs(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        if v is not None:
+            for pv in v.values():
+                _validate_pv_value(pv)
+        return v
 
 
 class DeviceUpdateRequest(BaseModel):

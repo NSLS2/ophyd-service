@@ -1762,6 +1762,10 @@ class PlanQueueOperations:
                 item_to_add = item_cleaned.copy()
                 item_to_add = self.set_new_item_uuid(item_to_add)
                 await self._store.list_push_back(self._name_plan_queue, json.dumps(item_to_add))
+                # Remove the completed item's UID before registering the re-queued
+                # copy: without this the UID dict grows by one entry per loop-mode
+                # cycle (upstream bluesky-queueserver memory-leak fix, v0.0.25).
+                self._uid_dict_remove(item["item_uid"])
                 self._uid_dict_add(item_to_add)
             item_cleaned.setdefault("result", {})
             item_cleaned["result"]["exit_status"] = exit_status

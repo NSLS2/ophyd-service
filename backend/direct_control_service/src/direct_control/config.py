@@ -2,7 +2,7 @@
 Configuration settings for Direct Device Control Service.
 """
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Shared 403/WS-error detail for read-only mode. Defined here (not in main) so
@@ -104,6 +104,34 @@ class Settings(BaseSettings):
     # Command timeout
     command_timeout: float = 30.0
 
+    # When an awaited device method (set/trigger/...) exceeds its timeout, issue
+    # stop() on the target to halt hardware that is likely still in motion. On by
+    # default for beamline safety; set false to opt out (the timeout is still
+    # reported, with a note that the device may still be moving).
+    stop_on_command_timeout: bool = True
+
+    # Ctrl-limit safety gate on PV writes: when true, ``set_pv`` reads the
+    # target's ``lower_ctrl_limit`` / ``upper_ctrl_limit`` (LOPR/HOPR on the
+    # IOC record) and refuses writes outside that range with ValueLimitError
+    # (HTTP 422). Skipped for records with no limits declared (or the EPICS
+    # "unlimited" convention of both bounds equal to 0), non-numeric values,
+    # and any write that opts out via ``PVSetRequest.check_limits=False``.
+    # Costs one CA metadata round-trip per write (``get_ctrlvars`` is
+    # re-issued on every set_pv, not cached — LOPR/HOPR can change on the
+    # IOC, and caching them would let the gate go stale). pyepics does
+    # cache the PV object itself so the CA channel is reused across writes,
+    # only the DBR_CTRL_* fetch is repeated. Turn off for setups where the
+    # IOC advertises misleading LOPR/HOPR (miscalibrated records, or DAQ
+    # PVs where the operator is authoritative rather than the record).
+    check_ctrl_limits: bool = True
+    # How long ``set_pv`` waits for the ctrl-limit metadata to arrive from the
+    # IOC before proceeding with the write (fail-open on timeout so a slow
+    # metadata channel doesn't block a legitimate write). The pyepics default
+    # of 5 s is aggressive for a background metadata GET; keep it short so a
+    # dead IOC surfaces via the connection-timeout path in ``_execute_put``
+    # rather than this one.
+    ctrl_limit_read_timeout: float = 1.0
+
     # Connection timeout for instantiating a live device for device-level
     # control (DeviceManager). Covers classic-ophyd wait_for_connection and
     # ophyd-async Device.connect across all the device's signals.
@@ -124,7 +152,23 @@ class Settings(BaseSettings):
 
     # PV buffering
     pv_buffer_size: int = 100
-    pv_update_rate_limit: float = 0.1
+
+    # TTL eviction for callback-less PV monitors created by the REST
+    # ``GET /api/v1/pvs/{pv_name}/value`` endpoint. That call subscribes a
+    # PV to warm the monitor cache, returns the value, and never calls
+    # unsubscribe — the CA connection would otherwise live until process
+    # shutdown. A background sweep every ``pv_monitor_sweep_interval``
+    # seconds tears down any PV that has zero WS callbacks AND has not been
+    # subscribed / read (touched) within ``pv_monitor_idle_ttl``. WS
+    # subscribers keep their PVs alive regardless of idle time (any
+    # ``_callbacks`` entry pins the monitor). Set the interval to 0 to
+    # disable the sweep entirely (useful in tests where deterministic
+    # eviction is preferred). Both fields are validated non-negative at
+    # startup so a misconfigured negative value fails hard instead of
+    # silently disabling the sweep (interval < 0) or evicting every
+    # callback-less monitor on the first cycle (ttl < 0).
+    pv_monitor_idle_ttl: float = Field(300.0, ge=0.0)
+    pv_monitor_sweep_interval: float = Field(60.0, ge=0.0)
 
     # Maximum response bytesize for PV value endpoints (covers binary + JSON).
     # Oversized arrays return 400 with a "slice or raise the limit" message.
