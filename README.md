@@ -159,8 +159,9 @@ Both backends expose Swagger UI:
 - **`shared-schema/` must be writable by container uid 1000.** Both backends
   export their live OpenAPI schema into the bind-mounted directory at startup
   and fail hard (exit) if the write is denied. On a checkout owned by a
-  different uid, `chmod -R a+rwX shared-schema` first — or unset
-  `OPHYD_SERVICE_OPENAPI_EXPORT_PATH` to skip the export.
+  different uid, grant that uid access first — `sudo chown -R 1000 shared-schema`,
+  or `setfacl -R -m u:1000:rwX shared-schema` to leave ownership untouched — or
+  unset `OPHYD_SERVICE_OPENAPI_EXPORT_PATH` to skip the export.
 - Startup happi-seeding (`CONFIG_LOAD_STRATEGY=happi`) is the dev shortcut here.
   Production deployments seed the registry via profile files or CRUD calls from
   an upstream Experiment Execution Service.

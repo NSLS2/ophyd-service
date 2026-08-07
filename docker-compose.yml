@@ -88,7 +88,9 @@ services:
       DIRECT_CONTROL_COORDINATION_CHECK_ENABLED: "false"
       # The service defaults to read-only until an operator opts in to writes.
       # This stack only talks to the simulated IOC, so enable them — the same
-      # choice every integration pod makes.
+      # choice every integration pod makes. Writes cannot reach real hardware:
+      # EPICS_CA_ADDR_LIST below pins CA to the compose-network IOC and
+      # auto-addr is off, so nothing outside this stack is addressable.
       DIRECT_CONTROL_GLOBAL_READ_ONLY: "false"
       # pyepics reads these. Point it at the compose-network IOC; disable
       # auto-addr so it doesn't broadcast on the host network.
