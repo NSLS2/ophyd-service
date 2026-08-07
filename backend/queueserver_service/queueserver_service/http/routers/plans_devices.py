@@ -123,12 +123,13 @@ async def devices_allowed_handler(
     description=(
         "Returns all plans registered in the worker namespace, not filtered by user "
         "permissions. Parameter: `reduced` (bool, default `False`) — when `True`, plan "
-        "descriptions are simplified to save bandwidth."
+        "descriptions are simplified to save bandwidth. Required scope: `read:resources`."
     ),
     tags=["Plans"],
 )
 async def plans_existing_handler(
     payload: dict = {},
+    principal=Security(get_current_principal, scopes=["read:resources"]),
 ):
     """
     Returns the lists of existing plans. If boolean optional parameter ``reduced``
