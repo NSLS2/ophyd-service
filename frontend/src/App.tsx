@@ -1,12 +1,7 @@
-<<<<<<< HEAD
 import type { RouteItem } from '@blueskyproject/finch'
-import { Atom, SlidersHorizontal, Table } from '@phosphor-icons/react'
+import { Atom, SlidersHorizontal, Table, Database } from '@phosphor-icons/react'
 import { useAuth } from './contexts/AuthContext'
 import { ClientFinchBridge } from './components/ClientFinchBridge'
-=======
-import { HubAppLayout, RouteItem } from '@blueskyproject/finch'
-import { Atom, SlidersHorizontal, Table, Database } from '@phosphor-icons/react'
->>>>>>> ab20eea (Add scan data and fix the app dimensions)
 import IosScan from './pages/IosScan'
 import ScanSettings from './pages/ScanSettings'
 import PresetsAdmin from './pages/PresetsAdmin'
