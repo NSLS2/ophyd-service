@@ -7,10 +7,21 @@ in the workspace memory dir).
 
 This pod brings up six simulated caproto IOCs serving the PVs that the
 IOS happi database references, behind the standard ophyd-service stack
-(configuration_service + direct_control_service). The exerciser walks
-the full periodic-table → batch caput → IOC dynamics → readback
-pipeline against the simulated hardware, so the IOS Ni_L preset (and
-others) can be tested end-to-end without a real beamline.
+(configuration_service + direct_control_service + presets_service, plus
+the frontend dev server). The exerciser walks the full periodic-table →
+batch caput → IOC dynamics → readback pipeline against the simulated
+hardware, so the IOS Ni_L preset (and others) can be tested end-to-end
+without a real beamline.
+
+**Two flows, one rule.** The compose files here are the *standalone,
+UI-only* flow: container IOCs, no queueserver, no tiled. The *combined
+demo* is `./start-all.sh`, which brings up the queueserver-repro stack
+(queueserver, tiled, and the repro's loopback IOCs) and then these
+backend services with the `docker-compose-backend.unified.yaml` overlay —
+in that flow there is exactly ONE simulated beamline (the repro's), shared
+by UI writes and queued plans alike; the pod's own IOC containers are not
+started. Don't run both flows at once: the container IOCs and the repro
+IOCs serve identical PV names.
 
 ## Quick start
 
@@ -28,7 +39,7 @@ Common flags:
 
 ```bash
 ./integration/pods/ios/run_demo.sh --rebuild      # force --build
-./integration/pods/ios/run_demo.sh --tear-down    # exerciser then down -v
+./integration/pods/ios/run_demo.sh --tear-down    # exerciser then down (named volumes survive)
 ./integration/pods/ios/run_demo.sh --skip-exerciser  # just up the pod
 ./integration/pods/ios/run_demo.sh --logs         # tail direct-control logs after
 ```

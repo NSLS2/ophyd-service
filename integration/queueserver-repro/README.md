@@ -60,23 +60,28 @@ What a full plan run actually writes (audited against the IOS profile @
   CSVs under `~/User_Data/<real user name>/...`. Never call them from a sim
   session on a shared host; they are not part of `XAS_scan`/`E_ramp`.
 
-## Port map (all loopback)
+## Port map
 
 | Port | What |
 |------|------|
 | 5064, 5066, … (base + 2n) | realistic IOS caproto IOCs, one CA server each (`ioc_ios_pgm` first) |
 | base + 2·N(IOCs) | blackhole catch-all CA server |
 | 60610 | bluesky-httpserver HTTP API |
+| 8000 | tiled data API (read view over the mongo catalog; what the frontend's data browser reads) |
 | 60590 | redis — RE Manager queue/history store |
 | 6380 | redis (TLS) — `RE.md` metadata store |
 | 27017 | mongodb — databroker/tiled catalog |
 | 9092 | kafka (KRaft) — RunEngine document publishing |
 | 8181 | mock Olog server |
 
+Everything EPICS is loopback-only (enforced by `localguard`), and tiled binds
+`127.0.0.1` by default (`TILED_HOST` to change). The httpserver binds `0.0.0.0`
+(as production does behind its firewall) — treat 60610 as reachable from the LAN.
+
 ## Requirements
 
 - `git`, `curl`, `openssl`
-- **Docker** (or `podman`) — runs redis ×2 and mongodb
+- **Docker** (or `podman`) — runs redis ×2, mongodb, and (by default) kafka
 - `pixi` — auto-installed to `~/.pixi` if missing
 - Internet access (clone the profile, solve the pixi env, pull container images)
 
@@ -92,13 +97,16 @@ script supplies each, mapped to how production deploys it:
 | Redis (plain, :60590) | the RE Manager's own queue/history store | `redis:7` container, no auth | `redis` role (`bluesky-queueserver-redis`) |
 | MongoDB (:27017) | `databroker.Broker.named('ios')` catalog (via tiled) | `mongo:6` container | beamline mongo |
 | tiled profile `ios` | resolves `Broker.named('ios')` → the mongo catalog | generated, on `TILED_PROFILES` path | beamline tiled profiles |
-| `kafka.yml` | `nslsii` Kafka publisher config (file only) | generated, broker-less, `abort=false` | `bluesky_kafka_config` |
-| `~/.pyOlog.conf` | stops `SimpleOlogClient()` prompting for a password | generated if absent | `ansible-epics-tools` olog roles |
+| tiled server (:8000) | serves the mongo catalog over HTTP for browsers/clients | `tiled serve config` from the profile's qs env, anonymous, loopback | `tiled.nsls2.bnl.gov` |
+| `kafka.yml` | `nslsii` Kafka publisher config | generated, points at the local broker, `abort=false` | `bluesky_kafka_config` |
+| Kafka broker (:9092) | RunEngine document publishing during a plan | single-node KRaft container (`WITH_KAFKA=1` default) | beamline kafka cluster |
+| `~/.pyOlog.conf` | stops `SimpleOlogClient()` prompting for a password | rewritten every `up` (a pre-existing user file is backed up once) | `ansible-epics-tools` olog roles |
+| mock Olog (:8181) | the profile's logbook callback POSTs on every run start | stdlib mock (`WITH_OLOG=1` default) | real Olog server |
+| simulated IOCs | the profile force-connects ~100 devices at startup | 7 realistic caproto IOCs + blackhole catch-all (`WITH_IOS_IOCS=1` default) | real IOC hosts |
 
-**Not started:** a Kafka broker and an EPICS IOC. The IOS profile opens without
-them — Kafka publishing is non-fatal, and its devices don't force PV
-connections at environment-open. If a profile you try *does* force connections,
-run with `WITH_IOC=1` to add a caproto catch-all IOC.
+Everything above starts by default on `up`. `WITH_IOC=1` additionally runs a
+generic caproto catch-all (`mini_beamline`) for profiles that need PVs the IOS
+set doesn't serve.
 
 ## The services are the real thing
 
@@ -126,12 +134,27 @@ PROFILE_BRANCH=main
 QS_REPRO_HOME=$HOME/qs-repro        # clone, configs, sockets, logs, secrets
 PROFILE_DIR=$QS_REPRO_HOME/profile_collection
 HTTP_PORT=60610                     # host port for the HTTP API
+TILED_PORT=8000                     # host port for the tiled data API
+TILED_HOST=127.0.0.1                # tiled bind address (loopback by default)
+TILED_ALLOW_ORIGINS="http://localhost:5173 http://127.0.0.1:5173"
+                                    # browser origins granted CORS access to tiled
 REDIS_QUEUE_PORT=60590
 REDIS_TLS_PORT=6380
 MONGO_PORT=27017
+KAFKA_PORT=9092
+OLOG_PORT=8181
 REDIS_TLS_PASSWORD=<generated hex>  # persisted in $QS_REPRO_HOME/config/secrets.env
 HTTP_API_KEY=<generated hex>        # httpserver single-user key (alphanumeric)
-WITH_IOC=0                          # 1 = also run a caproto catch-all IOC
+WITH_KAFKA=1                        # 0 = no kafka broker (plans that publish may block)
+WITH_OLOG=1                         # 0 = no mock Olog (logbook callback will fail)
+WITH_IOS_IOCS=1                     # 0 = no simulated IOCs
+WITH_REALISTIC_IOCS=1               # 0 = blackhole catch-all only
+WITH_BLACKHOLE=1                    # 0 = no catch-all (profile likely won't open)
+IOC_BASE_PORT=5064                  # first IOC's CA port (others step by 2)
+WITH_IOC=0                          # 1 = also run a generic caproto catch-all IOC
+SIM_DATA_ROOT=$QS_REPRO_HOME/sim-data   # disposable root for all simulated data paths
+SIM_PROPOSAL_ID=000000              # sentinel proposal stamped into RE.md
+SIM_DATA_SESSION=pass-000000        # sentinel data session stamped into RE.md
 ```
 
 Generated secrets persist in `$QS_REPRO_HOME/config/secrets.env`, so re-running
