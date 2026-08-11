@@ -280,7 +280,12 @@ def _make_hdf_pvs() -> List[tuple]:
     out += _mirrored("hdf_file_number", "HDF1:FileNumber", value=0)
     _char = dict(string_encoding="utf-8", max_length=256,
                  dtype=ChannelType.CHAR)
-    out += _mirrored("hdf_file_path", "HDF1:FilePath", value="/tmp/xs3", **_char)
+    # Advertised HDF path lives under the disposable sim data root (see
+    # reproduce.sh SIM_DATA_ROOT), never a bare /tmp path 'nuke' can't reap.
+    # No file is ever written — these are simulated records — but the value
+    # flows into resource documents, so it must be a marked sim location.
+    hdf_path = os.environ.get("XS3_HDF_FILE_PATH", "/tmp/xs3")
+    out += _mirrored("hdf_file_path", "HDF1:FilePath", value=hdf_path, **_char)
     out += _mirrored("hdf_file_name", "HDF1:FileName", value="xs3_sim", **_char)
     out += _mirrored(
         "hdf_file_template", "HDF1:FileTemplate", value="%s%s_%6.6d.h5",
@@ -292,7 +297,7 @@ def _make_hdf_pvs() -> List[tuple]:
     ))
     out.append((
         "hdf_full_file_name",
-        pvproperty(value="/tmp/xs3/xs3_sim_000000.h5",
+        pvproperty(value=f"{hdf_path}/xs3_sim_000000.h5",
                    name="HDF1:FullFileName_RBV", read_only=True, **_char),
     ))
     out.append((
