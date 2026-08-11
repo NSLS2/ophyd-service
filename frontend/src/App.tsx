@@ -1,10 +1,11 @@
 import type { RouteItem } from '@blueskyproject/finch'
-import { Atom, SlidersHorizontal, Table } from '@phosphor-icons/react'
+import { Atom, SlidersHorizontal, Table, Database } from '@phosphor-icons/react'
 import { useAuth } from './contexts/AuthContext'
 import { ClientFinchBridge } from './components/ClientFinchBridge'
 import IosScan from './pages/IosScan'
 import ScanSettings from './pages/ScanSettings'
 import PresetsAdmin from './pages/PresetsAdmin'
+import TiledViewer from './pages/TiledViewer'
 
 function App() {
   const auth = useAuth()
@@ -16,7 +17,7 @@ function App() {
       element: <IosScan />,
       icon: <Atom size={28} />,
       isBackgroundTransparent: false,
-      classNameContainer: 'w-full max-w-none min-h-screen bg-white p-0',
+      classNameContainer: 'w-full max-w-none !h-auto min-h-full p-0 overflow-visible',
     },
     {
       path: '/settings',
@@ -31,7 +32,15 @@ function App() {
       element: <PresetsAdmin />,
       icon: <Table size={28} />,
       isBackgroundTransparent: false,
-      classNameContainer: 'w-full max-w-none min-h-screen bg-white p-0',
+      classNameContainer: 'w-full max-w-none min-h-screen p-0',
+    },
+    {
+      path: '/data',
+      label: 'Scan Data',
+      element: <TiledViewer />,
+      icon: <Database size={28} />,
+      isBackgroundTransparent: false,
+      classNameContainer: 'w-full max-w-none min-h-screen p-0',
     },
   ]
 

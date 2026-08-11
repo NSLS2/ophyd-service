@@ -12,14 +12,15 @@
     "preview": "NODE_ENV=production node server.js"  
   },
   "dependencies": {
-    "@blueskyproject/finch": "^0.1.7",
+    "@blueskyproject/finch": "^0.1.9",
     "@phosphor-icons/react": "^2.1.10",
-    "@tanstack/react-query": "^5.62.14",
     "compression": "^1.8.1",
     "express": "^5.2.1",
     "express-correlation-id": "^3.0.1",
     "http-proxy-middleware": "^4.1.1",
-    "react": "^18.2.0",
+    "@tanstack/react-query": "^5.101.4",
+    "@tanstack/react-query-devtools": "^5.101.4",
+     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router": "^7.15.1",
     "sirv": "^3.0.2"

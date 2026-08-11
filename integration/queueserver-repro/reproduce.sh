@@ -90,6 +90,7 @@ PROFILE_BRANCH="${PROFILE_BRANCH:-main}"
 QS_REPRO_HOME="${QS_REPRO_HOME:-$HOME/qs-repro}"
 
 HTTP_PORT="${HTTP_PORT:-60610}"
+TILED_PORT="${TILED_PORT:-8000}"
 REDIS_QUEUE_PORT="${REDIS_QUEUE_PORT:-60590}"
 REDIS_TLS_PORT="${REDIS_TLS_PORT:-6380}"
 MONGO_PORT="${MONGO_PORT:-27017}"
@@ -278,6 +279,7 @@ gen_configs() {
     ok "redis TLS cert + secret"
 
     # --- tiled profile: <endstation> -> the mongo catalog ---
+    # This is for databroker client-side (Broker.named) used by the RE
     cat > "$CONFIG_DIR/tiled/profiles/${ENDSTATION}.yml" <<EOF
 ${ENDSTATION}:
   direct:
@@ -291,6 +293,20 @@ ${ENDSTATION}:
           asset_registry_uri: mongodb://localhost:${MONGO_PORT}/asset-registry-local
 EOF
     ok "tiled profile '${ENDSTATION}'"
+
+    # --- tiled server config: for `tiled serve config` ---
+    # This is server-side config with different YAML structure
+    cat > "$CONFIG_DIR/tiled/server-config.yml" <<EOF
+trees:
+  - tree: databroker.mongo_normalized:Tree.from_uri
+    path: /
+    args:
+      uri: mongodb://localhost:${MONGO_PORT}/metadatastore-local
+      asset_registry_uri: mongodb://localhost:${MONGO_PORT}/asset-registry-local
+authentication:
+  allow_anonymous_access: true
+EOF
+    ok "tiled server config"
 
     # --- kafka config: point at the local broker (WITH_KAFKA) or nowhere ---
     # abort_run_on_kafka_exception stays false so a flaky broker never fails a
@@ -747,6 +763,25 @@ start_services() {
     fi
 }
 
+start_tiled() {
+    step "Tiled data server"
+    if pid_alive "$RUN_DIR/tiled.pid"; then
+        ok "Tiled server already running"
+    else
+        # Start tiled serve using the server config (not the profile)
+        setsid env \
+            pixi run --manifest-path "$PROFILE_DIR/pixi.toml" -e qs \
+            tiled serve config "$CONFIG_DIR/tiled/server-config.yml" \
+                --host 0.0.0.0 --port "$TILED_PORT" \
+            > "$RUN_DIR/tiled.log" 2>&1 < /dev/null &
+        echo $! > "$RUN_DIR/tiled.launcher.pid"
+        sleep 3
+        pgrep -f "tiled serve config.*--port $TILED_PORT" | head -1 \
+            > "$RUN_DIR/tiled.pid" || true
+        ok "Tiled server launched (log: $RUN_DIR/tiled.log)"
+    fi
+}
+
 open_environment() {
     step "Opening the RE worker environment (loads the profile)"
     pixi_qs qserver environment open --zmq-control-addr "$CTRL_SOCK" >/dev/null 2>&1 || true
@@ -779,6 +814,7 @@ verify() {
     ok "allowed devices: $devices"
     echo
     ok "HTTP API:  http://localhost:${HTTP_PORT}   (Swagger UI at /docs)"
+    ok "Tiled API: http://localhost:${TILED_PORT}   (data browser)"
     ok "API key:   $HTTP_API_KEY"
     note "example: curl -s http://localhost:${HTTP_PORT}/api/status -H \"Authorization: ApiKey $HTTP_API_KEY\""
 }
@@ -787,7 +823,7 @@ verify() {
 # Lifecycle
 # ---------------------------------------------------------------------------
 stop_services() {
-    for svc in httpserver manager; do
+    for svc in httpserver manager tiled; do
         if [ -f "$RUN_DIR/$svc.pid" ]; then
             pkill_tree "$(cat "$RUN_DIR/$svc.pid")" || true
         fi
@@ -797,6 +833,7 @@ stop_services() {
     done
     pkill -f "start-re-manager --config $CONFIG_DIR/queueserver-config.yml" 2>/dev/null || true
     pkill -f "uvicorn --host 0.0.0.0 --port $HTTP_PORT bluesky_httpserver" 2>/dev/null || true
+    pkill -f "tiled serve config.*--port $TILED_PORT" 2>/dev/null || true
     rm -f "$RUN_DIR"/qs-*.sock 2>/dev/null || true
     stop_iocs
     stop_olog
@@ -834,6 +871,7 @@ cmd_up() {
     start_olog
     start_iocs
     start_services
+    start_tiled
     if open_environment; then
         verify
         step "Done"
@@ -935,6 +973,7 @@ cmd_status() {
     step "Services"
     pid_alive "$RUN_DIR/manager.pid"    && ok "RE Manager: running ($(cat "$RUN_DIR/manager.pid"))"    || note "RE Manager: not running"
     pid_alive "$RUN_DIR/httpserver.pid" && ok "HTTP server: running ($(cat "$RUN_DIR/httpserver.pid"))" || note "HTTP server: not running"
+    pid_alive "$RUN_DIR/tiled.pid"      && ok "Tiled server: running ($(cat "$RUN_DIR/tiled.pid"))"    || note "Tiled server: not running"
     if [ "$WITH_IOS_IOCS" = "1" ]; then
         step "Simulated IOCs"
         local i=0 name
@@ -967,6 +1006,7 @@ cmd_status() {
 cmd_logs() {
     step "RE Manager log (tail)"; tail -n 40 "$RUN_DIR/manager.log" 2>/dev/null || note "no manager log"
     step "HTTP server log (tail)"; tail -n 20 "$RUN_DIR/httpserver.log" 2>/dev/null || note "no httpserver log"
+    step "Tiled server log (tail)"; tail -n 20 "$RUN_DIR/tiled.log" 2>/dev/null || note "no tiled log"
 }
 
 cmd_down() { step "Stopping"; stop_services; stop_infra; ok "stopped"; }

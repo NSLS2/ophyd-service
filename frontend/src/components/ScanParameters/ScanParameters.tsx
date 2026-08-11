@@ -2,6 +2,27 @@ import { useState } from 'react'
 import type { ScanPresetEntry } from '../../api/presets'
 import { NumberInput } from '../NumberInput'
 
+type ScanField = keyof Omit<ScanPresetEntry, 'edge_index'>
+
+/**
+ * Maps each writable Scan Parameter field to the dotted device address the
+ * configuration_service resolves to a live EPICS PV. Fields without an entry
+ * (scan_count, intervals, au_mesh) have no PV and stay preset-only.
+ *
+ * Note: `e_align` resolves to the mono energy setpoint — writing it MOVES the
+ * monochromator.
+ */
+export const SCAN_PARAM_ADDRESSES: Partial<Record<ScanField, string>> = {
+  start: 'pgm.fly.start_sig',
+  stop: 'pgm.fly.stop_sig',
+  velocity: 'pgm.fly.velocity',
+  deadband: 'epu1.flt.output_deadband',
+  epu1offset: 'epu1offset',
+  epu_table: 'epu1table',
+  e_align: 'pgm.energy.setpoint',
+  m1b1_sp: 'm1b1_setpoint',
+}
+
 export interface ScanParametersProps {
   data: Omit<ScanPresetEntry, 'edge_index'>
   onChange: (updated: Partial<Omit<ScanPresetEntry, 'edge_index'>>) => void
@@ -20,8 +41,8 @@ export function ScanParameters({ data, onChange }: ScanParametersProps) {
   )
 
   return (
-    <section className="scan-parameters flex-[1_1_0] min-w-0 max-xl:w-full min-h-[31rem] flex flex-col bg-white border border-panel-border rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(16,92,120,0.08)]">
-      <div className="bg-brand-teal text-white text-center px-4 py-[0.7rem] text-base font-bold tracking-[0.02em]">Scan Parameters</div>
+    <section className="scan-parameters min-w-0 max-xl:w-full min-h-[clamp(24rem,42vh,31rem)] flex flex-col bg-white border border-panel-border rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(16,92,120,0.08)]">
+      <div className="bg-brand-teal text-white text-center px-4 py-[0.7rem] text-lg font-bold tracking-[0.02em]">Scan Parameters</div>
       <div className="flex flex-col flex-1 px-4 pt-3 pb-4">
         <div className="flex flex-col max-h-[14.5rem] overflow-y-auto pr-[0.4rem] [&>div:last-child]:border-b-0 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#c2ccd2] [&::-webkit-scrollbar-thumb]:rounded [&::-webkit-scrollbar-thumb:hover]:bg-brand-cyan">
           {field('start', 'start')}
@@ -35,11 +56,11 @@ export function ScanParameters({ data, onChange }: ScanParametersProps) {
         </div>
 
         <button
-          className="flex items-center justify-between w-full mt-[0.85rem] px-4 py-[0.6rem] bg-brand-teal text-white rounded-md text-[0.9rem] font-semibold cursor-pointer transition-colors hover:bg-brand-cyan"
+          className="flex items-center justify-between w-full mt-[0.85rem] px-4 py-[0.6rem] bg-brand-teal text-white rounded-md text-[1.1rem] font-semibold cursor-pointer transition-colors hover:bg-brand-cyan"
           onClick={() => setAdvancedOpen(!advancedOpen)}
         >
           Advanced Settings
-          <span className="text-[0.7rem] ml-2">{advancedOpen ? '▲' : '▼'}</span>
+          <span className="text-[0.9rem] ml-2">{advancedOpen ? '▲' : '▼'}</span>
         </button>
 
         {advancedOpen && (

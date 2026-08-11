@@ -1,0 +1,17 @@
+# Normalize all text files to LF in the repo and on checkout.
+# Prevents spurious CRLF/LF "modified" noise on Windows/OneDrive.
+* text=auto eol=lf
+
+# Explicit binary types (never touch line endings)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.zip binary
+*.gz binary

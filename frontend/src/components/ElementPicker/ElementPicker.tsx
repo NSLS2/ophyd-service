@@ -30,7 +30,7 @@ export function ElementPicker({ onSelect, selectedSymbol, highlightSymbols, clas
       <div className="w-full max-w-[min(1600px,96vw)] mx-auto flex flex-col items-center">
         <div className="flex items-center justify-center gap-[clamp(6px,0.8vw,12px)] mb-[clamp(12px,2vw,24px)]">
           <h1 className="m-0 text-[clamp(1.4rem,2.6vw,2.1rem)] font-bold text-[#0b3a4d] text-center tracking-[0.01em]">Pick an Element</h1>
-          <span className="relative inline-flex items-center">
+          <span className="relative inline-flex items-center group">
             <button
               type="button"
               className="inline-flex items-center justify-center w-[clamp(18px,1.6vw,24px)] h-[clamp(18px,1.6vw,24px)] p-0 border-none rounded-full bg-[#0b3a4d] text-white font-[Georgia,'Times_New_Roman',serif] italic font-bold text-[clamp(0.7rem,1vw,0.9rem)] leading-none cursor-help transition-colors hover:bg-[#1976d2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#1976d2] focus-visible:outline-offset-2"
@@ -42,7 +42,7 @@ export function ElementPicker({ onSelect, selectedSymbol, highlightSymbols, clas
             <span
               id="element-picker-help-tip"
               role="tooltip"
-              className="absolute top-[calc(100%+10px)] left-1/2 -translate-x-1/2 z-10 w-max max-w-[min(280px,80vw)] px-3 py-2 rounded-lg bg-[#0b3a4d] text-[#f2fafd] text-[clamp(0.72rem,0.9vw,0.9rem)] font-medium leading-[1.35] text-left shadow-[0_4px_14px_rgba(0,0,0,0.22)] opacity-0 invisible transition-all peer-hover:opacity-100 peer-hover:visible peer-focus-visible:opacity-100 peer-focus-visible:visible before:content-[''] before:absolute before:bottom-full before:left-1/2 before:-translate-x-1/2 before:border-[6px] before:border-transparent before:border-b-[#0b3a4d]"
+              className="absolute top-[calc(100%+10px)] left-1/2 -translate-x-1/2 z-10 w-max max-w-[min(280px,80vw)] px-3 py-2 rounded-lg bg-[#0b3a4d] text-[#f2fafd] text-[clamp(0.72rem,0.9vw,0.9rem)] font-medium leading-[1.35] text-left shadow-[0_4px_14px_rgba(0,0,0,0.22)] opacity-0 invisible transition-all group-hover:opacity-100 group-hover:visible group-focus-within:opacity-100 group-focus-within:visible before:content-[''] before:absolute before:bottom-full before:left-1/2 before:-translate-x-1/2 before:border-[6px] before:border-transparent before:border-b-[#0b3a4d]"
             >
               Choose an element to set up a scan. Colored elements have ready-made
               presets; greyed-out elements aren&rsquo;t available yet.
