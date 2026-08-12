@@ -18,7 +18,7 @@
 #
 # The suite is wall-clock-bound (many tests boot real RE manager processes),
 # so it is split into 6 parallel groups via pytest-split using the committed
-# .test_durations file. Regenerate via store_test_durations.sh when the
+# .test_durations file. Regenerate via scripts/store_test_durations.sh when the
 # groups drift uneven.
 #
 # The ipykernel job covers the IPython-kernel worker dimension: those tests

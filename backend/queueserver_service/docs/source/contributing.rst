@@ -138,7 +138,7 @@ therefore it is split into multiple groups (currently 3 groups) using `pytest-sp
 package. Since the goal is to reduce the execution time of the longest group, the
 splitting algorithm is calibrated based on execution time of the tests with enabled
 IPython kernel mode (more tests, each test takes a little longer to execute).
-Calibration is performed by running the script ``store_test_durations.sh`` locally,
+Calibration is performed by running the script ``scripts/store_test_durations.sh`` locally,
 which saves execution time for each test in the ```.test_durations`` file. The file then
 has to be committed and pushed to the repository.
 
