@@ -4,9 +4,10 @@ Co-hosted HTTP server support for the RE Manager process (U1 unified mode).
 When enabled, the manager schedules ``uvicorn.Server(...).serve()`` as a
 background asyncio task alongside its 0MQ server. The bluesky-httpserver
 FastAPI app is built via ``queueserver_service.http.app.build_app`` — unchanged
-from the split-process deployment. Its internal REManagerAPI client still
-speaks 0MQ; in unified mode it just loopbacks to the same process. Phase
-U2 will replace the loopback with direct in-process handler calls.
+from the split-process deployment. Its internal REManagerAPI client (the
+in-tree ``queueserver_service.http.manager_client`` port) still speaks 0MQ;
+in unified mode it just loopbacks to the same process. Phase U2 will replace
+the loopback with direct in-process handler calls.
 
 Nothing at module scope pulls in ``uvicorn`` or ``queueserver_service.http``; the
 legacy (HTTP-disabled) path never imports them.
@@ -71,14 +72,15 @@ _in_process_rm_class: Any = None
 def _build_in_process_rm_class():
     """Build the REManagerAPI subclass that short-circuits 0MQ CONTROL.
 
-    Lazy: defers ``bluesky_queueserver_api`` import until unified mode
-    actually starts, keeping it off the legacy-path import graph.
+    Lazy: defers the ``queueserver_service.http.manager_client`` import
+    until unified mode actually starts, keeping the HTTP stack off the
+    legacy-path import graph.
     Overriding ``send_request`` catches all ~56 public methods (they all
     funnel through that one seam); overriding ``_create_client`` stubs
     out the otherwise-unused 0MQ CONTROL REQ socket so we don't hold a
     file descriptor and a zmq context to ourselves.
     """
-    from bluesky_queueserver_api.zmq.aio import REManagerAPI
+    from queueserver_service.http.manager_client import REManagerAPI
 
     class _StubZMQClient:
         # send_message is never called on the in-process path; only close()

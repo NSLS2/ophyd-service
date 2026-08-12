@@ -152,7 +152,6 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic", marker = "python_full_version >= '3.11'" },
     { name = "bluesky", marker = "python_full_version >= '3.11'" },
-    { name = "bluesky-queueserver-api", marker = "python_full_version >= '3.11'" },
     { name = "cachetools", marker = "python_full_version >= '3.11'" },
     { name = "fastapi", marker = "python_full_version >= '3.11'" },
     { name = "httpx", marker = "python_full_version >= '3.11'" },
@@ -200,6 +199,7 @@ spreadsheet = [
 [package.dev-dependencies]
 dev = [
     { name = "aiosqlite", marker = "python_full_version >= '3.11'" },
+    { name = "bluesky-queueserver-api", marker = "python_full_version >= '3.11'" },
     { name = "cryptography", marker = "python_full_version >= '3.11'" },
     { name = "h5py", marker = "python_full_version >= '3.11'" },
     { name = "happi", marker = "python_full_version >= '3.11'" },
@@ -214,7 +214,6 @@ dev = [
 requires-dist = [
     { name = "alembic" },
     { name = "bluesky", specifier = ">=1.7.0" },
-    { name = "bluesky-queueserver-api" },
     { name = "cachetools" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -253,6 +252,7 @@ provides-extras = ["spreadsheet", "sim", "epics", "all"]
 [package.metadata.requires-dev]
 dev = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
+    { name = "bluesky-queueserver-api" },
     { name = "cryptography", specifier = ">=50.0.0" },
     { name = "h5py", specifier = ">=3.16.0" },
     { name = "happi", specifier = ">=3.0.1" },

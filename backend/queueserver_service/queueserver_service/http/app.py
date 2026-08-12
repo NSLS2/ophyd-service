@@ -10,7 +10,7 @@ import urllib.parse
 from functools import lru_cache, partial
 
 from queueserver_service.common.comms import validate_zmq_key
-from bluesky_queueserver_api.zmq.aio import REManagerAPI
+from queueserver_service.http.manager_client import REManagerAPI
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 

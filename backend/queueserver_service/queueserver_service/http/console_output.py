@@ -20,7 +20,7 @@ class CollectPublishedConsoleOutput:
     Examples
     --------
     .. code-block:: python
-        from bluesky_queueserver_api.zmq.aio import REManagerAPI
+        from queueserver_service.http.manager_client import REManagerAPI
         RM = REManagerAPI()
 
         # Instantiate the class and start the thread
@@ -34,7 +34,7 @@ class CollectPublishedConsoleOutput:
 
     Parameters
     ----------
-    rm_ref : bluesky_queueserver_api.REManagerAPI
+    rm_ref : queueserver_service.http.manager_client.REManagerAPI
         Reference to configured REManagerAPI object (0MQ, asyncio)
     """
 
