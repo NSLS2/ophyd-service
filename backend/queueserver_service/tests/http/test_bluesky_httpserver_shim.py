@@ -3,7 +3,7 @@
 Upstream, the HTTP/WebSocket API server is the ``bluesky-httpserver`` distribution
 (import package ``bluesky_httpserver``); in this repository it is implemented by
 ``queueserver_service.http``. This standalone shim distribution
-(``backend/queueserver_service/bluesky-httpserver/``) must:
+(``backend/queueserver_service/compat/bluesky-httpserver/``) must:
 
 * provide the ``bluesky_httpserver`` import namespace, aliasing every submodule onto
   ``queueserver_service.http`` -- the SAME module object, not a re-executed copy (a
@@ -16,7 +16,7 @@ Upstream, the HTTP/WebSocket API server is the ``bluesky-httpserver`` distributi
 * stay lightweight on a bare ``import bluesky_httpserver`` (no FastAPI stack).
 
 These tests require the ``bluesky-httpserver`` distribution to be installed
-(``pip install -e ./bluesky-httpserver`` from ``backend/queueserver_service`` -- the
+(``pip install -e ./compat/bluesky-httpserver`` from ``backend/queueserver_service`` -- the
 queueserver-tests CI job and the service Dockerfile both do this).
 """
 

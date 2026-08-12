@@ -146,6 +146,17 @@ wheels = [
 ]
 
 [[package]]
+name = "bluesky-httpserver"
+version = "1.0.0"
+source = { editable = "compat/bluesky-httpserver" }
+dependencies = [
+    { name = "bluesky-queueserver", marker = "python_full_version >= '3.11'" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "bluesky-queueserver", specifier = "==1.0.0" }]
+
+[[package]]
 name = "bluesky-queueserver"
 version = "1.0.0"
 source = { editable = "." }
@@ -199,6 +210,7 @@ spreadsheet = [
 [package.dev-dependencies]
 dev = [
     { name = "aiosqlite", marker = "python_full_version >= '3.11'" },
+    { name = "bluesky-httpserver", marker = "python_full_version >= '3.11'" },
     { name = "bluesky-queueserver-api", marker = "python_full_version >= '3.11'" },
     { name = "cryptography", marker = "python_full_version >= '3.11'" },
     { name = "h5py", marker = "python_full_version >= '3.11'" },
@@ -252,6 +264,7 @@ provides-extras = ["spreadsheet", "sim", "epics", "all"]
 [package.metadata.requires-dev]
 dev = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
+    { name = "bluesky-httpserver", editable = "compat/bluesky-httpserver" },
     { name = "bluesky-queueserver-api" },
     { name = "cryptography", specifier = ">=50.0.0" },
     { name = "h5py", specifier = ">=3.16.0" },

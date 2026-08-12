@@ -97,8 +97,13 @@ start-bluesky-httpserver = "queueserver_service.http.server:start_server"
 
 [tool.setuptools.packages.find]
 # bluesky_queueserver is the one-module legacy import surface needed by the
-# bluesky-queueserver-api client; see its docstring.
+# bluesky-queueserver-api client; it lives under compat/ with the other
+# outbound veneers (see compat/README.md) but keeps its import name.
+where = [".", "compat"]
 include = ["queueserver_service*", "bluesky_queueserver"]
+
+[tool.uv.sources]
+bluesky-httpserver = { path = "compat/bluesky-httpserver", editable = true }
 
 [tool.uv]
 # The service runs on Python 3.11 (Docker image) / 3.12 (CI). Restrict lock
@@ -190,6 +195,10 @@ dev = [
     # as queueserver_service.http.manager_client); the wire-compat test suite
     # still exercises the released PyPI client against this server.
     "bluesky-queueserver-api",
+    # The outbound bluesky_httpserver import-surface shim (compat/README.md);
+    # a locked editable path dep so `uv sync` always installs it and the shim
+    # test suite runs everywhere, not just in CI's pip-installed env.
+    "bluesky-httpserver",
     "cryptography>=50.0.0",
     "h5py>=3.16.0",
     "happi>=3.0.1",
