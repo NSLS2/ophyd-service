@@ -8,8 +8,8 @@ its local device instances in sync with the service without a full refetch.
 import pytest
 from fastapi.testclient import TestClient
 
-from configuration_service.main import create_app
 from configuration_service.config import Settings
+from configuration_service.main import create_app
 
 
 @pytest.fixture

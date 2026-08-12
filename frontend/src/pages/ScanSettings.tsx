@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ScanParameters } from '../components/ScanParameters'
+import { ControlsPanel } from '../components/ControlsPanel'
 import type { ScanPresetEntry } from '../api/presets'
 
 const DEMO_SCAN: Omit<ScanPresetEntry, 'edge_index'> = {
@@ -20,11 +21,22 @@ export default function ScanSettings() {
   const [scanData, setScanData] = useState(DEMO_SCAN)
 
   return (
-    <div style={{ maxWidth: 520, padding: '1.5rem' }}>
-      <ScanParameters
-        data={scanData}
-        onChange={(patch) => setScanData((prev) => ({ ...prev, ...patch }))}
-      />
+    <div style={{ maxWidth: 800, padding: '1.5rem', display: 'flex', gap: '1.5rem' }}>
+      <div style={{ flex: 1 }}>
+        <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.2rem', color: '#e5e7eb' }}>
+          Scan Parameters (Development)
+        </h2>
+        <ScanParameters
+          data={scanData}
+          onChange={(patch) => setScanData((prev) => ({ ...prev, ...patch }))}
+        />
+      </div>
+      <div>
+        <h2 style={{ margin: '0 0 1rem 0', fontSize: '1.2rem', color: '#e5e7eb' }}>
+          Controls Panel
+        </h2>
+        <ControlsPanel />
+      </div>
     </div>
   )
 }

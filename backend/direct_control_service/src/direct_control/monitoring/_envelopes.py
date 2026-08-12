@@ -9,13 +9,27 @@ send that envelope so the two managers don't repeat it ~60 times.
 import asyncio
 import concurrent.futures
 import json
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Literal, Optional
+from typing import Any, Literal, Optional
 
 import structlog
 from fastapi import WebSocket
 
 logger = structlog.get_logger(__name__)
+
+
+def serialize_json_frame(payload: Any) -> str:
+    """Serialize ``payload`` to a JSON string byte-identical to what
+    :meth:`LockedWS.send_json` would produce.
+
+    Extracted so the broadcast hot path can pre-serialize once and reuse
+    the result across every subscribed client (via
+    :func:`send_text_or_size_error`) instead of calling
+    ``model_dump`` + ``json.dumps`` per client. The separator + ensure_ascii
+    settings MUST stay in sync with ``LockedWS.send_json``.
+    """
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
 
 
 # Where the threadsafe coroutine was scheduled from. Closed set so a typo
@@ -75,8 +89,8 @@ class LockedWS:
         self,
         ws: WebSocket,
         *,
-        max_message_bytes: Optional[int] = None,
-        send_timeout: Optional[float] = None,
+        max_message_bytes: int | None = None,
+        send_timeout: float | None = None,
     ):
         self._ws = ws
         self._send_lock = asyncio.Lock()
@@ -86,7 +100,7 @@ class LockedWS:
     async def accept(self) -> None:
         await self._ws.accept()
 
-    async def close(self, code: int = 1000, reason: Optional[str] = None) -> None:
+    async def close(self, code: int = 1000, reason: str | None = None) -> None:
         await self._ws.close(code=code, reason=reason)
 
     async def send_json(self, data: Any) -> None:
@@ -284,6 +298,38 @@ async def send_payload_or_size_error(
     await _send_or_translate_failure(
         ws,
         lambda: ws.send_json(payload),
+        log_event=log_event,
+        log_fields=log_fields,
+        oversize_message=oversize_message,
+        error_envelope_fields=error_envelope_fields,
+        notify_on_generic_exception=notify_on_generic_exception,
+    )
+
+
+async def send_text_or_size_error(
+    ws: "LockedWS",
+    text: str,
+    *,
+    log_event: str,
+    log_fields: dict,
+    oversize_message: str,
+    error_envelope_fields: dict,
+    notify_on_generic_exception: bool = False,
+) -> None:
+    """Send a pre-serialized JSON ``text`` through the same size-cap-aware
+    path as :func:`send_payload_or_size_error`, skipping the ``json.dumps``
+    step.
+
+    Used on the broadcast hot path: the caller serializes the payload once
+    per PV update and hands the same text to every subscribed client, so
+    ``model_dump`` + ``json.dumps`` are amortized across all N recipients
+    instead of running N times. Byte-identical to what ``send_json`` would
+    have produced when the caller uses the same ``json.dumps`` separators
+    / ensure_ascii settings as :meth:`LockedWS.send_json`.
+    """
+    await _send_or_translate_failure(
+        ws,
+        lambda: ws.send_text(text),
         log_event=log_event,
         log_fields=log_fields,
         oversize_message=oversize_message,

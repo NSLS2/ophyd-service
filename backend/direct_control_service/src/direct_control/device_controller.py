@@ -6,28 +6,32 @@ coordination checks (A4 requirement).
 """
 
 import asyncio
-from typing import Any, Optional, TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
+
 import structlog
 from epics import ca, caget, caput, get_pv
-from datetime import datetime
 
+from .config import Settings
 from .drivers import check_method_allowed, json_safe
 from .models import (
-    PVSetRequest,
-    PVSetResponse,
+    CommandMode,
+    ControlError,
+    CoordinationCheckError,
     CoordinationStatus,
     DeviceCommandRequest,
     DeviceCommandResponse,
-    CommandMode,
-    ControlError,
-    DeviceLockedError,
     DeviceDisabledError,
+    DeviceLockedError,
     DeviceLockStatus,
     DeviceNotInstantiableError,
+    DeviceUnavailableError,
     InstantiationSpec,
     PVNotFoundError,
+    PVSetRequest,
+    PVSetResponse,
+    ValueLimitError,
 )
-from .config import Settings
 
 if TYPE_CHECKING:
     from .device_manager import DeviceManager
@@ -45,6 +49,24 @@ class DeviceController:
     coordination with active plan execution (A4 requirement).
 
     Implements: DeviceControl protocol
+
+    Coordination is a check-then-act sequence: ``check_device_available``
+    reads the device's live lock state from configuration_service, then the
+    write is issued. This is inherently TOCTOU — a plan could acquire the
+    lock in the window between the check and the caput landing on the IOC.
+    The design accepts that narrow race rather than adding a distributed
+    reservation, because the exposure is bounded on both ends:
+
+    - configuration_service is authoritative at check time (no local lock
+      cache — every check is a live GET /status), so the window is one
+      request round-trip, not a TTL;
+    - when lock leases are enabled (CONFIG_LOCK_LEASE_TTL_SECONDS), the plan
+      owner (queueserver) re-acquires on lease loss / authority reset, and a
+      crashed owner's lock lapses on its own — so the coordination state a
+      write races against is never stale for longer than the lease.
+
+    A robust closure of the race would require a short-lived write
+    reservation on configuration_service; tracked as future work.
     """
 
     def __init__(
@@ -90,8 +112,11 @@ class DeviceController:
             configuration_service before commanding).
         LOCKED -> DeviceLockedError (active plan owns it; release the lock
             or wait for the plan to finish).
-        Other non-AVAILABLE statuses -> ControlError (e.g. UNKNOWN — config
-            service returned a state we don't model).
+        Other non-AVAILABLE statuses -> DeviceUnavailableError (e.g. UNKNOWN —
+            config service returned a state we don't model). This is a
+            coordination-policy refusal, NOT a PV-health/EPICS failure, so
+            callers must map it like the other gate errors (not to a 500 with
+            a PV-health report).
         AVAILABLE -> no-op.
         """
         if coord_status.device_available:
@@ -113,7 +138,7 @@ class DeviceController:
             status=coord_status.status.value,
             **{kind: target},
         )
-        raise ControlError(
+        raise DeviceUnavailableError(
             f"{kind.replace('_', ' ').capitalize()} {target} unavailable: "
             f"status={coord_status.status.value}"
         )
@@ -147,7 +172,17 @@ class DeviceController:
         # without a device owner (standalone) fall back to the PV name —
         # configuration_service will return 404 for those, and the
         # coordination check treats that as "no lock concept, available".
-        coord_target = (await self.registry_client.get_owning_device(pv_name)) or pv_name
+        # A registry FAILURE during this lookup is part of the coordination
+        # gate: fail closed (503), never fall through as "standalone" — that
+        # would bypass the device-lock gate exactly when the lock authority
+        # is unhealthy.
+        try:
+            owner = await self.registry_client.get_owning_device(pv_name)
+        except RuntimeError as e:
+            raise CoordinationCheckError(
+                f"Cannot determine owning device for PV {pv_name!r}: {e}"
+            ) from e
+        coord_target = owner or pv_name
         coord_status = await self.coordination.check_device_available(coord_target)
         self._raise_for_unavailable(coord_target, "device_name", coord_status)
 
@@ -164,6 +199,13 @@ class DeviceController:
 
         timeout = request.timeout or self.settings.command_timeout
         connection_timeout = request.connection_timeout or 5.0
+
+        await self._validate_ctrl_limits(
+            pv_name=pv_name,
+            value=request.value,
+            check_limits=request.check_limits,
+            connection_timeout=connection_timeout,
+        )
 
         success = await self._execute_put(
             pv_name=pv_name,
@@ -265,6 +307,7 @@ class DeviceController:
             request.kwargs,
             timeout=timeout,
             use_put=request.use_put,
+            stop_on_timeout=self.settings.stop_on_command_timeout,
         )
         return DeviceCommandResponse(
             device_name=device_name,
@@ -286,6 +329,103 @@ class DeviceController:
         pv = await asyncio.to_thread(get_pv, pv_name, timeout=connection_timeout, connect=True)
         return pv if pv.connected else None
 
+    async def _validate_ctrl_limits(
+        self,
+        *,
+        pv_name: str,
+        value: Any,
+        check_limits: bool | None,
+        connection_timeout: float,
+    ) -> None:
+        """Refuse a numeric write that would land outside the IOC-advertised
+        control limits.
+
+        Fail-open policy: if the check itself can't complete (metadata GET
+        times out, ctrl-limit fields are missing/None, or the PV can't be
+        connected here — the follow-up ``_execute_put`` will fail loudly on
+        that same connection) the write proceeds. The rationale is that a
+        write-time metadata failure should not be a stricter gate than the
+        actual write; the caller sees the real failure at put time.
+
+        Skipped when:
+        - ``check_limits=False`` on the request, OR the ``check_ctrl_limits``
+          setting is off (both are honored — the per-request flag wins).
+        - The value is non-numeric (strings, enums-as-strings, arrays, None).
+          Enum writes as an integer index ARE checked (bo/mbbo records
+          declare 0..N-1 as ctrl limits).
+        - Both limits are None (the record type has no LOPR/HOPR concept).
+        - ``lower_ctrl_limit == upper_ctrl_limit == 0`` (EPICS convention for
+          "no limits enforced" — every unlimited record advertises this).
+        """
+        effective = self.settings.check_ctrl_limits if check_limits is None else check_limits
+        if not effective:
+            return
+
+        # bool is a subclass of int; a boolean write to a bo record (limits
+        # 0..1) is meaningful, so keep bools in the check. Non-numeric types
+        # (strings, arrays, None, complex) fail this isinstance guard and
+        # bypass the check — complex is caught here because ``isinstance(c,
+        # (int, float))`` is False for complex numbers.
+        if not isinstance(value, (int, float)):
+            return
+
+        try:
+            lower, upper = await self._read_ctrl_limits(pv_name, connection_timeout)
+        except Exception as exc:  # noqa: BLE001
+            # Defense in depth: _read_ctrl_limits already catches its own
+            # exceptions and returns (None, None). This guard makes the
+            # fail-open guarantee independent of that implementation detail
+            # — the gate never blocks a write when it can't complete.
+            logger.warning("ctrl_limit_check_failed", pv_name=pv_name, error=str(exc))
+            return
+        if lower is None and upper is None:
+            return
+        if lower == 0 and upper == 0:
+            return
+
+        # A one-sided limit (only lower OR only upper) is honored on the side
+        # that exists; the missing side is treated as unbounded.
+        if lower is not None and value < lower:
+            raise ValueLimitError(
+                f"PV {pv_name!r}: value {value} is below lower_ctrl_limit {lower}"
+            )
+        if upper is not None and value > upper:
+            raise ValueLimitError(
+                f"PV {pv_name!r}: value {value} is above upper_ctrl_limit {upper}"
+            )
+
+    async def _read_ctrl_limits(
+        self, pv_name: str, connection_timeout: float
+    ) -> tuple[float | None, float | None]:
+        """Return ``(lower_ctrl_limit, upper_ctrl_limit)`` from the IOC.
+
+        Fail-open on any exception (returns ``(None, None)``) — the ctrl-limit
+        gate must never be a stricter blocker than the actual put. See
+        ``_validate_ctrl_limits`` for the wider policy.
+        """
+        try:
+            pv = await self._connect(pv_name, connection_timeout)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ctrl_limit_connect_failed", pv_name=pv_name, error=str(exc))
+            return None, None
+        if pv is None:
+            return None, None
+
+        # get_ctrlvars() issues a DBR_CTRL_* request and populates the
+        # limit attributes. It's a blocking pyepics call; run off-loop.
+        try:
+            await asyncio.to_thread(
+                pv.get_ctrlvars, timeout=self.settings.ctrl_limit_read_timeout, warn=False
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ctrl_limit_read_failed", pv_name=pv_name, error=str(exc))
+            return None, None
+
+        return (
+            getattr(pv, "lower_ctrl_limit", None),
+            getattr(pv, "upper_ctrl_limit", None),
+        )
+
     async def _execute_put(
         self,
         *,
@@ -295,7 +435,7 @@ class DeviceController:
         timeout: float,
         connection_timeout: float,
         use_complete: bool,
-        ftype: Optional[int],
+        ftype: int | None,
     ) -> bool:
         """
         Execute a PV put, routing through the right pyepics entrypoint.
@@ -340,8 +480,10 @@ class DeviceController:
             try:
                 await asyncio.wait_for(done.wait(), timeout=timeout)
                 return True
-            except asyncio.TimeoutError:
-                raise ControlError(f"PV {pv_name} put-callback did not complete within {timeout}s")
+            except TimeoutError:
+                raise ControlError(
+                    f"PV {pv_name} put-callback did not complete within {timeout}s"
+                ) from None
 
         status = await asyncio.to_thread(
             ca.put, pv.chid, value, wait=wait, timeout=timeout, ftype=ftype
@@ -353,12 +495,12 @@ class DeviceController:
         pv_name: str,
         *,
         as_string: bool = False,
-        count: Optional[int] = None,
+        count: int | None = None,
         as_numpy: bool = True,
         use_monitor: bool = True,
         timeout: float = 5.0,
         connection_timeout: float = 5.0,
-        ftype: Optional[int] = None,
+        ftype: int | None = None,
     ) -> Any:
         """
         Get current PV value (read-only, no coordination check needed).
@@ -410,8 +552,8 @@ class DeviceController:
         self,
         device_path: str,
         method: str = "read",
-        value: Optional[Any] = None,
-        timeout: Optional[float] = None,
+        value: Any | None = None,
+        timeout: float | None = None,
     ) -> Any:
         """
         Access a nested device component (ophyd-websocket compatible).
@@ -465,5 +607,6 @@ class DeviceController:
             {},
             timeout=timeout or self.settings.command_timeout,
             use_put=(method == "put"),
+            stop_on_timeout=self.settings.stop_on_command_timeout,
         )
         return json_safe(result)

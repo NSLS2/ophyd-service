@@ -6,7 +6,6 @@ before allowing operations. Uses a TTL cache to avoid per-request HTTP round-tri
 """
 
 import time
-from typing import Dict, Optional, Tuple
 
 import httpx
 import structlog
@@ -44,20 +43,20 @@ class RegistryClient:
 
     def __init__(self, settings: Settings, cache_ttl: float = 30.0):
         self.base_url = settings.configuration_service_url
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
         self._cache_ttl = cache_ttl
         # Cache: key -> (exists: bool, timestamp: float)
-        self._pv_cache: Dict[str, Tuple[bool, float]] = {}
-        self._device_cache: Dict[str, Tuple[bool, float]] = {}
+        self._pv_cache: dict[str, tuple[bool, float]] = {}
+        self._device_cache: dict[str, tuple[bool, float]] = {}
         # PV -> owning device name (None for standalone PVs). Populated as a
         # side effect of validate_pv so the disabled-state gate can map a
         # PV-keyed write to the device-keyed lock/disable state on
         # configuration_service without an extra round-trip.
-        self._pv_owner_cache: Dict[str, Tuple[Optional[str], float]] = {}
+        self._pv_owner_cache: dict[str, tuple[str | None, float]] = {}
         # device -> instantiation spec (None = device has no spec). Specs
         # change rarely; the TTL bounds how long a registry edit takes to
         # reach the DeviceManager (which also rebuilds on spec change).
-        self._spec_cache: Dict[str, Tuple[Optional[InstantiationSpec], float]] = {}
+        self._spec_cache: dict[str, tuple[InstantiationSpec | None, float]] = {}
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -67,7 +66,24 @@ class RegistryClient:
             )
         return self._client
 
-    def _cache_get(self, cache: Dict[str, Tuple[bool, float]], key: str) -> Optional[bool]:
+    async def _request(
+        self, method: str, path: str, *, timeout: float | None = None
+    ) -> httpx.Response:
+        """Issue a request to configuration_service through the shared client.
+
+        Every call routes through this one helper (mirroring
+        queueserver_service's ``ConfigServiceClient._request``) so the HTTP
+        call surface stays consistent and analyzable rather than a
+        per-call-site local client handle. The only per-call override is
+        ``timeout`` (e.g. a short health-check probe); omit it to use the
+        client's configured timeout.
+        """
+        client = await self._get_client()
+        if timeout is None:
+            return await client.request(method, path)
+        return await client.request(method, path, timeout=timeout)
+
+    def _cache_get(self, cache: dict[str, tuple[bool, float]], key: str) -> bool | None:
         """Check cache for a key, return None if expired or missing."""
         entry = cache.get(key)
         if entry is None:
@@ -95,8 +111,7 @@ class RegistryClient:
             raise RegistryValidationError(pv_name, "PV")
 
         try:
-            client = await self._get_client()
-            response = await client.get(f"/api/v1/pvs/{pv_name}")
+            response = await self._request("GET", f"/api/v1/pvs/{pv_name}")
 
             if response.status_code == 200:
                 now = time.monotonic()
@@ -122,12 +137,19 @@ class RegistryClient:
                 self._pv_cache[pv_name] = (False, time.monotonic())
                 raise RegistryValidationError(pv_name, "PV")
             else:
-                logger.warning(
+                # A 5xx/unexpected status is a REGISTRY failure, not "this PV
+                # doesn't exist" — raise the unavailability error (503 at the
+                # endpoints), never the not-found one (404). Don't cache: the
+                # outage must not poison the TTL window.
+                logger.error(
                     "registry_pv_check_unexpected_status",
                     pv_name=pv_name,
                     status_code=response.status_code,
                 )
-                raise RegistryValidationError(pv_name, "PV")
+                raise RuntimeError(
+                    f"Configuration service registry error: PV lookup for "
+                    f"{pv_name!r} returned HTTP {response.status_code}"
+                )
 
         except httpx.RequestError as e:
             logger.error("configuration_service_unavailable", error=str(e))
@@ -150,8 +172,7 @@ class RegistryClient:
             raise RegistryValidationError(device_name, "Device")
 
         try:
-            client = await self._get_client()
-            response = await client.get(f"/api/v1/devices/{device_name}")
+            response = await self._request("GET", f"/api/v1/devices/{device_name}")
 
             if response.status_code == 200:
                 self._device_cache[device_name] = (True, time.monotonic())
@@ -160,18 +181,22 @@ class RegistryClient:
                 self._device_cache[device_name] = (False, time.monotonic())
                 raise RegistryValidationError(device_name, "Device")
             else:
-                logger.warning(
+                # Mirror validate_pv: registry failure → 503, never 404.
+                logger.error(
                     "registry_device_check_unexpected_status",
                     device_name=device_name,
                     status_code=response.status_code,
                 )
-                raise RegistryValidationError(device_name, "Device")
+                raise RuntimeError(
+                    f"Configuration service registry error: device lookup for "
+                    f"{device_name!r} returned HTTP {response.status_code}"
+                )
 
         except httpx.RequestError as e:
             logger.error("configuration_service_unavailable", error=str(e))
             raise RuntimeError("Configuration service unavailable") from e
 
-    async def get_owning_device(self, pv_name: str) -> Optional[str]:
+    async def get_owning_device(self, pv_name: str) -> str | None:
         """Return the device that owns this PV in the registry, or None for
         standalone PVs (PVs with no device-level lock/disable state).
 
@@ -183,23 +208,42 @@ class RegistryClient:
         if entry is not None and time.monotonic() - entry[1] <= self._cache_ttl:
             return entry[0]
 
-        client = await self._get_client()
         try:
-            response = await client.get(f"/api/v1/pvs/{pv_name}")
+            response = await self._request("GET", f"/api/v1/pvs/{pv_name}")
         except httpx.RequestError as e:
             logger.error("configuration_service_unavailable", error=str(e))
             raise RuntimeError("Configuration service unavailable") from e
 
-        if response.status_code != 200:
-            # PV not in registry — caller will hit the validate_pv gate
-            # separately. Don't cache as None here: that would shadow a real
-            # owner once the PV gets registered.
+        if response.status_code == 404:
+            # PV not in registry — either it never was, or it was just deleted.
+            # If a stale existence entry says it exists, drop it so the next
+            # validate_pv re-checks and returns 404 instead of serving the
+            # deleted PV for the rest of the TTL window (closes the
+            # deleted-device write-bypass, fix #3). Don't cache None as the
+            # owner here: that would shadow a real owner once the PV is
+            # (re)registered.
+            self._pv_cache.pop(pv_name, None)
+            self._pv_owner_cache.pop(pv_name, None)
             return None
-        device_name: Optional[str] = response.json().get("device_name")
+        if response.status_code != 200:
+            # FAIL CLOSED: a 5xx must not be read as "standalone PV, no lock
+            # concept" — that would let a write bypass the device-lock gate
+            # exactly when the lock authority is unhealthy. Surface the
+            # outage instead (503 at the endpoints).
+            logger.error(
+                "registry_owner_lookup_unexpected_status",
+                pv_name=pv_name,
+                status_code=response.status_code,
+            )
+            raise RuntimeError(
+                f"Configuration service registry error: owner lookup for "
+                f"{pv_name!r} returned HTTP {response.status_code}"
+            )
+        device_name: str | None = response.json().get("device_name")
         self._pv_owner_cache[pv_name] = (device_name, time.monotonic())
         return device_name
 
-    async def get_instantiation_spec(self, device_name: str) -> Optional[InstantiationSpec]:
+    async def get_instantiation_spec(self, device_name: str) -> InstantiationSpec | None:
         """Fetch the device's instantiation spec from configuration_service.
 
         Returns None when the spec endpoint 404s. Callers run
@@ -214,9 +258,8 @@ class RegistryClient:
         if entry is not None and time.monotonic() - entry[1] <= self._cache_ttl:
             return entry[0]
 
-        client = await self._get_client()
         try:
-            response = await client.get(f"/api/v1/devices/{device_name}/instantiation")
+            response = await self._request("GET", f"/api/v1/devices/{device_name}/instantiation")
         except httpx.RequestError as e:
             logger.error("configuration_service_unavailable", error=str(e))
             raise RuntimeError("Configuration service unavailable") from e
@@ -248,6 +291,52 @@ class RegistryClient:
             raise RuntimeError(f"Instantiation spec for {device_name!r} is malformed: {e}") from e
         self._spec_cache[device_name] = (spec, time.monotonic())
         return spec
+
+    async def get_device_pvs(self, device_name: str) -> dict[str, str] | None:
+        """Fetch the device's component -> PV map from configuration_service.
+
+        Returns None when the device 404s (not registered). Returns the ``pvs``
+        mapping from the device document otherwise (an empty dict if the device
+        owns no PVs).
+
+        Raises:
+            RuntimeError: configuration_service unreachable or returned an
+                unexpected status.
+        """
+        try:
+            response = await self._request("GET", f"/api/v1/devices/{device_name}")
+        except httpx.RequestError as e:
+            logger.error("configuration_service_unavailable", error=str(e))
+            raise RuntimeError("Configuration service unavailable") from e
+
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            logger.warning(
+                "registry_device_pvs_unexpected_status",
+                device_name=device_name,
+                status_code=response.status_code,
+            )
+            raise RuntimeError(
+                f"Device-PV lookup for {device_name!r} returned HTTP {response.status_code}"
+            )
+
+        # Parse + normalize under one guard: any deviation from the documented
+        # shape (non-JSON body, non-mapping root, non-mapping ``pvs``, item
+        # values that don't str()-ify) is surfaced as RuntimeError so callers
+        # only ever have one exception class to catch, per the docstring
+        # contract.
+        try:
+            body = response.json()
+            pvs = body.get("pvs", {}) or {}
+            return {str(component): str(pv) for component, pv in pvs.items()}
+        except (ValueError, AttributeError, TypeError) as e:
+            logger.error(
+                "registry_device_pvs_malformed",
+                device_name=device_name,
+                error=str(e),
+            )
+            raise RuntimeError(f"Device-PV response for {device_name!r} is malformed: {e}") from e
 
     async def cleanup(self) -> None:
         """Cleanup HTTP client."""

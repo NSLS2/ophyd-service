@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class DeviceDescriber(Protocol):
         """
         ...
 
-    def describe(self, device: Any) -> Dict[str, Any]:
+    def describe(self, device: Any) -> dict[str, Any]:
         """
         Generate description for a device.
 
@@ -78,7 +78,7 @@ class BaseDescriber(ABC):
         pass
 
     @abstractmethod
-    def describe(self, device: Any) -> Dict[str, Any]:
+    def describe(self, device: Any) -> dict[str, Any]:
         """Generate description for the device."""
         pass
 
@@ -103,7 +103,7 @@ class OphydDescriber(BaseDescriber):
         except ImportError:
             return False
 
-    def describe(self, device: Any) -> Dict[str, Any]:
+    def describe(self, device: Any) -> dict[str, Any]:
         """Describe an ophyd device."""
         description = {
             "name": getattr(device, "name", str(device)),
@@ -137,20 +137,20 @@ class OphydDescriber(BaseDescriber):
 
         return description
 
-    def _get_protocols(self, device: Any) -> List[str]:
+    def _get_protocols(self, device: Any) -> list[str]:
         """Get list of Bluesky protocols the device implements."""
         protocols = []
 
         try:
             from bluesky.protocols import (
-                Readable,
-                Movable,
                 Flyable,
-                Stageable,
+                Locatable,
+                Movable,
                 Pausable,
+                Readable,
+                Stageable,
                 Stoppable,
                 Triggerable,
-                Locatable,
             )
 
             if isinstance(device, Readable):
@@ -214,7 +214,7 @@ class OphydAsyncDescriber(BaseDescriber):
         except ImportError:
             return False
 
-    def describe(self, device: Any) -> Dict[str, Any]:
+    def describe(self, device: Any) -> dict[str, Any]:
         """Describe an ophyd-async device."""
         description = {
             "name": getattr(device, "name", str(device)),
@@ -242,7 +242,7 @@ class SignalDescriber(BaseDescriber):
         except ImportError:
             return False
 
-    def describe(self, device: Any) -> Dict[str, Any]:
+    def describe(self, device: Any) -> dict[str, Any]:
         """Describe an ophyd Signal."""
         description = {
             "name": getattr(device, "name", str(device)),
@@ -270,7 +270,7 @@ class FallbackDescriber(BaseDescriber):
         """Always returns True - handles anything."""
         return True
 
-    def describe(self, device: Any) -> Dict[str, Any]:
+    def describe(self, device: Any) -> dict[str, Any]:
         """Generate basic description for unknown device."""
         return {
             "name": getattr(device, "name", str(device)),
@@ -294,7 +294,7 @@ class DescriberRegistry:
     """
 
     def __init__(self):
-        self._describers: List[BaseDescriber] = [
+        self._describers: list[BaseDescriber] = [
             SignalDescriber(),
             OphydDescriber(),
             OphydAsyncDescriber(),
@@ -326,7 +326,7 @@ class DescriberRegistry:
         """
         self._describers = [d for d in self._describers if not isinstance(d, describer_class)]
 
-    def describe(self, device: Any) -> Dict[str, Any]:
+    def describe(self, device: Any) -> dict[str, Any]:
         """
         Describe a device using registered describers.
 
@@ -351,7 +351,7 @@ class DescriberRegistry:
         # Should never reach here due to FallbackDescriber
         return {"name": str(device), "class": "unknown"}
 
-    def describe_all(self, devices: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    def describe_all(self, devices: dict[str, Any]) -> dict[str, dict[str, Any]]:
         """
         Describe multiple devices.
 
@@ -369,7 +369,7 @@ class DescriberRegistry:
 
 
 # Global registry instance
-_registry: Optional[DescriberRegistry] = None
+_registry: DescriberRegistry | None = None
 
 
 def get_describer_registry() -> DescriberRegistry:
@@ -380,7 +380,7 @@ def get_describer_registry() -> DescriberRegistry:
     return _registry
 
 
-def describe_device(device: Any) -> Dict[str, Any]:
+def describe_device(device: Any) -> dict[str, Any]:
     """
     Convenience function to describe a device.
 

@@ -16,7 +16,6 @@ from configuration_service.models import (
 )
 from configuration_service.pv_health_manager import PVHealthManager
 
-
 # ---------------------------------------------------------------------------
 # PVHealthManager unit tests — state machine
 # ---------------------------------------------------------------------------
@@ -124,9 +123,7 @@ async def test_get_health_many_only_returns_pvs_with_records():
     await mgr.record_success("IOC:b")  # synthetic; not stored
     await mgr.record_failure("IOC:c")
     await mgr.record_success("IOC:c")  # updates the existing record
-    result = await mgr.get_health_many(
-        ["IOC:a", "IOC:b", "IOC:c", "IOC:never_reported"]
-    )
+    result = await mgr.get_health_many(["IOC:a", "IOC:b", "IOC:c", "IOC:never_reported"])
     assert set(result.keys()) == {"IOC:a", "IOC:c"}
 
 
@@ -193,9 +190,7 @@ def test_get_pv_health_returns_current_record(client):
 
 def test_extra_fields_on_report_rejected(client):
     """extra='forbid' catches typo'd request keys."""
-    r = client.post(
-        "/api/v1/pvs/BL01:SAMPLE:X.RBV/failure", json={"message": "ok", "extra": True}
-    )
+    r = client.post("/api/v1/pvs/BL01:SAMPLE:X.RBV/failure", json={"message": "ok", "extra": True})
     assert r.status_code == 422
 
 
@@ -204,9 +199,7 @@ def test_post_failure_unknown_pv_returns_404(client):
     a typo'd report (or an untrusted caller) could grow the health store
     unbounded with garbage entries. Matches direct-control's caput path,
     which validates pv_name against the registry before writing."""
-    r = client.post(
-        "/api/v1/pvs/IOC:not_registered/failure", json={"message": "nope"}
-    )
+    r = client.post("/api/v1/pvs/IOC:not_registered/failure", json={"message": "nope"})
     assert r.status_code == 404
     assert "not registered" in r.json()["detail"]
 
@@ -262,9 +255,7 @@ def test_device_status_includes_pv_health_for_reported_pvs(client):
     # *same* PV (updates the existing record back to healthy). Also report
     # a success on a never-failed PV — that one should stay absent from
     # the rollup.
-    client.post(
-        "/api/v1/pvs/BL01:SAMPLE:X.RBV/failure", json={"message": "lost CA"}
-    )
+    client.post("/api/v1/pvs/BL01:SAMPLE:X.RBV/failure", json={"message": "lost CA"})
     # A success on a never-failed PV is intentionally not persisted.
     client.post("/api/v1/pvs/BL01:SAMPLE:X/success", json={})
 
@@ -284,9 +275,7 @@ def test_device_status_includes_pv_health_for_reported_pvs(client):
 
 def test_delete_pv_health_removes_record(client):
     """Clearing a PV with a record returns cleared=1; the next GET 404s."""
-    client.post(
-        "/api/v1/pvs/BL01:SAMPLE:X.RBV/failure", json={"message": "ca timeout"}
-    )
+    client.post("/api/v1/pvs/BL01:SAMPLE:X.RBV/failure", json={"message": "ca timeout"})
     r = client.delete("/api/v1/pvs/BL01:SAMPLE:X.RBV/health")
     assert r.status_code == 200, r.text
     assert r.json() == {"cleared": 1}
@@ -307,9 +296,7 @@ def test_delete_pv_health_is_idempotent(client):
 def test_delete_pv_health_dotted_pv_name(client):
     """Same routing concern as the POST endpoints — make sure the
     delete route accepts realistic motor-record PV names."""
-    client.post(
-        "/api/v1/pvs/BL01:SAMPLE:X.VELO/failure", json={"message": "x"}
-    )
+    client.post("/api/v1/pvs/BL01:SAMPLE:X.VELO/failure", json={"message": "x"})
     r = client.delete("/api/v1/pvs/BL01:SAMPLE:X.VELO/health")
     assert r.status_code == 200
     assert r.json() == {"cleared": 1}
@@ -386,9 +373,7 @@ def test_delete_pv_health_unregistered_pv_returns_cleared_zero(client):
 def test_device_status_pv_health_after_failure_then_recovery(client):
     """A failure then a success on the same PV keeps the record (so the
     UI can show 'recovered at <time>') with state flipped to healthy."""
-    client.post(
-        "/api/v1/pvs/BL01:SAMPLE:X.RBV/failure", json={"message": "lost CA"}
-    )
+    client.post("/api/v1/pvs/BL01:SAMPLE:X.RBV/failure", json={"message": "lost CA"})
     client.post("/api/v1/pvs/BL01:SAMPLE:X.RBV/success", json={})
 
     r = client.get("/api/v1/devices/sample_x/status")

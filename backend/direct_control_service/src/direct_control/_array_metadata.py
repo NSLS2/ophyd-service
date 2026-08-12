@@ -6,12 +6,12 @@ monitoring layer can use it without the HTTP side pulling in
 pyepics/ophyd at import time.
 """
 
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
 
-def describe_array(raw: Any) -> Tuple[List[int], Optional[str], int, int]:
+def describe_array(raw: Any) -> tuple[list[int], str | None, int, int]:
     """Return ``(shape, dtype_str, ndim, nbytes)`` for a pyepics value.
 
     Scalars and non-array types collapse to ``([], None, 0, 0)``.

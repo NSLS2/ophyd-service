@@ -1,0 +1,71 @@
+"""
+Dump the queueserver-service HTTP API's static OpenAPI schema to shared-schema/.
+
+The checked-in artifact intentionally reflects the **bare** server — static
+core routes plus the built-in `/api/auth/*` endpoints — and omits the dynamic
+`/api/auth/provider/{provider}/*` routes that are registered at runtime based
+on deployment-specific auth configuration. SDK generators should regenerate
+per-deployment if provider routes are needed.
+
+Usage:
+    python scripts/export_openapi.py            # writes shared-schema/queueserver_service.openapi.json
+    python scripts/export_openapi.py -o some/other/path.json
+"""
+import argparse
+import json
+import sys
+from functools import partial
+from pathlib import Path
+
+from fastapi import FastAPI
+
+from queueserver_service.http.authentication import base_authentication_router
+from queueserver_service.http.openapi_config import custom_openapi
+from queueserver_service.http.routers import (
+    admin as admin_router,
+    console as console_router,
+    environment as environment_router,
+    execution as execution_router,
+    locks as locks_router,
+    permissions as permissions_router,
+    plans_devices as plans_devices_router,
+    profile_collection as profile_collection_router,
+    queue as queue_router,
+    run_engine as run_engine_router,
+    status as status_router,
+)
+
+
+def build_schema() -> dict:
+    app = FastAPI()
+    app.include_router(status_router.status_router)
+    app.include_router(queue_router.queue_router)
+    app.include_router(environment_router.environment_router)
+    app.include_router(run_engine_router.run_engine_router)
+    app.include_router(plans_devices_router.plans_devices_router)
+    app.include_router(permissions_router.permissions_router)
+    app.include_router(execution_router.execution_router)
+    app.include_router(locks_router.locks_router)
+    app.include_router(admin_router.admin_router)
+    app.include_router(console_router.console_router)
+    app.include_router(profile_collection_router.router)
+    app.include_router(profile_collection_router.devices_router)
+    app.include_router(base_authentication_router, prefix="/api/auth")
+    app.openapi = partial(custom_openapi, app)
+    return app.openapi()
+
+
+def main() -> int:
+    default_output = Path(__file__).resolve().parents[3] / "shared-schema" / "queueserver_service.openapi.json"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("-o", "--output", type=Path, default=default_output)
+    args = parser.parse_args()
+
+    schema = build_schema()
+    args.output.write_text(json.dumps(schema, indent=2) + "\n")
+    print(f"Wrote {args.output} ({len(schema['paths'])} paths)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

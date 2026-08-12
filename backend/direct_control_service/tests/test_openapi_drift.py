@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-
 # repo root from this file's directory: tests → service → backend → repo,
 # i.e. ../../../ — which matches parents[3] (parents[0] is the tests dir).
 _COMMITTED_SCHEMA = (

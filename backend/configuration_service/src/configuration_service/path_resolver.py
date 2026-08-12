@@ -23,15 +23,15 @@ Limitations:
 - ophyd-async classes that raise on instantiation (e.g. require extra
   ctor args) return ``Outcome.IMPORT_FAILED`` with the exception detail.
 """
+
 from __future__ import annotations
 
 import importlib
 import re
 import string
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
-
 
 # Strip any lowercase URI scheme (ca://, pva://, mock://, soft://, etc.).
 # ophyd-async backends are free to introduce new schemes; matching by shape
@@ -39,16 +39,26 @@ from typing import Optional
 _URI_SCHEME_RE = re.compile(r"^[a-z]+://")
 
 
+def device_class_allowed(device_class_path: str, allowlist: Sequence[str] | None) -> bool:
+    """True if ``device_class_path`` may be imported under ``allowlist``.
+
+    An empty/None allowlist disables the check (allow anything, the historical
+    behavior). Otherwise the path must start with one of the configured
+    import-path prefixes (e.g. ``"ophyd."``, ``"ophyd_async."``).
+    """
+    if not allowlist:
+        return True
+    return any(device_class_path.startswith(prefix) for prefix in allowlist)
+
+
 class Outcome(str, Enum):
     """Per-address result kind.
 
-    ``NEEDS_ENRICHMENT`` and ``ENRICHMENT_UNAVAILABLE`` are distinct: the
-    former means we found a runtime placeholder we can't fill in
-    statically *and* live-enrichment isn't configured for this deploy;
-    the latter means enrichment was attempted (via the direct-control
-    client) and the call failed (network, timeout, 5xx). Frontends can
-    branch — needs_enrichment is a deploy-config gap while
-    enrichment_unavailable is typically transient and worth a retry.
+    ``NEEDS_ENRICHMENT`` is terminal here: the address hit an ophyd
+    ``FormattedComponent`` with a runtime placeholder that static
+    introspection cannot fill in. The configuration service never calls
+    other services — live resolution for those addresses is
+    direct-control's ``POST /api/v1/devices/resolve``.
     """
 
     RESOLVED = "resolved"
@@ -56,7 +66,6 @@ class Outcome(str, Enum):
     IMPORT_FAILED = "import_failed"
     NO_SUCH_ATTR = "no_such_attr"
     NEEDS_ENRICHMENT = "needs_enrichment"
-    ENRICHMENT_UNAVAILABLE = "enrichment_unavailable"
 
 
 @dataclass(frozen=True)
@@ -65,8 +74,8 @@ class Resolution:
 
     address: str
     outcome: Outcome
-    pv_name: Optional[str] = None
-    message: Optional[str] = None
+    pv_name: str | None = None
+    message: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -83,16 +92,22 @@ def _split_address(address: str) -> tuple[str, str]:
     return head, tail
 
 
-def _import_class(device_class_path: str):
+def _import_class(device_class_path: str, allowlist: Sequence[str] | None = None):
     """Import ``module.ClassName`` and return the class object.
 
-    Raises ``ImportError`` (or ``AttributeError``) on failure — callers
-    translate those into ``Outcome.IMPORT_FAILED``.
+    When ``allowlist`` is non-empty, the import path must match one of its
+    prefixes — importing (and, for ophyd-async, instantiating) an arbitrary
+    class is a code-execution surface, so a locked-down deploy restricts it to
+    known device packages. Raises ``ImportError`` (or ``AttributeError``) on
+    failure — callers translate those into ``Outcome.IMPORT_FAILED``.
     """
-    if "." not in device_class_path:
+    if not device_class_allowed(device_class_path, allowlist):
         raise ImportError(
-            f"device_class '{device_class_path}' has no module prefix"
+            f"device_class '{device_class_path}' is not in the configured "
+            f"allowlist of importable module prefixes"
         )
+    if "." not in device_class_path:
+        raise ImportError(f"device_class '{device_class_path}' has no module prefix")
     module_name, class_name = device_class_path.rsplit(".", 1)
     module = importlib.import_module(module_name)
     cls = getattr(module, class_name, None)
@@ -124,7 +139,7 @@ def _has_format_placeholder(suffix: str) -> bool:
 
 def _resolve_component_pv(
     cpt, parent_full_prefix: str
-) -> tuple[Optional[str], Optional[Outcome], Optional[str]]:
+) -> tuple[str | None, Outcome | None, str | None]:
     """Resolve a single ``Component`` to its absolute CA PV name.
 
     Returns one of:
@@ -168,9 +183,7 @@ def _resolve_component_pv(
     return suffix, None, None
 
 
-def _walk_class(
-    cls, parts: list[str], prefix: str
-) -> tuple[Outcome, str, Optional[str]]:
+def _walk_class(cls, parts: list[str], prefix: str) -> tuple[Outcome, str, str | None]:
     """Walk a chain of attribute names on a class, computing the absolute PV.
 
     Returns ``(outcome, value_or_path, optional_message)``:
@@ -190,6 +203,11 @@ def _walk_class(
 
     current_cls = cls
     current_prefix = prefix
+    # True when the most recent segment resolved to a Component PV. A
+    # trailing DynamicDeviceComponent descends WITHOUT resolving, and
+    # falling out of the loop there must not report the bare parent prefix
+    # as a "resolved PV" (a caller would caput a nonexistent PV name).
+    leaf_resolved = True  # vacuously true for an empty chain
 
     for i, attr in enumerate(parts):
         path_so_far = ".".join(parts[:i]) if i else ""
@@ -202,6 +220,7 @@ def _walk_class(
             # DDC carries a dynamically-built sub-class; walk into it.
             # The DDC itself contributes no suffix — children carry their own.
             current_cls = cpt.cls
+            leaf_resolved = False
             continue
 
         if not isinstance(cpt, Component):
@@ -225,7 +244,12 @@ def _walk_class(
         # descends into cpt.cls using this PV as the new parent prefix.
         current_prefix = pv
         current_cls = cpt.cls
+        leaf_resolved = True
 
+    if not leaf_resolved:
+        # The chain ended on a DDC container — a sub-device, not a
+        # PV-bearing leaf. Same outcome as "exists but is not a Component".
+        return Outcome.NO_SUCH_ATTR, ".".join(parts[:-1]), parts[-1]
     return Outcome.RESOLVED, current_prefix, None
 
 
@@ -253,7 +277,7 @@ def _strip_signal_source_scheme(source: str) -> str:
     return _URI_SCHEME_RE.sub("", source, count=1)
 
 
-def _walk_async_instance(device, parts: list[str]) -> tuple[Outcome, str, Optional[str]]:
+def _walk_async_instance(device, parts: list[str]) -> tuple[Outcome, str, str | None]:
     """Walk an instantiated ophyd-async device's attribute tree.
 
     Returns ``(RESOLVED, pv_name, None)`` for leaves that expose ``.source``,
@@ -281,8 +305,8 @@ def _walk_async_instance(device, parts: list[str]) -> tuple[Outcome, str, Option
 
 
 def _get_or_create_async_device(
-    cls, prefix: str, cache: Optional[dict]
-) -> tuple[Optional[object], Optional[str]]:
+    cls, prefix: str, cache: dict | None
+) -> tuple[object | None, str | None]:
     """Return ``(device, error_message)``; exactly one is non-None.
 
     Honors the optional ``(cls, prefix) → (device, err)`` cache so a batch
@@ -312,7 +336,7 @@ def _resolve_ophyd_async(
     prefix: str,
     sub_path: str,
     *,
-    device_cache: Optional[dict] = None,
+    device_cache: dict | None = None,
 ) -> Resolution:
     """Instantiate-without-connect, then walk ``.source`` URIs.
 
@@ -352,9 +376,7 @@ def _resolve_ophyd_async(
     # NO_SUCH_ATTR
     where = value
     bad = msg
-    detail = (
-        f"{bad} (at '{where}')" if where else f"{bad}"
-    )
+    detail = f"{bad} (at '{where}')" if where else f"{bad}"
     return Resolution(address=address, outcome=Outcome.NO_SUCH_ATTR, message=detail)
 
 
@@ -399,7 +421,8 @@ def resolve(
     *,
     device_class_path: str,
     prefix: str,
-    device_cache: Optional[dict] = None,
+    device_cache: dict | None = None,
+    allowlist: Sequence[str] | None = None,
 ) -> Resolution:
     """Resolve a single dotted address to a PV name.
 
@@ -421,11 +444,15 @@ def resolve(
     path. Pass an empty dict per request to amortize instantiation across
     a batch of sibling addresses; the classic path is purely static and
     already costs nothing.
+
+    ``allowlist`` (optional) restricts which ``device_class_path`` prefixes
+    may be imported; an out-of-allowlist class returns ``IMPORT_FAILED``
+    instead of being imported.
     """
     _, sub_path = _split_address(address)
 
     try:
-        cls = _import_class(device_class_path)
+        cls = _import_class(device_class_path, allowlist)
     except (ImportError, AttributeError) as e:
         return Resolution(
             address=address,
@@ -434,7 +461,5 @@ def resolve(
         )
 
     if _is_ophyd_async_class(cls):
-        return _resolve_ophyd_async(
-            address, cls, prefix, sub_path, device_cache=device_cache
-        )
+        return _resolve_ophyd_async(address, cls, prefix, sub_path, device_cache=device_cache)
     return _resolve_ophyd_classic(address, cls, prefix, sub_path)

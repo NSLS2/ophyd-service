@@ -1,0 +1,293 @@
+import os
+import time as ttime
+from typing import Any
+
+import httpx
+import pytest
+import requests
+from queueserver_service.common.comms import zmq_single_request
+from tests.manager.common import set_qserver_zmq_encoding  # noqa: F401
+from xprocess import ProcessStarter
+
+import queueserver_service.http.server as bqss
+
+# NOTE: the auth/OIDC fixtures at the bottom of this file import their heavy,
+# test-only dependencies (cryptography, jose, respx) INSIDE the fixture bodies.
+# Keeping this module importable without them matters: the Side-B CI job (and
+# any minimal environment) collects tests/http for the OpenAPI drift test with
+# only the base install present.
+
+SERVER_ADDRESS = "localhost"
+# HTTP port for the xprocess-spawned test server. Default 60610 (the service
+# default); override with QSERVER_TEST_HTTP_PORT when something ELSE already
+# owns 60610 on this machine (e.g. another project's queueserver container) —
+# otherwise every request in the suite silently talks to the wrong server.
+SERVER_PORT = os.environ.get("QSERVER_TEST_HTTP_PORT", "60610")
+
+# Single-user API key used for most of the tests
+API_KEY_FOR_TESTS = "APIKEYFORTESTS"
+
+_user_group = "primary"
+
+
+@pytest.fixture(scope="module")
+def fastapi_server(xprocess):
+    class Starter(ProcessStarter):
+        env = dict(os.environ)
+        env["QSERVER_HTTP_SERVER_SINGLE_USER_API_KEY"] = API_KEY_FOR_TESTS
+
+        pattern = "Bluesky HTTP Server started successfully"
+        args = f"uvicorn --host={SERVER_ADDRESS} --port {SERVER_PORT} {bqss.__name__}:app".split()
+        # args = f"start-bluesky-httpserver --host={SERVER_ADDRESS} --port {SERVER_PORT}".split()
+
+    xprocess.ensure("fastapi_server", Starter)
+
+    yield
+
+    xprocess.getinfo("fastapi_server").terminate()
+
+
+@pytest.fixture
+def fastapi_server_fs(xprocess):
+    """
+    FastAPI server with function scope. Should not be executed in the same module as ``fastapi_server``.
+    The server must be explicitly started in the unit test code as ``fastapi_server_fs()``. This allows
+    to perform additional steps (such as setting environmental variables) before the server is started.
+    """
+
+    def start(http_server_host=SERVER_ADDRESS, http_server_port=SERVER_PORT, api_key=API_KEY_FOR_TESTS):
+        class Starter(ProcessStarter):
+            max_read_lines = 53
+
+            env = dict(os.environ)
+            if api_key:
+                env["QSERVER_HTTP_SERVER_SINGLE_USER_API_KEY"] = api_key
+
+            pattern = "Bluesky HTTP Server started successfully"
+            args = f"uvicorn --host={http_server_host} --port {http_server_port} {bqss.__name__}:app".split()
+
+        xprocess.ensure("fastapi_server", Starter)
+        ttime.sleep(1)
+
+    yield start
+
+    xprocess.getinfo("fastapi_server").terminate()
+
+
+def setup_server_with_config_file(*, config_file_str, tmpdir, monkeypatch):
+    """
+    Creates config file for the server in ``tmpdir/config/`` directory and
+    sets up the respective environment variable. Sets ``tmpdir`` as a current directory.
+    """
+    print(f"SERVER CONFIGURATION:\n{'-' * 50}\n{config_file_str}\n{'-' * 50}")
+    config_fln = "config_httpserver.yml"
+    config_dir = os.path.join(tmpdir, "config")
+    config_path = os.path.join(config_dir, config_fln)
+    os.makedirs(config_dir)
+    with open(config_path, "wt") as f:
+        f.writelines(config_file_str)
+
+    sqlite_path = os.path.join(tmpdir, "queueserver_service.http.sqlite")
+    sqlite_path = "sqlite:///" + sqlite_path
+
+    monkeypatch.setenv("QSERVER_HTTP_SERVER_CONFIG", config_path)
+    monkeypatch.setenv("QSERVER_HTTP_SERVER_DATABASE_URI", sqlite_path)
+    monkeypatch.chdir(tmpdir)
+
+    return config_path
+
+
+def add_plans_to_queue():
+    """
+    Clear the queue and add 3 fixed plans to the queue.
+    Raises an exception if clearing the queue or adding plans fails.
+    """
+    resp1, _ = zmq_single_request("queue_clear")
+    assert resp1["success"] is True, str(resp1)
+
+    user_group = _user_group
+    user = "HTTP unit test setup"
+    plan1 = {"name": "count", "args": [["det1", "det2"]], "kwargs": {"num": 10, "delay": 1}, "item_type": "plan"}
+    plan2 = {"name": "count", "args": [["det1", "det2"]], "item_type": "plan"}
+    for plan in (plan1, plan2, plan2):
+        resp2, _ = zmq_single_request("queue_item_add", {"item": plan, "user": user, "user_group": user_group})
+        assert resp2["success"] is True, str(resp2)
+
+
+def request_to_json(
+    request_type, path, *, request_prefix="/api", api_key=API_KEY_FOR_TESTS, token=None, login=None, **kwargs
+):
+    if login:
+        auth = None
+        data = {"username": login[0], "password": login[1]}
+        kwargs.setdefault("data", {})
+        kwargs.update({"data": data})
+    elif token:
+        auth = None
+        headers = {"Authorization": f"Bearer {token}"}
+        kwargs.update({"auth": auth, "headers": headers})
+    elif api_key:
+        auth = None
+        headers = {"Authorization": f"ApiKey {api_key}"}
+        kwargs.update({"auth": auth, "headers": headers})
+
+    method = getattr(requests, request_type)
+    resp = method(f"http://{SERVER_ADDRESS}:{SERVER_PORT}{request_prefix}{path}", **kwargs)
+    resp = resp.json()
+    return resp
+
+
+def wait_for_environment_to_be_created(timeout, polling_period=0.2, api_key=API_KEY_FOR_TESTS):
+    """Wait for environment to be created with timeout."""
+    time_start = ttime.time()
+    while ttime.time() < time_start + timeout:
+        ttime.sleep(polling_period)
+        resp = request_to_json("get", "/status", api_key=api_key)
+        if resp["worker_environment_exists"] and (resp["manager_state"] == "idle"):
+            return True
+
+    return False
+
+
+def wait_for_environment_to_be_closed(timeout, polling_period=0.2, api_key=API_KEY_FOR_TESTS):
+    """Wait for environment to be closed with timeout."""
+    time_start = ttime.time()
+    while ttime.time() < time_start + timeout:
+        ttime.sleep(polling_period)
+        resp = request_to_json("get", "/status", api_key=api_key)
+        if (not resp["worker_environment_exists"]) and (resp["manager_state"] == "idle"):
+            return True
+
+    return False
+
+
+def wait_for_queue_execution_to_complete(timeout, polling_period=0.2, api_key=API_KEY_FOR_TESTS):
+    """Wait for for queue execution to complete."""
+    time_start = ttime.time()
+    while ttime.time() < time_start + timeout:
+        ttime.sleep(polling_period)
+        resp = request_to_json("get", "/status", api_key=api_key)
+        if (resp["manager_state"] == "idle") and (resp["items_in_queue"] == 0):
+            return True
+
+    return False
+
+
+def wait_for_manager_state_idle(timeout, polling_period=0.2, api_key=API_KEY_FOR_TESTS):
+    """Wait until manager is in 'idle' state."""
+    time_start = ttime.time()
+    while ttime.time() < time_start + timeout:
+        ttime.sleep(polling_period)
+        resp = request_to_json("get", "/status", api_key=api_key)
+        if resp["manager_state"] == "idle":
+            return True
+
+    return False
+
+
+def wait_for_manager_state_idle_or_paused(timeout, polling_period=0.2, api_key=API_KEY_FOR_TESTS):
+    """Wait until manager is in 'idle' state."""
+    time_start = ttime.time()
+    while ttime.time() < time_start + timeout:
+        ttime.sleep(polling_period)
+        resp = request_to_json("get", "/status", api_key=api_key)
+        if resp["manager_state"] in ("idle", "paused"):
+            return True
+
+    return False
+
+
+def wait_for_ip_kernel_idle(timeout, polling_period=0.2, api_key=API_KEY_FOR_TESTS):
+    """Wait until manager is in 'idle' state."""
+    time_start = ttime.time()
+    while ttime.time() < time_start + timeout:
+        ttime.sleep(polling_period)
+        resp = request_to_json("get", "/status", api_key=api_key)
+        if resp["ip_kernel_state"] == "idle":
+            return True
+
+    return False
+
+
+# ============================================================================
+# AUTH Test Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def oidc_well_known_url(oidc_base_url: str) -> str:
+    return f"{oidc_base_url}.well-known/openid-configuration"
+
+
+@pytest.fixture
+def keys():
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_key = private_key.public_key()
+    return (private_key, public_key)
+
+
+@pytest.fixture
+def json_web_keyset(keys) -> list[dict[str, Any]]:
+    from jose.backends import RSAKey
+
+    _, public_key = keys
+    return [RSAKey(key=public_key, algorithm="RS256").to_dict()]
+
+
+@pytest.fixture
+def mock_oidc_server(
+    respx_mock,
+    oidc_well_known_url: str,
+    well_known_response: dict[str, Any],
+    json_web_keyset: list[dict[str, Any]],
+):
+    respx_mock.get(oidc_well_known_url).mock(return_value=httpx.Response(httpx.codes.OK, json=well_known_response))
+    respx_mock.get(well_known_response["jwks_uri"]).mock(
+        return_value=httpx.Response(httpx.codes.OK, json={"keys": json_web_keyset})
+    )
+    return respx_mock
+
+
+@pytest.fixture
+def sqlite_session():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from queueserver_service.http.database.base import Base
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine)
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+        engine.dispose()
+
+
+# ============================================================================
+# OIDC Test Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def oidc_base_url() -> str:
+    """Base URL for mock OIDC provider."""
+    return "https://example.com/realms/example/"
+
+
+@pytest.fixture
+def well_known_response(oidc_base_url: str) -> dict:
+    """Mock OIDC well-known configuration response."""
+    return {
+        "id_token_signing_alg_values_supported": ["RS256"],
+        "issuer": oidc_base_url.rstrip("/"),
+        "jwks_uri": f"{oidc_base_url}protocol/openid-connect/certs",
+        "authorization_endpoint": f"{oidc_base_url}protocol/openid-connect/auth",
+        "token_endpoint": f"{oidc_base_url}protocol/openid-connect/token",
+        "device_authorization_endpoint": f"{oidc_base_url}protocol/openid-connect/auth/device",
+        "end_session_endpoint": f"{oidc_base_url}protocol/openid-connect/logout",
+    }

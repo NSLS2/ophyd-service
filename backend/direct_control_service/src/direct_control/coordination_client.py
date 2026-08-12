@@ -9,26 +9,23 @@ of that contract:
     direct_control    --GET  /api/v1/devices/{name}/status-->  configuration_service
 """
 
+from datetime import datetime
+
 import httpx
 import structlog
-from datetime import datetime
-from typing import Optional
 
+from .config import Settings
 from .models import (
     CoordinationCheckError,
     CoordinationStatus,
     DeviceLockStatus,
     ServiceAvailability,
 )
-from .config import Settings
-
 
 logger = structlog.get_logger(__name__)
 
 
-def _map_lock_status(
-    available: bool, enabled: bool, lock_status: str
-) -> DeviceLockStatus:
+def _map_lock_status(available: bool, enabled: bool, lock_status: str) -> DeviceLockStatus:
     """Map configuration_service's status fields to DeviceLockStatus.
 
     Precedence: DISABLED beats LOCKED beats AVAILABLE. A disabled device
@@ -57,7 +54,15 @@ class CoordinationClient:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.base_url = settings.configuration_service_url
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
+        # Last lock-authority epoch seen on /status. A change means
+        # configuration_service restarted and rebuilt its (in-memory) lock
+        # table — every device momentarily reports unlocked until the lock
+        # holder (queueserver) re-acquires. We can't fail closed here (we
+        # don't know which devices a plan held), but we surface the reset
+        # loudly so operators/monitoring can correlate a transient
+        # "everything available" window with the restart.
+        self._last_lock_epoch: str | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -66,6 +71,48 @@ class CoordinationClient:
                 timeout=self.settings.coordination_timeout,
             )
         return self._client
+
+    async def _request(
+        self, method: str, path: str, *, timeout: float | None = None
+    ) -> httpx.Response:
+        """Issue a request to configuration_service through the shared client.
+
+        Every call routes through this one helper (mirroring
+        queueserver_service's ``ConfigServiceClient._request``) so the HTTP
+        call surface stays consistent and analyzable rather than a
+        per-call-site local client handle. The only per-call override is
+        ``timeout`` (e.g. a short health-check probe); omit it to use the
+        client's configured timeout.
+        """
+        client = await self._get_client()
+        if timeout is None:
+            return await client.request(method, path)
+        return await client.request(method, path, timeout=timeout)
+
+    def _note_lock_epoch(self, lock_epoch: str | None, device_name: str) -> None:
+        """Detect a lock-authority reset from the epoch on /status.
+
+        The first observation just records the epoch. A subsequent change
+        means configuration_service restarted and dropped its in-memory
+        locks; we log a warning so a window where locked devices briefly
+        report available is attributable, not silent.
+        """
+        if not lock_epoch:
+            return
+        previous = self._last_lock_epoch
+        self._last_lock_epoch = lock_epoch
+        if previous is not None and previous != lock_epoch:
+            logger.warning(
+                "lock_authority_reset",
+                device_name=device_name,
+                previous_epoch=previous,
+                current_epoch=lock_epoch,
+                note=(
+                    "configuration_service rebuilt its lock table (restart); "
+                    "locks held before the reset are gone until the plan owner "
+                    "re-acquires them — treat availability as provisional briefly"
+                ),
+            )
 
     async def check_device_available(self, device_name: str) -> CoordinationStatus:
         """
@@ -94,15 +141,13 @@ class CoordinationClient:
 
         endpoint = f"/api/v1/devices/{device_name}/status"
         try:
-            client = await self._get_client()
-
             logger.debug(
                 "checking_device_coordination",
                 device_name=device_name,
                 url=f"{self.base_url}{endpoint}",
             )
 
-            response = await client.get(endpoint)
+            response = await self._request("GET", endpoint)
 
             if response.status_code == 404:
                 # The name passed in isn't registered as a device in
@@ -125,6 +170,8 @@ class CoordinationClient:
 
             response.raise_for_status()
             data = response.json()
+
+            self._note_lock_epoch(data.get("lock_epoch"), device_name)
 
             available = bool(data.get("available", False))
             enabled = bool(data.get("enabled", True))
@@ -191,8 +238,7 @@ class CoordinationClient:
             return ServiceAvailability(available=True)
 
         try:
-            client = await self._get_client()
-            response = await client.get("/health", timeout=2.0)
+            response = await self._request("GET", "/health", timeout=2.0)
         except httpx.TimeoutException as exc:
             logger.warning("configuration_service_health_timeout", error=str(exc))
             return ServiceAvailability(
@@ -215,10 +261,7 @@ class CoordinationClient:
         )
         return ServiceAvailability(
             available=False,
-            detail=(
-                f"configuration_service /health returned HTTP "
-                f"{response.status_code}"
-            ),
+            detail=(f"configuration_service /health returned HTTP {response.status_code}"),
         )
 
     async def cleanup(self) -> None:

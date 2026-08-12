@@ -1,0 +1,117 @@
+# Lint + type-check the ophyd-service backends.
+#
+# Two parallel jobs, one per in-house backend (clearer failure attribution,
+# same rationale as unit-tests.yml). Each job runs, in order:
+#   1. ruff check        — BLOCKING. Style + bug-prone-pattern lint.
+#   2. ruff format --check — BLOCKING. Formatting must match `ruff format`.
+#   3. mypy              — NON-BLOCKING (continue-on-error). Surfaces the
+#      existing type-debt in CI logs without failing the build yet; flip to
+#      blocking once that backlog is cleared.
+#
+# ruff is pinned to the same version as .pre-commit-config.yaml so local
+# pre-commit and CI agree exactly. ruff is a static tool and needs no project
+# deps, so it runs before the (slower) editable install used by mypy.
+#
+# The queueserver_service is vendored upstream (bluesky-queueserver) and keeps
+# its own CI/lint conventions, so it is intentionally excluded here.
+#
+# Triggers:
+#   - every PR
+#   - every push to main
+#   - manual via workflow_dispatch
+
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  RUFF_VERSION: "0.15.7" # keep in sync with .pre-commit-config.yaml
+
+jobs:
+  configuration-service-lint:
+    name: configuration_service lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend/configuration_service
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/configuration_service/pyproject.toml
+
+      - name: Install ruff
+        run: pip install "ruff==${RUFF_VERSION}"
+
+      - name: ruff check
+        run: ruff check src tests scripts
+
+      - name: ruff format --check
+        run: ruff format --check src tests scripts
+
+      # PEP 735 [dependency-groups] requires pip 25.1+ for --group.
+      - name: Install backend + dev deps (for mypy)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install --group dev
+
+      - name: mypy (non-blocking)
+        continue-on-error: true
+        run: mypy src
+
+  direct-control-lint:
+    name: direct_control_service lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend/direct_control_service
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/direct_control_service/pyproject.toml
+
+      - name: Install ruff
+        run: pip install "ruff==${RUFF_VERSION}"
+
+      - name: ruff check
+        run: ruff check src tests scripts
+
+      - name: ruff format --check
+        run: ruff format --check src tests scripts
+
+      - name: Install backend + dev deps (for mypy)
+        # Single pip invocation so the resolver reconciles shared deps in one
+        # pass (same rationale as unit-tests.yml). config-service is imported
+        # by the Side-A integration tests; mypy resolves it from its path.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" -e ../configuration_service
+          pip install epicscorelibs
+
+      - name: mypy (non-blocking)
+        continue-on-error: true
+        run: mypy src

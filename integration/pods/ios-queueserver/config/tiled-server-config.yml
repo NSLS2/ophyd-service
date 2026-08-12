@@ -1,0 +1,15 @@
+# Tiled data server over the pod's mongo catalog — the same read-view the
+# queueserver-repro harness serves: what the RunEngine wrote through databroker
+# is what browsers/clients read at http://localhost:8000/api/v1.
+# allow_origins grants the frontend dev server's browser origin CORS access.
+trees:
+  - tree: databroker.mongo_normalized:Tree.from_uri
+    path: /
+    args:
+      uri: mongodb://mongo:27017/metadatastore-local
+      asset_registry_uri: mongodb://mongo:27017/asset-registry-local
+authentication:
+  allow_anonymous_access: true
+allow_origins:
+  - http://localhost:5173
+  - http://127.0.0.1:5173

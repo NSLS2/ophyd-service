@@ -185,6 +185,7 @@ Binary mode (`Accept: application/octet-stream` or `?format=binary`):
 |--------|----------|-------------|
 | POST | `/api/v1/device/execute` | Execute a device method on a live ophyd / ophyd-async object |
 | POST | `/api/v1/device/{device_name}/stop` | Stop a device (`stop()` with completion) |
+| POST | `/api/v1/devices/resolve` | Resolve dotted device addresses (`motor.user_setpoint`) to PV names by live introspection — handles ophyd `FormattedComponent` runtime placeholders that configuration_service's static resolver reports as `needs_enrichment` |
 
 The service instantiates the device from its registry **instantiation spec**
 (class path + constructor args), connects it (cached after first use), and
