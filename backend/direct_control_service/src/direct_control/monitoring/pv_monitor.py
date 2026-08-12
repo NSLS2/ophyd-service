@@ -31,8 +31,12 @@ from ..models import (
 
 # Set EPICS env vars before importing ophyd/pyepics
 # pyepics reads these at import time
+# The DIRECT_CONTROL_-prefixed forms are explicit service-level overrides only.
+# When unset, the standard EPICS_CA_* variables (and libca's own defaults,
+# e.g. AUTO_ADDR_LIST=YES) apply untouched — a deployment that sets the bare
+# variables must never have them silently overridden by a default here.
 _epics_addr = os.environ.get("DIRECT_CONTROL_EPICS_CA_ADDR_LIST")
-_epics_auto = os.environ.get("DIRECT_CONTROL_EPICS_CA_AUTO_ADDR_LIST", "YES")
+_epics_auto = os.environ.get("DIRECT_CONTROL_EPICS_CA_AUTO_ADDR_LIST")
 
 if _epics_addr:
     os.environ["EPICS_CA_ADDR_LIST"] = _epics_addr
