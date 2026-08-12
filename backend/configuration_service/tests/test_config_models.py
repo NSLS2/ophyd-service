@@ -4,14 +4,10 @@ Unit tests for Configuration Service domain models.
 Tests the core domain logic without external dependencies.
 """
 
-import pytest
 from configuration_service.models import (
-    DeviceMetadata,
-    PVMetadata,
     DeviceLabel,
+    DeviceMetadata,
     DeviceRegistry,
-    DeviceNotFoundError,
-    PVNotFoundError,
 )
 
 
@@ -348,7 +344,7 @@ class TestPartialUpdateModelFieldParity:
 
     def test_all_partial_fields_are_optional(self):
         """Every partial field must default to None and accept None."""
-        from configuration_service.models import DeviceMetadataUpdate, DeviceInstantiationSpecUpdate
+        from configuration_service.models import DeviceInstantiationSpecUpdate, DeviceMetadataUpdate
 
         # Empty construction must succeed (every field omitted)
         DeviceMetadataUpdate()
@@ -369,10 +365,10 @@ class TestPartialUpdateModelFieldParity:
         from the canonical, this test catches it.
         """
         from configuration_service.models import (
-            DeviceMetadata,
-            DeviceMetadataUpdate,
             DeviceInstantiationSpec,
             DeviceInstantiationSpecUpdate,
+            DeviceMetadata,
+            DeviceMetadataUpdate,
         )
 
         for src_cls, partial_cls in (

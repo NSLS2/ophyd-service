@@ -5,7 +5,7 @@ Uses pydantic-settings for environment-based configuration.
 """
 
 from pathlib import Path
-from typing import Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     # Profile collection configuration
     # Can be set via CONFIG_PROFILE_PATH
-    profile_path: Optional[Path] = None
+    profile_path: Path | None = None
 
     # Loading strategy: "auto", "empty", "happi", "bits", or "mock"
     # auto: Auto-detect based on files present in profile_path (default)
@@ -55,8 +55,16 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
-    # CORS (if needed for web UI)
+    # CORS (if needed for web UI). cors_origins defaults to "*" for the dev
+    # inner-loop; set an explicit allowlist in production. cors_allow_credentials
+    # must stay False whenever cors_origins is "*": the combination makes
+    # Starlette reflect the caller's Origin AND echo
+    # Access-Control-Allow-Credentials, i.e. any site could drive a credentialed
+    # request. Auth is enforced upstream (bearer headers, not cookies), so
+    # credentials are off by default; create_app() also force-disables them if
+    # a wildcard origin is configured.
     cors_origins: list[str] = ["*"]
+    cors_allow_credentials: bool = False
 
     # Metrics
     metrics_enabled: bool = True
@@ -85,20 +93,26 @@ class Settings(BaseSettings):
     # have no device-level lock concept and are not affected.
     lock_all: bool = False
 
-    # Live-enrichment fallback for the path resolver.
-    # When the resolver returns ``needs_enrichment`` (typically a classic
-    # ophyd FormattedComponent with a {placeholder}), configuration_service
-    # asks direct-control to instantiate the device and read the real PV
-    # name. If unset, enrichment is disabled and those paths stay as
-    # ``needs_enrichment`` outcomes (matching pre-feature behavior).
-    #
-    # Default timeout 30s budgets for cold-cache batches: per-device
-    # first-touch ≈ 200-500ms (pyepics wait_for_connection), so a 20-
-    # unique-device batch can run several seconds on the first hit.
-    # After warm-up the cache amortizes it; size to your expected
-    # cold batch (unique_devices * 0.5s, with headroom).
-    direct_control_url: Optional[str] = None
-    direct_control_timeout: float = 30.0
+    # Device-lock lease TTL in seconds. 0 (default) disables lease expiry —
+    # locks are held until explicitly released or force-unlocked (historical
+    # behavior). When > 0, every acquired lock carries an expires_at and the
+    # holder must renew it (POST /api/v1/devices/lock/renew) before it lapses;
+    # a holder that crashes without releasing therefore only blocks the device
+    # for up to this many seconds instead of forever. Only enable this when
+    # the lock holder (queueserver) is heartbeat-capable, otherwise long plans
+    # would lose their locks mid-run.
+    lock_lease_ttl_seconds: float = 0.0
+
+    # Allowlist of import-path prefixes that a device's ``device_class`` may
+    # use. The path resolver imports ``device_class`` and, for ophyd-async
+    # subclasses, instantiates it — so an unrestricted value is a code-import
+    # surface. When this list is non-empty, a ``device_class`` is accepted
+    # (at device create/update time) and imported (in the resolver) only if it
+    # starts with one of these prefixes; otherwise it is rejected.
+    # Empty (default) disables the check and preserves the historical
+    # allow-anything behavior — set it in production to lock the resolver down,
+    # e.g. CONFIG_DEVICE_CLASS_ALLOWLIST=["ophyd.","ophyd_async.","mybeamline."].
+    device_class_allowlist: list[str] = []
 
     model_config = SettingsConfigDict(
         env_prefix="CONFIG_",

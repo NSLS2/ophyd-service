@@ -30,7 +30,11 @@ def test_pv_update_event_type_literal(client):
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
             msg = ws.receive_json()
-            if msg.get("pv") == "IOC:counter" and "event_type" in msg and msg.get("sub_type") is None:
+            if (
+                msg.get("pv") == "IOC:counter"
+                and "event_type" in msg
+                and msg.get("sub_type") is None
+            ):
                 assert msg["event_type"] == "pv_update", (
                     f"event_type must literally be 'pv_update'; got {msg['event_type']!r}"
                 )
@@ -73,18 +77,17 @@ def test_device_update_event_type_and_device_field(client):
     ``device_name``. The ``event_type`` literal is our own stable
     convention from ``DeviceUpdate.event_type`` default.
     """
-    from direct_control.models import DeviceInfo
 
     app = client.app
     device_ws_manager = app.state.device_ws_manager
 
     async def _stub_fetch(device_name: str):
         return (
-            DeviceInfo(name=device_name, device_type="motor", pvs={"readback": "IOC:counter"}),
+            {"readback": "IOC:counter"},
             None,
         )
 
-    device_ws_manager._fetch_device_info = _stub_fetch  # type: ignore[method-assign]
+    device_ws_manager._fetch_device_pvs = _stub_fetch  # type: ignore[method-assign]
 
     with client.websocket_connect("/api/v1/device-socket") as ws:
         ws.send_json({"action": "subscribe", "device": "fake_motor"})
@@ -95,7 +98,11 @@ def test_device_update_event_type_and_device_field(client):
             # Loose predicate so the inner asserts can pin the literals — a
             # regression like event_type='value' should surface as a specific
             # assertion message, not pytest.fail's "never received...".
-            if msg.get("device") == "fake_motor" and "event_type" in msg and msg.get("sub_type") is None:
+            if (
+                msg.get("device") == "fake_motor"
+                and "event_type" in msg
+                and msg.get("sub_type") is None
+            ):
                 assert msg["event_type"] == "device_update", (
                     f"event_type must literally be 'device_update'; got {msg['event_type']!r}"
                 )
@@ -162,9 +169,7 @@ def test_error_envelope_full_shape(client):
                 assert "error" in msg and isinstance(msg["error"], str), (
                     f"error envelope missing string 'error' field: {msg!r}"
                 )
-                assert "timestamp" in msg, (
-                    f"error envelope missing 'timestamp' field: {msg!r}"
-                )
+                assert "timestamp" in msg, f"error envelope missing 'timestamp' field: {msg!r}"
                 return
 
         pytest.fail("never received error envelope for malformed set request")

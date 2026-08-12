@@ -13,12 +13,11 @@ Or with custom configuration:
 
 import argparse
 import sys
-from typing import Optional
 
 import uvicorn
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """
     Main entry point for the bluesky-direct-control CLI.
 

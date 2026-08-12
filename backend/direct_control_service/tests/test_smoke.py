@@ -60,11 +60,11 @@ def test_list_connected_pvs_nominal(client):
 # ===== LockedWS size cap (pure unit, no IOC) =====
 
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock  # noqa: E402
 
-import pytest
+import pytest  # noqa: E402
 
-from direct_control.monitoring._envelopes import LockedWS, WebSocketResponseTooLarge
+from direct_control.monitoring._envelopes import LockedWS, WebSocketResponseTooLarge  # noqa: E402
 
 
 async def test_locked_ws_passes_small_payload_when_cap_set():

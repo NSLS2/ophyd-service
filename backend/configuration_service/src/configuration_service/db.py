@@ -32,8 +32,6 @@ Schema notes:
   keep the existing wire/API shape and stay portable across both backends.
 """
 
-from typing import Union
-
 from sqlalchemy import (
     BigInteger,
     Column,
@@ -103,7 +101,7 @@ standalone_pvs = Table(
 )
 
 
-def upsert(bind: Union[Engine, Connection], table: Table):
+def upsert(bind: Engine | Connection, table: Table):
     """Return a dialect-appropriate INSERT construct supporting ON CONFLICT.
 
     Both PostgreSQL and SQLite (3.24+) implement ``INSERT ... ON CONFLICT DO

@@ -120,6 +120,14 @@ exclude_lines = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# src-layout: mark this package's source root so isort first-party detection is
+# independent of the directory ruff is invoked from (repo root vs this dir).
+src = ["src"]
+
+[tool.ruff.lint.isort]
+# Pin first-party so import grouping is identical whether ruff runs from the
+# repo root (pre-commit) or this directory (CI lint job).
+known-first-party = ["configuration_service"]
 
 [tool.ruff.lint]
 select = [
@@ -134,11 +142,28 @@ select = [
 ]
 ignore = [
     "E501",     # line too long (handled by formatter)
+    "UP042",    # `class X(str, Enum)` is intentional — Pydantic/FastAPI serialize via .value and code/logs rely on str-Enum semantics; StrEnum changes str() output
     "ASYNC109", # `timeout=` parameter on async functions — stylistic, not a bug; we use it for EPICS/CA timeouts and FastAPI Query params
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Unused imports in __init__.py
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection markers are called in argument defaults by
+# design (e.g. `q: str = Query(...)`, `svc = Depends(get_svc)`). They are
+# immutable sentinels, so silence B008 for them instead of contorting routes.
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Cookie",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Query",
+    "fastapi.Security",
+]
 
 [tool.mypy]
 python_version = "3.11"

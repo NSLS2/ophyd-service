@@ -25,10 +25,10 @@ Design intent:
   holds strong refs in an in-flight set and removes each via a done
   callback, plus drains them on lifespan shutdown.
 """
+
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 import httpx
 import structlog
@@ -40,7 +40,7 @@ async def _post_outcome(
     client: httpx.AsyncClient,
     pv_name: str,
     success: bool,
-    message: Optional[str],
+    message: str | None,
 ) -> None:
     """One POST to config-service's health endpoint. Logs + swallows
     every exception so the in-flight task never raises into the loop."""
@@ -89,7 +89,7 @@ class PVHealthReporter:
     is called from the lifespan shutdown to flush anything still pending.
     """
 
-    def __init__(self, client: Optional[httpx.AsyncClient]) -> None:
+    def __init__(self, client: httpx.AsyncClient | None) -> None:
         # ``client=None`` means there is no configuration_service to report
         # to (standalone / file-registry mode). Reporting becomes a no-op —
         # an explicit deployment shape, not a swallowed failure; the
@@ -98,8 +98,8 @@ class PVHealthReporter:
         self._inflight: set[asyncio.Task] = set()
 
     def report(
-        self, pv_name: str, success: bool, message: Optional[str] = None
-    ) -> Optional[asyncio.Task]:
+        self, pv_name: str, success: bool, message: str | None = None
+    ) -> asyncio.Task | None:
         """Schedule a background POST and return the task.
 
         Production callers ignore the return value; tests use it to
@@ -108,9 +108,7 @@ class PVHealthReporter:
         """
         if self._client is None:
             return None
-        task = asyncio.create_task(
-            _post_outcome(self._client, pv_name, success, message)
-        )
+        task = asyncio.create_task(_post_outcome(self._client, pv_name, success, message))
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
         return task
@@ -132,7 +130,7 @@ class PVHealthReporter:
                 asyncio.gather(*pending, return_exceptions=True),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             still_pending = list(self._inflight)
             logger.warning(
                 "pv_health_reporter_drain_timeout",

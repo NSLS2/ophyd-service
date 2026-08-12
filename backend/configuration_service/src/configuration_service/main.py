@@ -16,43 +16,48 @@ Architecture:
 - On restart: DB populated → load from DB; DB empty → seed from profile
 """
 
+import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, NamedTuple, Optional, Dict, Any, Annotated, Tuple, Type, TypeVar
+from typing import Annotated, TypeVar
 
 import structlog
-from fastapi import FastAPI, HTTPException, Depends, Query, status
+import yaml
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ValidationError
+from sqlalchemy.engine import Engine
+
+from .config import Settings
+from .db import make_engine
+from .device_registry_store import DeviceRegistryStore
+from .loader import create_loader
+from .lock_manager import DeviceLockManager
 from .models import (
-    LockPolicy,
-    DeviceMetadata,
-    DeviceInstantiationSpec,
-    DeviceRegistry,
-    PVMetadata,
-    DeviceLabel,
-    NestedDeviceComponent,
-    DeviceCreateRequest,
-    DeviceUpdateRequest,
-    DeviceCRUDResponse,
     DeviceAuditEntry,
     DeviceChangesResponse,
-    DeviceLockRequest,
-    DeviceLockResponse,
+    DeviceCreateRequest,
+    DeviceCRUDResponse,
+    DeviceForceUnlockRequest,
+    DeviceInstantiationSpec,
+    DeviceLabel,
     DeviceLockConflict,
     DeviceLockConflictResponse,
+    DeviceLockRenewRequest,
+    DeviceLockRenewResponse,
+    DeviceLockRequest,
+    DeviceLockResponse,
+    DeviceMetadata,
+    DeviceRegistry,
+    DeviceStatusResponse,
     DeviceUnlockRequest,
     DeviceUnlockResponse,
-    DeviceForceUnlockRequest,
-    DeviceStatusResponse,
-    PVStatusResponse,
-    StandalonePV,
-    StandalonePVCreateRequest,
-    StandalonePVUpdateRequest,
-    StandalonePVCRUDResponse,
+    DeviceUpdateRequest,
+    LockPolicy,
+    NestedDeviceComponent,
     PathResolveRequest,
     PathResolveResponse,
     PathResolveResultItem,
@@ -60,23 +65,18 @@ from .models import (
     PVHealthRecord,
     PVHealthReport,
     PVHealthStats,
+    PVMetadata,
+    PVStatusResponse,
+    StandalonePV,
+    StandalonePVCreateRequest,
+    StandalonePVCRUDResponse,
+    StandalonePVUpdateRequest,
 )
-from .path_resolver import Outcome, resolve as resolve_path
-from .direct_control_client import (
-    DirectControlClient,
-    DirectControlUnavailable,
-    EnrichmentSpec,
-)
+from .path_resolver import Outcome, device_class_allowed
+from .path_resolver import resolve as resolve_path
 from .protocols import ConfigurationState
-from .loader import create_loader
-from .config import Settings
-from sqlalchemy.engine import Engine
-
-from .db import make_engine
-from .device_registry_store import DeviceRegistryStore
-from .standalone_pv_store import StandalonePVStore
-from .lock_manager import DeviceLockManager
 from .pv_health_manager import PVHealthManager
+from .standalone_pv_store import StandalonePVStore
 
 # Configure structured logging
 structlog.configure(
@@ -111,9 +111,7 @@ def _maybe_export_openapi(app: FastAPI) -> None:
         out.write_text(json.dumps(app.openapi(), indent=2) + "\n")
         logger.info("openapi_schema_exported", path=str(out))
     except Exception as exc:
-        logger.error(
-            "openapi_schema_export_failed", path=path, error=str(exc), exc_info=True
-        )
+        logger.error("openapi_schema_export_failed", path=path, error=str(exc), exc_info=True)
         raise RuntimeError(
             f"OpenAPI schema export to {path} failed: {exc}. "
             f"Unset {_OPENAPI_EXPORT_PATH_ENV} to skip export."
@@ -126,7 +124,7 @@ _M = TypeVar("_M", bound=BaseModel)
 def _apply_partial_update(
     existing: _M,
     update: BaseModel,
-    target_cls: Type[_M],
+    target_cls: type[_M],
     label: str,
 ) -> _M:
     """Merge only the fields the caller sent onto an existing model.
@@ -143,10 +141,10 @@ def _apply_partial_update(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid {label}: {exc}",
-        )
+        ) from exc
 
 
-def _get_device_prefix(device: "DeviceMetadata", registry: "DeviceRegistry") -> Optional[str]:
+def _get_device_prefix(device: "DeviceMetadata", registry: "DeviceRegistry") -> str | None:
     """Derive the EPICS PV prefix for a device.
 
     Checks three sources in order:
@@ -181,19 +179,105 @@ def _get_device_prefix(device: "DeviceMetadata", registry: "DeviceRegistry") -> 
     return prefix if prefix else None
 
 
-class _DeferredEnrichment(NamedTuple):
-    """One row in the resolve endpoint's deferred-enrichment queue.
+def _resolve_prepare(
+    addresses: list[str],
+    registry: "DeviceRegistry",
+) -> tuple[dict[int, "PathResolveResultItem"], list[tuple[int, str, str, str]]]:
+    """Registry-lookup half of the resolve endpoint's first pass.
 
-    ``result_idx`` is the index of the placeholder slot in ``results``;
-    ``address`` is the original frontend-facing string echoed back in
-    the response; ``cache_key`` is the ``(device_class, prefix, sub_path)``
-    triple used both as the direct-control request and the in-process
-    enrichment cache key.
+    Runs synchronously on the event loop (no awaits), so it can't interleave
+    with a registry mutation — every read is against a consistent snapshot.
+    Returns ``(early_results, to_resolve)``: ``early_results`` maps an address
+    index to a terminal result (device-not-found / no-spec / no-prefix), and
+    ``to_resolve`` carries the captured, immutable
+    ``(index, address, device_class, prefix)`` tuples the blocking
+    second half needs — so the worker thread never touches the shared,
+    mutable registry (which a concurrent multi-step update could leave in a
+    transiently inconsistent state).
     """
+    early: dict[int, PathResolveResultItem] = {}
+    to_resolve: list[tuple[int, str, str, str]] = []
 
-    result_idx: int
-    address: str
-    cache_key: Tuple[str, str, str]
+    for idx, address in enumerate(addresses):
+        head, _, _sub = address.partition(".")
+        device = registry.get_device(head)
+        if device is None:
+            early[idx] = PathResolveResultItem(
+                address=address,
+                outcome=Outcome.DEVICE_NOT_FOUND,
+                message=f"no device named '{head}' in registry",
+            )
+            continue
+
+        spec = registry.get_instantiation_spec(head)
+        if spec is None or not spec.device_class:
+            early[idx] = PathResolveResultItem(
+                address=address,
+                outcome=Outcome.IMPORT_FAILED,
+                message=(
+                    f"device '{head}' has no instantiation spec (can't resolve class to walk)"
+                ),
+            )
+            continue
+
+        prefix = _get_device_prefix(device, registry)
+        if prefix is None:
+            early[idx] = PathResolveResultItem(
+                address=address,
+                outcome=Outcome.IMPORT_FAILED,
+                message=(
+                    f"device '{head}' has no derivable prefix "
+                    f"(checked pvs['prefix'], spec.args[0], longest common PV prefix)"
+                ),
+            )
+            continue
+
+        to_resolve.append((idx, address, spec.device_class, prefix))
+
+    return early, to_resolve
+
+
+def _resolve_execute(
+    total: int,
+    early: dict[int, "PathResolveResultItem"],
+    to_resolve: list[tuple[int, str, str, str, str]],
+    allowlist,
+) -> list["PathResolveResultItem | None"]:
+    """Blocking half of the resolve endpoint's first pass.
+
+    Runs in a worker thread — imports and (for ophyd-async) instantiates the
+    device class, which is why it's kept off the event loop — using only the
+    immutable values captured by ``_resolve_prepare``. It never reads the
+    shared registry, so it can't observe a mid-mutation view.
+
+    Resolution is purely static: ``needs_enrichment`` (an ophyd
+    ``FormattedComponent`` with a runtime placeholder) is a terminal
+    outcome here. Live resolution for those addresses is direct-control's
+    ``POST /api/v1/devices/resolve``, which instantiates the device.
+    """
+    results: list[PathResolveResultItem | None] = [None] * total
+    for idx, item in early.items():
+        results[idx] = item
+
+    device_cache: dict = {}
+
+    for idx, address, device_class, prefix in to_resolve:
+        resolution = resolve_path(
+            address,
+            device_class_path=device_class,
+            prefix=prefix,
+            device_cache=device_cache,
+            allowlist=allowlist,
+        )
+
+        results[idx] = PathResolveResultItem(
+            address=address,
+            outcome=resolution.outcome,
+            pv_name=resolution.pv_name,
+            message=resolution.message,
+        )
+
+    return results
 
 
 def _apply_standalone_pvs(registry, pv_store: StandalonePVStore, log) -> None:
@@ -209,13 +293,13 @@ def _apply_standalone_pvs(registry, pv_store: StandalonePVStore, log) -> None:
 
     applied = 0
     for pv in pvs:
-        registry.pvs[pv.pv_name] = PVMetadata(pv=pv.pv_name, device_name=None)
+        registry.add_standalone_pv(pv.pv_name)
         applied += 1
 
     log.info("standalone_pvs_applied", count=applied)
 
 
-def create_app(settings: Optional[Settings] = None) -> FastAPI:
+def create_app(settings: Settings | None = None) -> FastAPI:
     """
     Create FastAPI application instance.
 
@@ -229,35 +313,33 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         settings = Settings()
 
     # Container for injected state - populated at startup
-    state_container: Dict[str, ConfigurationState] = {}
+    state_container: dict[str, ConfigurationState] = {}
 
     # Container for device registry store (DB)
-    registry_store_container: Dict[str, DeviceRegistryStore] = {}
+    registry_store_container: dict[str, DeviceRegistryStore] = {}
 
     # Container for standalone PV store
-    standalone_pv_container: Dict[str, StandalonePVStore] = {}
+    standalone_pv_container: dict[str, StandalonePVStore] = {}
 
     # Container for device lock manager (in-memory, ephemeral)
-    lock_manager_container: Dict[str, DeviceLockManager] = {}
+    lock_manager_container: dict[str, DeviceLockManager] = {}
+
+    # Serializes registry-mutation handlers (create/update/delete/enable/
+    # disable/reset/clear). Each of those does read-check → await DB write →
+    # in-memory mutate; without a lock, two concurrent requests interleave
+    # across the await (lost updates, double-adds, or a reset swapping out the
+    # registry a CRUD call is mid-way through mutating). One process-wide lock
+    # makes the whole check-then-act sequence atomic.
+    registry_lock_container: dict[str, asyncio.Lock] = {}
 
     # Container for the PV health manager (in-memory, ephemeral).
     # Receives caput outcome reports from direct-control and exposes the
     # state on /api/v1/pvs/{pv_name}/health + the device-status response.
-    pv_health_container: Dict[str, PVHealthManager] = {}
-
-    # Container for the optional direct-control client used by the path
-    # resolver's live-enrichment fallback. None if CONFIG_DIRECT_CONTROL_URL
-    # isn't set — needs_enrichment outcomes then remain unenriched.
-    direct_control_container: Dict[str, "DirectControlClient"] = {}
-
-    # In-process cache for live-enrichment results, keyed by
-    # (device_class_path, prefix, sub_path). Survives across requests
-    # so a warm-cache resolve never re-calls direct-control.
-    enrichment_cache_container: Dict[str, dict] = {}
+    pv_health_container: dict[str, PVHealthManager] = {}
 
     # The single SQLAlchemy engine shared by both persistent stores. Created in
     # the lifespan, disposed at shutdown.
-    engine_container: Dict[str, "Engine"] = {}
+    engine_container: dict[str, Engine] = {}
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -334,30 +416,25 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
         # Initialize device lock manager (in-memory, ephemeral). lock_all is
         # the boot default for the availability policy; runtime-changeable
-        # via PUT /api/v1/devices/lock/policy.
-        lock_manager_container["manager"] = DeviceLockManager(lock_all=settings.lock_all)
-        logger.info("device_lock_manager_initialized", lock_all=settings.lock_all)
+        # via PUT /api/v1/devices/lock/policy. lease_ttl bounds orphaned locks
+        # (0 = disabled, historical behavior).
+        lock_manager_container["manager"] = DeviceLockManager(
+            lock_all=settings.lock_all,
+            lease_ttl=settings.lock_lease_ttl_seconds,
+        )
+        logger.info(
+            "device_lock_manager_initialized",
+            lock_all=settings.lock_all,
+            lease_ttl_seconds=settings.lock_lease_ttl_seconds,
+            lock_epoch=lock_manager_container["manager"].epoch,
+        )
 
         # Initialize PV health manager (in-memory, ephemeral).
         pv_health_container["manager"] = PVHealthManager()
         logger.info("pv_health_manager_initialized")
 
-        # Initialize direct-control client for resolver enrichment fallback.
-        # Opt-in: requires CONFIG_DIRECT_CONTROL_URL to be set.
-        if settings.direct_control_url:
-            direct_control_container["client"] = DirectControlClient(
-                base_url=settings.direct_control_url,
-                timeout=settings.direct_control_timeout,
-            )
-            logger.info(
-                "direct_control_client_initialized",
-                base_url=settings.direct_control_url,
-            )
-
-        # Empty enrichment cache. Lives for the lifetime of the process;
-        # explicit invalidation isn't wired up yet (a device-class deploy
-        # change would require a service restart to clear stale entries).
-        enrichment_cache_container["cache"] = {}
+        # Registry-mutation lock (created inside the running loop).
+        registry_lock_container["lock"] = asyncio.Lock()
 
         yield
 
@@ -368,8 +445,6 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             registry_store_container["store"].close()
         if "engine" in engine_container:
             engine_container["engine"].dispose()
-        if "client" in direct_control_container:
-            await direct_control_container["client"].aclose()
         logger.info("configuration_service_shutdown")
         state_container.clear()
         registry_store_container.clear()
@@ -377,8 +452,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         engine_container.clear()
         lock_manager_container.clear()
         pv_health_container.clear()
-        direct_control_container.clear()
-        enrichment_cache_container.clear()
+        registry_lock_container.clear()
 
     openapi_tags = [
         {"name": "Health", "description": "Service health and readiness checks"},
@@ -414,11 +488,24 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Add CORS middleware to allow UI access
+    # Add CORS middleware to allow UI access. Never combine a wildcard origin
+    # with credentials: Starlette would then reflect the request Origin and set
+    # Access-Control-Allow-Credentials, letting any site issue credentialed
+    # cross-origin calls. Auth is enforced upstream via bearer headers (not
+    # cookies), so credentials stay off unless an explicit origin allowlist is
+    # configured.
+    allow_credentials = settings.cors_allow_credentials
+    if allow_credentials and "*" in settings.cors_origins:
+        logger.warning(
+            "cors_credentials_disabled_with_wildcard_origin",
+            detail="cors_allow_credentials=True is ignored while cors_origins contains '*'; "
+            "set an explicit origin allowlist to enable credentials",
+        )
+        allow_credentials = False
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -428,8 +515,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # goes through Depends().
     app.state.state_container = state_container
     app.state.registry_store_container = registry_store_container
-    app.state.direct_control_container = direct_control_container
-    app.state.enrichment_cache_container = enrichment_cache_container
+    app.state.lock_manager_container = lock_manager_container
 
     # Dependency injection function
     def get_state() -> ConfigurationState:
@@ -477,6 +563,38 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     LockManagerDep = Annotated[DeviceLockManager, Depends(get_lock_manager)]
 
+    # Registry-mutation lock dependency
+    def get_registry_lock() -> asyncio.Lock:
+        """Get the process-wide registry-mutation lock for serialization."""
+        if "lock" not in registry_lock_container:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Registry mutation lock not initialized",
+            )
+        return registry_lock_container["lock"]
+
+    RegistryLockDep = Annotated[asyncio.Lock, Depends(get_registry_lock)]
+
+    def _check_device_class_allowed(device_class: str | None) -> None:
+        """Reject a ``device_class`` outside the configured import allowlist.
+
+        The path resolver imports (and, for ophyd-async, instantiates) a
+        device's ``device_class``, so accepting an arbitrary value at CRUD time
+        would let anyone stage an import-time code-execution payload for the
+        next resolve. When ``CONFIG_DEVICE_CLASS_ALLOWLIST`` is set, only listed
+        prefixes are accepted; empty (default) allows anything.
+        """
+        if device_class is None:
+            return
+        if not device_class_allowed(device_class, settings.device_class_allowlist):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"device_class '{device_class}' is not in the configured "
+                    f"allowlist of importable module prefixes"
+                ),
+            )
+
     # PV health manager dependency
     def get_pv_health_manager() -> PVHealthManager:
         """Get the PV health manager for dependency injection."""
@@ -503,7 +621,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         store = registry_store_container.get("store")
         if store is not None:
             try:
-                store.ping()
+                await asyncio.to_thread(store.ping)
             except Exception as exc:
                 logger.error("health_db_ping_failed", error=str(exc))
                 return JSONResponse(
@@ -511,7 +629,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     content={
                         "status": "unhealthy",
                         "service": "configuration_service",
-                        "detail": f"registry store unreachable: {exc}",
+                        "detail": "registry store unreachable",
                     },
                 )
         return {
@@ -533,20 +651,20 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get(
         "/api/v1/devices",
-        response_model=List[str],
+        response_model=list[str],
         summary="List Devices",
         description="Query available devices from registry",
         tags=["Device Registry"],
     )
     async def list_devices(
         state: StateDep,
-        device_label: Optional[DeviceLabel] = Query(None, description="Filter by device type"),
-        pattern: Optional[str] = Query(None, description="Glob pattern for name matching"),
-        ophyd_class: Optional[str] = Query(None, description="Filter by ophyd device class name"),
-        readable: Optional[bool] = Query(None, description="Filter by the Readable protocol flag"),
-        movable: Optional[bool] = Query(None, description="Filter by the Movable protocol flag"),
-        flyable: Optional[bool] = Query(None, description="Filter by the Flyable protocol flag"),
-    ) -> List[str]:
+        device_label: DeviceLabel | None = Query(None, description="Filter by device type"),
+        pattern: str | None = Query(None, description="Glob pattern for name matching"),
+        ophyd_class: str | None = Query(None, description="Filter by ophyd device class name"),
+        readable: bool | None = Query(None, description="Filter by the Readable protocol flag"),
+        movable: bool | None = Query(None, description="Filter by the Movable protocol flag"),
+        flyable: bool | None = Query(None, description="Filter by the Flyable protocol flag"),
+    ) -> list[str]:
         """
         List available devices.
 
@@ -573,12 +691,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get(
         "/api/v1/devices-info",
-        response_model=Dict[str, DeviceMetadata],
+        response_model=dict[str, DeviceMetadata],
         summary="Get All Devices Info",
         description="Get detailed metadata for all devices (ophyd-websocket compatible)",
         tags=["Device Registry"],
     )
-    async def get_all_devices_info(state: StateDep) -> Dict[str, DeviceMetadata]:
+    async def get_all_devices_info(state: StateDep) -> dict[str, DeviceMetadata]:
         """
         Get metadata for all registered devices.
 
@@ -586,16 +704,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         Returns a dictionary mapping device names to their full metadata.
         """
         logger.info("get_all_devices_info")
-        return {name: device for name, device in state.registry.devices.items()}
+        return dict(state.registry.devices)
 
     @app.get(
         "/api/v1/devices/classes",
-        response_model=List[str],
+        response_model=list[str],
         summary="List Device Classes",
         description="Get list of unique ophyd device classes (as-ophyd-api compatible)",
         tags=["Device Registry"],
     )
-    async def get_device_classes(state: StateDep) -> List[str]:
+    async def get_device_classes(state: StateDep) -> list[str]:
         """
         Get list of unique device classes.
 
@@ -610,12 +728,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get(
         "/api/v1/devices/types",
-        response_model=List[str],
+        response_model=list[str],
         summary="List Device Types",
         description="Get list of device type categories",
         tags=["Device Registry"],
     )
-    async def get_device_labels(state: StateDep) -> List[str]:
+    async def get_device_labels(state: StateDep) -> list[str]:
         """
         Get list of device type categories.
 
@@ -631,7 +749,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get(
         "/api/v1/devices/instantiation",
-        response_model=Dict[str, DeviceInstantiationSpec],
+        response_model=dict[str, DeviceInstantiationSpec],
         summary="List Device Instantiation Specs",
         description="Get all device instantiation specifications for remote device creation",
         tags=["Device Instantiation"],
@@ -639,7 +757,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def list_device_instantiations(
         state: StateDep,
         active_only: bool = Query(True, description="Only return active devices"),
-    ) -> Dict[str, DeviceInstantiationSpec]:
+    ) -> dict[str, DeviceInstantiationSpec]:
         """
         Get all device instantiation specifications.
 
@@ -657,23 +775,33 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get(
         "/api/v1/devices/history",
-        response_model=List[DeviceAuditEntry],
+        response_model=list[DeviceAuditEntry],
         summary="Device Audit Log",
         description="List device change history (audit log of all mutations)",
         tags=["Device Management"],
     )
     async def list_device_history(
         registry_store: RegistryStoreDep,
-        device_name: Optional[str] = Query(None, description="Filter to a specific device"),
+        device_name: str | None = Query(None, description="Filter to a specific device"),
         limit: int = Query(1000, ge=1, le=10000, description="Max entries to return"),
-    ) -> List[DeviceAuditEntry]:
+    ) -> list[DeviceAuditEntry]:
         """
         Get the device audit log.
 
         Returns append-only history of all device mutations (seed, add,
         update, delete, reset). Use device_name to filter to a specific device.
         """
-        return registry_store.get_audit_log(device_name=device_name, limit=limit)
+        # PostgreSQL text fields cannot contain NUL — without this guard a
+        # \x00 in the filter reaches the driver and 500s (backend-dependent:
+        # SQLite tolerates it). Reject loudly instead.
+        if device_name is not None and "\x00" in device_name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="device_name must not contain NUL (0x00) characters",
+            )
+        return await asyncio.to_thread(
+            registry_store.get_audit_log, device_name=device_name, limit=limit
+        )
 
     @app.get(
         "/api/v1/devices/changes",
@@ -696,7 +824,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             0, ge=0, description="Return changes with audit id greater than this value"
         ),
     ) -> DeviceChangesResponse:
-        result = registry_store.get_changes_since(since_version=since_version)
+        result = await asyncio.to_thread(
+            registry_store.get_changes_since, since_version=since_version
+        )
         return DeviceChangesResponse(**result)
 
     # ===== Device Locking Endpoints =====
@@ -728,6 +858,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         state: StateDep,
         lock_manager: LockManagerDep,
         registry_store: RegistryStoreDep,
+        registry_lock: RegistryLockDep,
     ) -> DeviceLockResponse:
         """
         Acquire locks on multiple devices atomically (all-or-nothing).
@@ -739,13 +870,19 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         Locks are held for the duration of a Bluesky plan (minutes to hours).
         EE sends unlock when the plan completes, fails, or is aborted.
         """
-        result = await lock_manager.acquire_locks(
-            device_names=request.device_names,
-            item_id=request.item_id,
-            plan_name=request.plan_name,
-            locked_by_service=request.locked_by_service,
-            registry=state.registry,
-        )
+        # Acquire under the registry lock so a device can't be locked in the
+        # window between a delete/update's "is it locked?" check and its write
+        # (which would let a mutation slip through on a device a plan just
+        # grabbed), and so acquisition validates against the current registry
+        # (a concurrent reset may have swapped it).
+        async with registry_lock:
+            result = await lock_manager.acquire_locks(
+                device_names=request.device_names,
+                item_id=request.item_id,
+                plan_name=request.plan_name,
+                locked_by_service=request.locked_by_service,
+                registry=state_container["state"].registry,
+            )
 
         if not result.success:
             # Build conflict response
@@ -781,7 +918,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             )
 
         # Write audit log
-        registry_store.log_lock_event(
+        await asyncio.to_thread(
+            registry_store.log_lock_event,
             device_names=result.locked_devices,
             operation="lock",
             details=json.dumps(
@@ -807,6 +945,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             locked_pvs=result.locked_pvs,
             lock_id=result.lock_id,
             registry_version=lock_manager.version,
+            lock_epoch=lock_manager.epoch,
+            expires_at=result.expires_at.isoformat() if result.expires_at else None,
+            lease_ttl_seconds=lock_manager.lease_ttl,
         )
 
     @app.post(
@@ -837,7 +978,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             )
 
         if unlocked:
-            registry_store.log_lock_event(
+            await asyncio.to_thread(
+                registry_store.log_lock_event,
                 device_names=unlocked,
                 operation="unlock",
                 details=json.dumps(
@@ -854,6 +996,42 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             success=True,
             unlocked_devices=unlocked,
             registry_version=lock_manager.version,
+            lock_epoch=lock_manager.epoch,
+        )
+
+    @app.post(
+        "/api/v1/devices/lock/renew",
+        response_model=DeviceLockRenewResponse,
+        summary="Renew Device Locks (Heartbeat)",
+        tags=["Device Locking"],
+    )
+    async def renew_device_locks(
+        request: DeviceLockRenewRequest,
+        lock_manager: LockManagerDep,
+    ) -> DeviceLockRenewResponse:
+        """Extend the lease on locks held by ``item_id`` (heartbeat).
+
+        Called periodically by the lock holder while it still needs the
+        devices. Only meaningful when leases are enabled
+        (CONFIG_LOCK_LEASE_TTL_SECONDS > 0); with leases disabled every held
+        lock is renewed as a no-op. ``lost_devices`` tells the holder which
+        locks it must re-acquire (expired, released, or dropped by a restart),
+        and ``lock_epoch`` confirms whether the authority itself reset.
+
+        This route is registered before the ``{device_name}`` wildcard so
+        ``renew`` is never matched as a device name.
+        """
+        result = await lock_manager.renew_locks(
+            device_names=request.device_names,
+            item_id=request.item_id,
+        )
+        return DeviceLockRenewResponse(
+            success=result.success,
+            renewed_devices=result.renewed,
+            lost_devices=result.lost,
+            conflict_devices=result.conflicts,
+            lock_epoch=lock_manager.epoch,
+            expires_at=result.expires_at.isoformat() if result.expires_at else None,
         )
 
     @app.post(
@@ -886,7 +1064,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             )
 
         if unlocked:
-            registry_store.log_lock_event(
+            await asyncio.to_thread(
+                registry_store.log_lock_event,
                 device_names=unlocked,
                 operation="force_unlock",
                 details=json.dumps(
@@ -903,6 +1082,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             success=True,
             unlocked_devices=unlocked,
             registry_version=lock_manager.version,
+            lock_epoch=lock_manager.epoch,
         )
 
     # ===== Lock Policy =====
@@ -924,9 +1104,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         summary="Set Lock Policy",
         tags=["Device Locking"],
     )
-    async def set_lock_policy(
-        policy: LockPolicy, lock_manager: LockManagerDep
-    ) -> LockPolicy:
+    async def set_lock_policy(policy: LockPolicy, lock_manager: LockManagerDep) -> LockPolicy:
         """
         Set the lock_all availability policy at runtime.
 
@@ -991,6 +1169,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             locked_by_plan=lock_state.locked_by_plan if lock_state else None,
             locked_by_item=lock_state.locked_by_item if lock_state else None,
             locked_at=lock_state.locked_at.isoformat() if lock_state else None,
+            locked_until=(
+                lock_state.expires_at.isoformat() if lock_state and lock_state.expires_at else None
+            ),
+            lock_epoch=lock_manager.epoch,
             pv_health=pv_health_rollup,
         )
 
@@ -1094,8 +1276,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=(
-                    f"No health record for PV '{pv_name}'. No failures "
-                    f"recorded; treat as healthy."
+                    f"No health record for PV '{pv_name}'. No failures recorded; treat as healthy."
                 ),
             )
         return record
@@ -1170,6 +1351,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         device_name: str,
         state: StateDep,
         registry_store: RegistryStoreDep,
+        registry_lock: RegistryLockDep,
     ) -> DeviceCRUDResponse:
         """
         Enable a device in the registry.
@@ -1178,37 +1360,44 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         Enabled devices will be included when remote services (e.g.,
         Experiment Execution) pull the device list.
         """
-        existing = state.registry.get_device(device_name)
-        if existing is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Device not found: {device_name}",
-            )
+        async with registry_lock:
+            state = state_container["state"]
+            existing = state.registry.get_device(device_name)
+            if existing is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Device not found: {device_name}",
+                )
 
-        spec = state.registry.get_instantiation_spec(device_name)
-        if spec is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No instantiation spec for device: {device_name}",
-            )
+            spec = state.registry.get_instantiation_spec(device_name)
+            if spec is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No instantiation spec for device: {device_name}",
+                )
 
-        if spec.active:
-            return DeviceCRUDResponse(
-                success=True,
-                device_name=device_name,
+            if spec.active:
+                return DeviceCRUDResponse(
+                    success=True,
+                    device_name=device_name,
+                    operation="enable",
+                    message=f"Device '{device_name}' is already enabled",
+                )
+
+            # Persist first, then mutate memory (matching create/update/delete) so a
+            # failed DB write can't leave the in-memory registry enabled while the
+            # database still says disabled. Use a copy — 'spec' is the live registry
+            # object, so mutating it in place would change memory before the write.
+            updated_spec = spec.model_copy(update={"active": True})
+            await asyncio.to_thread(
+                registry_store.save_device,
+                name=device_name,
+                metadata=existing,
+                spec=updated_spec,
                 operation="enable",
-                message=f"Device '{device_name}' is already enabled",
+                details={"field": "active", "old": False, "new": True},
             )
-
-        spec.active = True
-        state.registry.update_device(existing, spec)
-        registry_store.save_device(
-            name=device_name,
-            metadata=existing,
-            spec=spec,
-            operation="enable",
-            details={"field": "active", "old": False, "new": True},
-        )
+            state.registry.update_device(existing, updated_spec)
 
         logger.info("device_enabled", device_name=device_name)
 
@@ -1230,6 +1419,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         device_name: str,
         state: StateDep,
         registry_store: RegistryStoreDep,
+        registry_lock: RegistryLockDep,
     ) -> DeviceCRUDResponse:
         """
         Disable a device in the registry.
@@ -1238,37 +1428,44 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         Disabled devices remain in the registry but are excluded when
         remote services pull the active device list.
         """
-        existing = state.registry.get_device(device_name)
-        if existing is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Device not found: {device_name}",
-            )
+        async with registry_lock:
+            state = state_container["state"]
+            existing = state.registry.get_device(device_name)
+            if existing is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Device not found: {device_name}",
+                )
 
-        spec = state.registry.get_instantiation_spec(device_name)
-        if spec is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No instantiation spec for device: {device_name}",
-            )
+            spec = state.registry.get_instantiation_spec(device_name)
+            if spec is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No instantiation spec for device: {device_name}",
+                )
 
-        if not spec.active:
-            return DeviceCRUDResponse(
-                success=True,
-                device_name=device_name,
+            if not spec.active:
+                return DeviceCRUDResponse(
+                    success=True,
+                    device_name=device_name,
+                    operation="disable",
+                    message=f"Device '{device_name}' is already disabled",
+                )
+
+            # Persist first, then mutate memory (matching create/update/delete) so a
+            # failed DB write can't leave the in-memory registry disabled while the
+            # database still says enabled. Use a copy — 'spec' is the live registry
+            # object, so mutating it in place would change memory before the write.
+            updated_spec = spec.model_copy(update={"active": False})
+            await asyncio.to_thread(
+                registry_store.save_device,
+                name=device_name,
+                metadata=existing,
+                spec=updated_spec,
                 operation="disable",
-                message=f"Device '{device_name}' is already disabled",
+                details={"field": "active", "old": True, "new": False},
             )
-
-        spec.active = False
-        state.registry.update_device(existing, spec)
-        registry_store.save_device(
-            name=device_name,
-            metadata=existing,
-            spec=spec,
-            operation="disable",
-            details={"field": "active", "old": True, "new": False},
-        )
+            state.registry.update_device(existing, updated_spec)
 
         logger.info("device_disabled", device_name=device_name)
 
@@ -1383,6 +1580,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         request: DeviceCreateRequest,
         state: StateDep,
         registry_store: RegistryStoreDep,
+        registry_lock: RegistryLockDep,
     ) -> DeviceCRUDResponse:
         """
         Create a new runtime device.
@@ -1398,27 +1596,38 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 detail=f"Name mismatch: metadata.name='{request.metadata.name}' != instantiation_spec.name='{request.instantiation_spec.name}'",
             )
 
-        # Check for conflict
-        if state.registry.get_device(device_name) is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Device already exists: {device_name}",
+        _check_device_class_allowed(request.instantiation_spec.device_class)
+
+        # Serialize the check-then-act sequence so two concurrent creates for
+        # the same name can't both pass the conflict check and double-write.
+        async with registry_lock:
+            # Re-read the published state *inside* the lock: a reset/clear that
+            # ran while we waited for the lock swapped state_container["state"],
+            # so the injected StateDep may point at a now-discarded registry.
+            state = state_container["state"]
+            # Check for conflict
+            if state.registry.get_device(device_name) is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Device already exists: {device_name}",
+                )
+
+            # Persist FIRST, then mutate memory: if the DB write fails the
+            # request 500s with the registry unchanged, so the client's retry
+            # succeeds instead of 409ing on a phantom device that would vanish
+            # at the next restart.
+            await asyncio.to_thread(
+                registry_store.save_device,
+                name=device_name,
+                metadata=request.metadata,
+                spec=request.instantiation_spec,
+                operation="add",
+                details={
+                    "device_label": request.metadata.device_label,
+                    "ophyd_class": request.metadata.ophyd_class,
+                },
             )
-
-        # Add to in-memory registry
-        state.registry.add_device(request.metadata, request.instantiation_spec)
-
-        # Persist to DB
-        registry_store.save_device(
-            name=device_name,
-            metadata=request.metadata,
-            spec=request.instantiation_spec,
-            operation="add",
-            details={
-                "device_label": request.metadata.device_label,
-                "ophyd_class": request.metadata.ophyd_class,
-            },
-        )
+            state.registry.add_device(request.metadata, request.instantiation_spec)
 
         logger.info("device_created", device_name=device_name)
 
@@ -1441,6 +1650,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         request: DeviceUpdateRequest,
         state: StateDep,
         registry_store: RegistryStoreDep,
+        lock_manager: LockManagerDep,
+        registry_lock: RegistryLockDep,
     ) -> DeviceCRUDResponse:
         """
         Update a device's metadata and/or instantiation spec.
@@ -1449,15 +1660,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         in the request body are changed.  Omitted fields keep their
         current values.
         """
-        # Check device exists
-        existing_metadata = state.registry.get_device(device_name)
-        if existing_metadata is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Device not found: {device_name}",
-            )
-
-        # Validate name in body matches path param (if provided)
+        # Validate name in body matches path param (if provided) — pure
+        # request validation, safe to run before taking the lock.
         if request.metadata and request.metadata.name is not None:
             if request.metadata.name != device_name:
                 raise HTTPException(
@@ -1471,61 +1675,90 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     detail=f"Spec name '{request.instantiation_spec.name}' does not match path '{device_name}'",
                 )
 
-        # Field-level merge: overlay only the fields the caller sent
-        merged_metadata = (
-            _apply_partial_update(
-                existing_metadata, request.metadata, DeviceMetadata, "metadata update"
-            )
-            if request.metadata
-            else existing_metadata
-        )
-
-        existing_spec = state.registry.get_instantiation_spec(device_name)
         if request.instantiation_spec:
-            if existing_spec:
-                merged_spec = _apply_partial_update(
-                    existing_spec,
-                    request.instantiation_spec,
-                    DeviceInstantiationSpec,
-                    "instantiation spec update",
+            _check_device_class_allowed(request.instantiation_spec.device_class)
+
+        # Serialize the read-check-merge-write against other registry mutations
+        # so two concurrent PUTs can't read the same state and clobber each
+        # other's fields (lost update).
+        async with registry_lock:
+            # Re-read the published state inside the lock (see create_device).
+            state = state_container["state"]
+            # Check device exists
+            existing_metadata = state.registry.get_device(device_name)
+            if existing_metadata is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Device not found: {device_name}",
                 )
-            else:
-                # No existing spec — treat as creation from the partial fields
-                try:
-                    merged_spec = DeviceInstantiationSpec.model_validate(
-                        request.instantiation_spec.model_dump(exclude_unset=True)
-                    )
-                except ValidationError as exc:
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail=f"Invalid instantiation spec: {exc}",
-                    )
-        else:
-            merged_spec = existing_spec
 
-        # Track what changed for audit details
-        changed_fields = []
-        if request.metadata:
-            changed_fields.extend(list(request.metadata.model_dump(exclude_unset=True).keys()))
-        if request.instantiation_spec:
-            changed_fields.extend(
-                [
-                    f"spec.{k}"
-                    for k in request.instantiation_spec.model_dump(exclude_unset=True).keys()
-                ]
+            # Refuse to rewrite a device a plan currently holds locked —
+            # changing its PVs (or dropping it) mid-plan would desync the
+            # running plan from the hardware it acquired.
+            if lock_manager.is_device_locked(device_name):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Device '{device_name}' is locked and cannot be "
+                        f"updated; unlock it (or wait for the plan to finish) "
+                        f"first"
+                    ),
+                )
+
+            # Field-level merge: overlay only the fields the caller sent
+            merged_metadata = (
+                _apply_partial_update(
+                    existing_metadata, request.metadata, DeviceMetadata, "metadata update"
+                )
+                if request.metadata
+                else existing_metadata
             )
 
-        # Update in-memory registry
-        state.registry.update_device(merged_metadata, merged_spec)
+            existing_spec = state.registry.get_instantiation_spec(device_name)
+            if request.instantiation_spec:
+                if existing_spec:
+                    merged_spec = _apply_partial_update(
+                        existing_spec,
+                        request.instantiation_spec,
+                        DeviceInstantiationSpec,
+                        "instantiation spec update",
+                    )
+                else:
+                    # No existing spec — treat as creation from the partial fields
+                    try:
+                        merged_spec = DeviceInstantiationSpec.model_validate(
+                            request.instantiation_spec.model_dump(exclude_unset=True)
+                        )
+                    except ValidationError as exc:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=f"Invalid instantiation spec: {exc}",
+                        ) from exc
+            else:
+                merged_spec = existing_spec
 
-        # Persist to DB
-        registry_store.save_device(
-            name=device_name,
-            metadata=merged_metadata,
-            spec=merged_spec,
-            operation="update",
-            details={"changed_fields": changed_fields} if changed_fields else None,
-        )
+            # Track what changed for audit details
+            changed_fields = []
+            if request.metadata:
+                changed_fields.extend(list(request.metadata.model_dump(exclude_unset=True).keys()))
+            if request.instantiation_spec:
+                changed_fields.extend(
+                    [
+                        f"spec.{k}"
+                        for k in request.instantiation_spec.model_dump(exclude_unset=True).keys()
+                    ]
+                )
+
+            # Persist FIRST, then mutate memory (see create_device).
+            await asyncio.to_thread(
+                registry_store.save_device,
+                name=device_name,
+                metadata=merged_metadata,
+                spec=merged_spec,
+                operation="update",
+                details={"changed_fields": changed_fields} if changed_fields else None,
+            )
+            state.registry.update_device(merged_metadata, merged_spec)
 
         logger.info("device_updated", device_name=device_name)
 
@@ -1547,6 +1780,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         device_name: str,
         state: StateDep,
         registry_store: RegistryStoreDep,
+        lock_manager: LockManagerDep,
+        registry_lock: RegistryLockDep,
     ) -> DeviceCRUDResponse:
         """
         Delete a device from the registry.
@@ -1554,25 +1789,43 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         Removes the device from both the in-memory registry and the DB.
         The deletion is recorded in the audit log.
         """
-        # Check device exists
-        existing_device = state.registry.get_device(device_name)
-        if existing_device is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Device not found: {device_name}",
+        async with registry_lock:
+            # Re-read the published state inside the lock (see create_device).
+            state = state_container["state"]
+            # Check device exists
+            existing_device = state.registry.get_device(device_name)
+            if existing_device is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Device not found: {device_name}",
+                )
+
+            # Refuse to delete a device a plan currently holds locked —
+            # deleting it would orphan the lock (unclearable via the normal
+            # path) and, under the lock_all policy, report the whole beamline
+            # locked until restart.
+            if lock_manager.is_device_locked(device_name):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Device '{device_name}' is locked and cannot be "
+                        f"deleted; unlock it (or wait for the plan to finish) "
+                        f"first"
+                    ),
+                )
+
+            # Persist FIRST, then mutate memory (see create_device): a failed
+            # DB delete leaves the device fully present instead of a memory/DB
+            # split that resurrects it at the next restart.
+            await asyncio.to_thread(
+                registry_store.delete_device,
+                device_name,
+                details={
+                    "ophyd_class": existing_device.ophyd_class,
+                    "device_label": existing_device.device_label,
+                },
             )
-
-        # Remove from in-memory registry
-        state.registry.remove_device(device_name)
-
-        # Remove from DB (also appends audit log entry)
-        registry_store.delete_device(
-            device_name,
-            details={
-                "ophyd_class": existing_device.ophyd_class,
-                "device_label": existing_device.device_label,
-            },
-        )
+            state.registry.remove_device(device_name)
 
         logger.info("device_deleted", device_name=device_name)
 
@@ -1595,6 +1848,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def reset_registry(
         state: StateDep,
         registry_store: RegistryStoreDep,
+        lock_manager: LockManagerDep,
+        registry_lock: RegistryLockDep,
     ) -> DeviceCRUDResponse:
         """
         Reset the device registry.
@@ -1603,23 +1858,34 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         collection. Standalone PVs are re-applied on top. The reset
         is recorded in the audit log.
         """
-        # Re-load from profile
-        loader = create_loader(settings)
-        registry = loader.load_registry()
+        async with registry_lock:
+            # Re-load from profile. load_registry() reads/parses the profile
+            # and imports device classes — blocking work, so run it off the
+            # event loop like the DB writes below.
+            loader = create_loader(settings)
+            registry = await asyncio.to_thread(loader.load_registry)
 
-        # Wipe DB and re-seed
-        registry_store.clear_and_reseed(registry)
+            # Wipe DB and re-seed
+            await asyncio.to_thread(registry_store.clear_and_reseed, registry)
 
-        # Re-apply standalone PVs
-        if "store" in standalone_pv_container:
-            _apply_standalone_pvs(registry, standalone_pv_container["store"], logger)
+            # Re-apply standalone PVs
+            if "store" in standalone_pv_container:
+                await asyncio.to_thread(
+                    _apply_standalone_pvs, registry, standalone_pv_container["store"], logger
+                )
 
-        # Replace in-memory state
-        state_container["state"] = ConfigurationState(registry=registry)
+            # Drop every device lock: the devices they referred to were just
+            # wiped, so leaving the locks would orphan them (and under lock_all
+            # report the whole beamline locked until restart).
+            cleared = await lock_manager.clear_all()
+
+            # Replace in-memory state
+            state_container["state"] = ConfigurationState(registry=registry)
 
         logger.info(
             "registry_reset",
             devices=len(registry.devices),
+            locks_cleared=len(cleared),
         )
 
         return DeviceCRUDResponse(
@@ -1639,6 +1905,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def clear_registry(
         state: StateDep,
         registry_store: RegistryStoreDep,
+        lock_manager: LockManagerDep,
+        registry_lock: RegistryLockDep,
     ) -> DeviceCRUDResponse:
         """
         Clear the device registry to empty.
@@ -1647,17 +1915,23 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         The registry remains empty until devices are added via CRUD,
         the EE service syncs, or the service is restarted.
         """
-        empty_registry = DeviceRegistry()
+        async with registry_lock:
+            empty_registry = DeviceRegistry()
 
-        registry_store.clear_and_reseed(empty_registry)
+            await asyncio.to_thread(registry_store.clear_and_reseed, empty_registry)
 
-        # Re-apply standalone PVs (they are preserved)
-        if "store" in standalone_pv_container:
-            _apply_standalone_pvs(empty_registry, standalone_pv_container["store"], logger)
+            # Re-apply standalone PVs (they are preserved)
+            if "store" in standalone_pv_container:
+                await asyncio.to_thread(
+                    _apply_standalone_pvs, empty_registry, standalone_pv_container["store"], logger
+                )
 
-        state_container["state"] = ConfigurationState(registry=empty_registry)
+            # Drop every device lock — the devices are gone (see reset_registry).
+            cleared = await lock_manager.clear_all()
 
-        logger.info("registry_cleared")
+            state_container["state"] = ConfigurationState(registry=empty_registry)
+
+        logger.info("registry_cleared", locks_cleared=len(cleared))
 
         return DeviceCRUDResponse(
             success=True,
@@ -1669,27 +1943,52 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.get(
         "/api/v1/registry/export",
         summary="Export Registry",
-        description="Export the device registry in a portable format (happi)",
+        description="Export the device registry in a portable format (happi JSON or BITS devices.yml)",
         tags=["Registry Admin"],
+        responses={
+            200: {
+                "description": (
+                    "Registry export. `format=happi` (default) returns happi "
+                    "JSON (`application/json`); `format=bits` returns a BITS "
+                    "`devices.yml` document (`application/x-yaml`)."
+                ),
+                "content": {
+                    "application/json": {},
+                    "application/x-yaml": {},
+                },
+            },
+            400: {"description": "Unsupported export format."},
+        },
     )
     async def export_registry(
         registry_store: RegistryStoreDep,
-        format: str = Query("happi", description="Export format (currently only 'happi')"),
+        format: str = Query(
+            "happi",
+            description="Export format: 'happi' (default, JSON) or 'bits' (guarneri devices.yml)",
+        ),
     ):
         """
         Export the device registry.
 
-        Returns the full device registry in happi JSON format, suitable
-        for importing on another VM or as a backup.
+        Returns the full device registry in happi JSON format (default) or, when
+        ``format=bits``, as a BITS (BCDA-APS guarneri) ``devices.yml``. Either is
+        suitable for importing on another VM or as a backup. The BITS format is
+        lossy for constructor arguments the guarneri schema cannot express
+        (see ``DeviceRegistryStore.export_bits``); prefer happi for full fidelity.
         """
-        if format != "happi":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported export format: '{format}'. Supported: happi",
-            )
+        if format == "happi":
+            happi_data = await asyncio.to_thread(registry_store.export_happi)
+            return JSONResponse(content=happi_data)
 
-        happi_data = registry_store.export_happi()
-        return JSONResponse(content=happi_data)
+        if format == "bits":
+            bits_data = await asyncio.to_thread(registry_store.export_bits)
+            yaml_text = yaml.safe_dump(bits_data, default_flow_style=False, sort_keys=True)
+            return Response(content=yaml_text, media_type="application/x-yaml")
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported export format: '{format}'. Supported: happi, bits",
+        )
 
     # ===== Standalone PV Endpoints =====
     # NOTE: These must be defined BEFORE /api/v1/pvs/{pv_name:path}
@@ -1707,6 +2006,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         request: StandalonePVCreateRequest,
         state: StateDep,
         pv_store: StandalonePVStoreDep,
+        registry_lock: RegistryLockDep,
     ) -> StandalonePVCRUDResponse:
         """
         Register a standalone PV.
@@ -1716,33 +2016,38 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         """
         pv_name = request.pv_name
 
-        # Check for conflict with existing registry PVs (device-bound)
-        if state.registry.get_pv(pv_name) is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"PV already exists in registry: {pv_name}",
+        # Serialize against other registry mutations (incl. reset/clear, which
+        # re-apply standalone PVs) and re-read the published state inside the
+        # lock so the add lands on the current registry (see create_device).
+        async with registry_lock:
+            state = state_container["state"]
+
+            # Check for conflict with existing registry PVs (device-bound)
+            if state.registry.get_pv(pv_name) is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"PV already exists in registry: {pv_name}",
+                )
+
+            # Check for conflict with existing standalone PVs
+            if await asyncio.to_thread(pv_store.get_pv, pv_name) is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Standalone PV already registered: {pv_name}",
+                )
+
+            # Persist FIRST, then mutate memory (see create_device).
+            await asyncio.to_thread(
+                pv_store.save_pv,
+                pv_name=pv_name,
+                description=request.description,
+                protocol=request.protocol.value,
+                access_mode=request.access_mode.value,
+                labels=request.labels,
+                source="runtime",
+                created_by=None,
             )
-
-        # Check for conflict with existing standalone PVs
-        if pv_store.get_pv(pv_name) is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Standalone PV already registered: {pv_name}",
-            )
-
-        # Add to in-memory registry
-        state.registry.pvs[pv_name] = PVMetadata(pv=pv_name, device_name=None)
-
-        # Persist to store
-        pv_store.save_pv(
-            pv_name=pv_name,
-            description=request.description,
-            protocol=request.protocol.value,
-            access_mode=request.access_mode.value,
-            labels=request.labels,
-            source="runtime",
-            created_by=None,
-        )
+            state.registry.add_standalone_pv(pv_name)
 
         logger.info("standalone_pv_created", pv_name=pv_name)
 
@@ -1755,15 +2060,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get(
         "/api/v1/pvs/standalone",
-        response_model=List[StandalonePV],
+        response_model=list[StandalonePV],
         summary="List Standalone PVs",
         description="List all registered standalone PVs with optional label filtering",
         tags=["Standalone PVs"],
     )
     async def list_standalone_pvs(
         pv_store: StandalonePVStoreDep,
-        labels: Optional[str] = Query(None, description="Comma-separated labels to filter by"),
-    ) -> List[StandalonePV]:
+        labels: str | None = Query(None, description="Comma-separated labels to filter by"),
+    ) -> list[StandalonePV]:
         """
         List all standalone PVs.
 
@@ -1771,22 +2076,22 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         """
         label_list = None
         if labels:
-            label_list = [l.strip() for l in labels.split(",") if l.strip()]
+            label_list = [s.strip() for s in labels.split(",") if s.strip()]
 
-        return pv_store.get_all_pvs(labels=label_list)
+        return await asyncio.to_thread(pv_store.get_all_pvs, labels=label_list)
 
     @app.get(
         "/api/v1/pvs/labels",
-        response_model=List[str],
+        response_model=list[str],
         summary="List Standalone PV Labels",
         description="Get all unique labels across registered standalone PVs",
         tags=["Standalone PVs"],
     )
     async def list_standalone_pv_labels(
         pv_store: StandalonePVStoreDep,
-    ) -> List[str]:
+    ) -> list[str]:
         """Get all unique labels from standalone PVs."""
-        return pv_store.get_all_labels()
+        return await asyncio.to_thread(pv_store.get_all_labels)
 
     @app.put(
         "/api/v1/pvs/standalone/{pv_name:path}",
@@ -1805,7 +2110,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
         Supports field-level partial updates. Returns 404 if not found.
         """
-        existing = pv_store.get_pv(pv_name)
+        existing = await asyncio.to_thread(pv_store.get_pv, pv_name)
         if existing is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1823,7 +2128,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         }
         merged.update(updates)
 
-        pv_store.save_pv(pv_name=pv_name, **merged)
+        await asyncio.to_thread(pv_store.save_pv, pv_name=pv_name, **merged)
 
         logger.info("standalone_pv_updated", pv_name=pv_name)
 
@@ -1845,6 +2150,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         pv_name: str,
         state: StateDep,
         pv_store: StandalonePVStoreDep,
+        registry_lock: RegistryLockDep,
     ) -> StandalonePVCRUDResponse:
         """
         Delete a standalone PV.
@@ -1852,18 +2158,24 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         Removes from both the persistent store and the in-memory registry.
         Returns 404 if not found.
         """
-        existing = pv_store.get_pv(pv_name)
-        if existing is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Standalone PV not found: {pv_name}",
-            )
+        # Serialize against other registry mutations and re-read the published
+        # state inside the lock (see create_standalone_pv / create_device).
+        async with registry_lock:
+            state = state_container["state"]
 
-        # Remove from persistent store
-        pv_store.delete_pv(pv_name)
+            existing = await asyncio.to_thread(pv_store.get_pv, pv_name)
+            if existing is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Standalone PV not found: {pv_name}",
+                )
 
-        # Remove from in-memory registry
-        state.registry.pvs.pop(pv_name, None)
+            # Remove from persistent store
+            await asyncio.to_thread(pv_store.delete_pv, pv_name)
+
+            # Remove from in-memory registry (keeps the entry if a device owns
+            # the PV — deleting it would destroy the device's registration).
+            state.registry.remove_standalone_pv(pv_name)
 
         logger.info("standalone_pv_deleted", pv_name=pv_name)
 
@@ -1884,7 +2196,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     )
     async def list_pvs(
         state: StateDep,
-        pattern: Optional[str] = Query(None, description="Glob pattern for PV name matching"),
+        pattern: str | None = Query(None, description="Glob pattern for PV name matching"),
     ) -> dict:
         """
         List available PVs.
@@ -2159,9 +2471,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         description=(
             "Walk the ophyd / ophyd-async device class for each address "
             "and return the underlying EPICS PV. Read-only, best-effort "
-            "per-item — no halt-on-error. Used by the frontend to translate "
-            "friendly addresses like 'vortex.mca.rois.roi2.lo_chan' into "
-            "the PV strings needed by direct-control's batch caput."
+            "per-item — no halt-on-error. Purely static: addresses that "
+            "need a live device (ophyd FormattedComponent placeholders) "
+            "return needs_enrichment; resolve those via direct-control's "
+            "POST /api/v1/devices/resolve instead."
         ),
         tags=["Device Components"],
     )
@@ -2170,7 +2483,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     ) -> PathResolveResponse:
         """Resolve a batch of dotted device addresses to PV names.
 
-        Two-pass resolution. First pass:
+        Static, single-pass resolution:
 
         1. Split off the head segment as the device name and look it up
            in the registry. Missing device → ``device_not_found``.
@@ -2181,17 +2494,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
            classic-ophyd class walker or the ophyd-async
            instantiate-then-walk path based on the class hierarchy.
 
-        First-pass resolution never opens EPICS connections. ophyd-async
-        classes are instantiated locally (no ``.connect()``) so their
+        Resolution never opens EPICS connections. ophyd-async classes
+        are instantiated locally (no ``.connect()``) so their
         Signal.source URIs can be read; classic-ophyd classes are walked
-        at class level.
-
-        Second pass (only if ``CONFIG_DIRECT_CONTROL_URL`` is set): any
-        ``needs_enrichment`` outcomes from the first pass are batched and
-        sent to direct-control's ``/api/v1/devices/enrich`` endpoint,
-        which instantiates the device against the live IOC and reads the
-        leaf signal's PV name. Successful enrichments are cached in-
-        process so subsequent identical addresses skip the round-trip.
+        at class level. Addresses that require a live device (an ophyd
+        ``FormattedComponent`` with a runtime placeholder) return the
+        terminal outcome ``needs_enrichment`` — direct-control's
+        ``POST /api/v1/devices/resolve`` performs live introspection for
+        those. The configuration service never calls other services.
 
         Top-level addresses (no sub-attribute) are framework-dependent:
         for classic ophyd they resolve to the device's prefix (the happi
@@ -2200,152 +2510,26 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         many signals and no canonical "the PV". Use
         ``<device>.<attr>`` instead for async devices.
         """
-        # Per-request cache for ophyd-async device instances. A batch that
-        # addresses the same device multiple times (e.g. motor.user_setpoint
-        # + motor.velocity) instantiates the class once and reuses it.
-        # Classic-ophyd resolution is purely static and ignores this cache.
-        device_cache: dict = {}
-
-        dc_client = direct_control_container.get("client")
-        enrich_cache = enrichment_cache_container.get("cache", {})
-
-        # First pass: static resolution. Slots that need enrichment get a
-        # placeholder + an entry in `deferred`.
-        results: List[Optional[PathResolveResultItem]] = []
-        deferred: List[_DeferredEnrichment] = []
-
-        for address in request.addresses:
-            head, _, sub_path = address.partition(".")
-            device = state.registry.get_device(head)
-            if device is None:
-                results.append(
-                    PathResolveResultItem(
-                        address=address,
-                        outcome=Outcome.DEVICE_NOT_FOUND,
-                        message=f"no device named '{head}' in registry",
-                    )
-                )
-                continue
-
-            spec = state.registry.get_instantiation_spec(head)
-            if spec is None or not spec.device_class:
-                results.append(
-                    PathResolveResultItem(
-                        address=address,
-                        outcome=Outcome.IMPORT_FAILED,
-                        message=(
-                            f"device '{head}' has no instantiation spec "
-                            f"(can't resolve class to walk)"
-                        ),
-                    )
-                )
-                continue
-
-            prefix = _get_device_prefix(device, state.registry)
-            if prefix is None:
-                results.append(
-                    PathResolveResultItem(
-                        address=address,
-                        outcome=Outcome.IMPORT_FAILED,
-                        message=(
-                            f"device '{head}' has no derivable prefix "
-                            f"(checked pvs['prefix'], spec.args[0], "
-                            f"longest common PV prefix)"
-                        ),
-                    )
-                )
-                continue
-
-            resolution = resolve_path(
-                address,
-                device_class_path=spec.device_class,
-                prefix=prefix,
-                device_cache=device_cache,
-            )
-
-            # Enrichment path: needs_enrichment + client configured.
-            if (
-                resolution.outcome is Outcome.NEEDS_ENRICHMENT
-                and dc_client is not None
-            ):
-                cache_key = (spec.device_class, prefix, sub_path)
-                cached_pv = enrich_cache.get(cache_key)
-                if cached_pv is not None:
-                    results.append(
-                        PathResolveResultItem(
-                            address=address,
-                            outcome=Outcome.RESOLVED,
-                            pv_name=cached_pv,
-                        )
-                    )
-                    continue
-                results.append(None)  # placeholder filled in by second pass
-                deferred.append(
-                    _DeferredEnrichment(
-                        result_idx=len(results) - 1,
-                        address=address,
-                        cache_key=cache_key,
-                    )
-                )
-                continue
-
-            results.append(
-                PathResolveResultItem(
-                    address=address,
-                    outcome=resolution.outcome,
-                    pv_name=resolution.pv_name,
-                    message=resolution.message,
-                )
-            )
-
-        # Second pass: call direct-control to enrich deferred items.
-        if deferred:
-            specs = [
-                EnrichmentSpec(
-                    device_class_path=d.cache_key[0],
-                    prefix=d.cache_key[1],
-                    sub_path=d.cache_key[2],
-                )
-                for d in deferred
-            ]
-            try:
-                enrichments = await dc_client.enrich(specs)  # type: ignore[union-attr]
-            except DirectControlUnavailable as e:
-                # Mark every deferred slot as enrichment_unavailable.
-                for d in deferred:
-                    results[d.result_idx] = PathResolveResultItem(
-                        address=d.address,
-                        outcome=Outcome.ENRICHMENT_UNAVAILABLE,
-                        message=str(e),
-                    )
-            else:
-                for d, result in zip(deferred, enrichments):
-                    if result.ok and result.pv_name:
-                        # Cache success; failures are not cached because
-                        # they may be transient (IOC down, etc.) and we
-                        # want them re-attempted on the next request.
-                        enrich_cache[d.cache_key] = result.pv_name
-                        results[d.result_idx] = PathResolveResultItem(
-                            address=d.address,
-                            outcome=Outcome.RESOLVED,
-                            pv_name=result.pv_name,
-                        )
-                    else:
-                        results[d.result_idx] = PathResolveResultItem(
-                            address=d.address,
-                            outcome=Outcome.ENRICHMENT_UNAVAILABLE,
-                            message=(
-                                f"direct-control enrichment failed: "
-                                f"{result.error_type}: {result.message}"
-                            ),
-                        )
+        # Split so the registry is never read from a worker thread:
+        # (1) look up device/spec/prefix synchronously on the event loop, where
+        # no registry mutation can interleave (a consistent snapshot), then
+        # (2) run the blocking class import/walk in a worker thread using only
+        # the captured immutable values.
+        early, to_resolve = _resolve_prepare(request.addresses, state.registry)
+        results = await asyncio.to_thread(
+            _resolve_execute,
+            len(request.addresses),
+            early,
+            to_resolve,
+            settings.device_class_allowlist,
+        )
 
         # Every slot is filled by now; the cast keeps the response model happy.
         return PathResolveResponse(resolved=[r for r in results if r is not None])
 
     @app.get(
         "/api/v1/devices/{device_name}/components",
-        response_model=List[NestedDeviceComponent],
+        response_model=list[NestedDeviceComponent],
         summary="List Device Components",
         description="List all components of a device",
         tags=["Device Components"],
@@ -2353,10 +2537,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def list_device_components(
         state: StateDep,
         device_name: str,
-        max_depth: Optional[int] = Query(
+        max_depth: int | None = Query(
             None, ge=0, description="Maximum component depth (0 = all, 1 = top-level only)"
         ),
-    ) -> List[NestedDeviceComponent]:
+    ) -> list[NestedDeviceComponent]:
         """
         List all components of a device.
 

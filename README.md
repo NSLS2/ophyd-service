@@ -1,9 +1,28 @@
 # ophyd-service
 
-Monorepo for the Bluesky ophyd-service. Two FastAPI backends + a caproto
+> [!WARNING]
+> **Active development — not ready for use.** This project is in its
+> development stage: APIs, schemas, configuration, and service boundaries
+> change rapidly and without notice, justification, or migration paths.
+> Nothing here should be relied on yet — if you experiment with it anyway,
+> pin a specific commit and expect breakage on every update.
+
+Monorepo for the Bluesky ophyd-service. Three backend services + a caproto
 simulated IOC, wired together for a local backend inner loop via
 `docker compose`. The React/Vite frontend lives here too but is run
 separately (see below).
+
+## Quick start
+
+1. `git clone https://github.com/NSLS2/ophyd-service.git`
+2. `cd ophyd-service`
+3. `docker compose up -d --build`
+4. Open the interactive API docs:
+   http://localhost:8004/docs (configuration_service) and
+   http://localhost:8003/docs (direct_control_service)
+5. When done: `docker compose down`
+
+Everything below is detail on what that stack is and how to work with it.
 
 ## Layout
 
@@ -11,6 +30,7 @@ separately (see below).
 |---|---|
 | `backend/configuration_service/` | Device/PV registry. REST on port 8004. Optional persistence to PostgreSQL or SQLite (see below). |
 | `backend/direct_control_service/` | Device commanding + PV monitoring. REST + WS on port 8003. |
+| `backend/queueserver_service/` | Plan queueing + execution, based on bluesky-queueserver + bluesky-httpserver, run in unified mode (one process serves 0MQ on 60615/60625 and HTTP + WS on 60610). Maintained in-tree; see its README. Runs in `integration/pods/with-queueserver/`, not the inner-loop compose. |
 | `frontend/` | React + Vite UI (not part of `docker-compose.yml`). |
 | `integration/` | Richer multi-service pods (`pods/{minimal,full,dev}/`), the caproto IOC image (`ioc/`), happi seed data (`happi/`), and local device classes (`localdevs/`). |
 | `shared-schema/` | OpenAPI schemas published by the backends. |
@@ -62,6 +82,7 @@ a running backend.
 ```bash
 cat shared-schema/configuration_service.openapi.json
 cat shared-schema/direct_control.openapi.json
+cat shared-schema/queueserver_service.openapi.json
 ```
 
 Generate types:
@@ -71,6 +92,8 @@ npx openapi-typescript shared-schema/configuration_service.openapi.json \
     -o frontend/src/api/configuration_service.d.ts
 npx openapi-typescript shared-schema/direct_control.openapi.json \
     -o frontend/src/api/direct_control.d.ts
+npx openapi-typescript shared-schema/queueserver_service.openapi.json \
+    -o frontend/src/api/queueserver_service.d.ts
 ```
 
 The committed JSON updates whenever a backend route changes and someone
@@ -83,6 +106,19 @@ re-exports. If you suspect it's stale, regenerate from a live backend
 curl http://localhost:8004/openapi.json > shared-schema/configuration_service.openapi.json
 curl http://localhost:8003/openapi.json > shared-schema/direct_control.openapi.json
 ```
+
+The queueserver schema is regenerated with its export script instead (the
+committed artifact is the bare server — deployment-specific auth-provider
+routes are intentionally excluded):
+
+```bash
+cd backend/queueserver_service
+python scripts/export_openapi.py  # writes shared-schema/queueserver_service.openapi.json
+```
+
+The queueserver's WebSocket endpoints (`/api/status/ws`, `/api/info/ws`,
+`/api/console_output/ws`) don't appear in OpenAPI (FastAPI limitation) — see
+the API description header and `backend/queueserver_service/README.md`.
 
 Or mount `./shared-schema` into your own frontend container; the backends
 will overwrite the files on every `docker compose up` via their startup
@@ -120,6 +156,12 @@ Both backends expose Swagger UI:
   `sqlite+pysqlite:////var/lib/config_service/config.db`). PostgreSQL is
   recommended for production / multi-writer deploys; SQLite suits single-node /
   dev use. This compose stack uses the bundled `postgres` service.
+- **`shared-schema/` must be writable by container uid 1000.** Both backends
+  export their live OpenAPI schema into the bind-mounted directory at startup
+  and fail hard (exit) if the write is denied. On a checkout owned by a
+  different uid, grant that uid access first — `sudo chown -R 1000 shared-schema`,
+  or `setfacl -R -m u:1000:rwX shared-schema` to leave ownership untouched — or
+  unset `OPHYD_SERVICE_OPENAPI_EXPORT_PATH` to skip the export.
 - Startup happi-seeding (`CONFIG_LOAD_STRATEGY=happi`) is the dev shortcut here.
   Production deployments seed the registry via profile files or CRUD calls from
   an upstream Experiment Execution Service.

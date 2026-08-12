@@ -16,7 +16,7 @@ Plans are the responsibility of Experiment Execution Service (SVC-001),
 which is the single source of truth for available plans.
 """
 
-from typing import Dict, List, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from .models import DeviceRegistry
 
@@ -71,15 +71,15 @@ class ConfigurationState:
         """Get device registry."""
         return self._registry
 
-    def get_pv_list(self) -> List[str]:
+    def get_pv_list(self) -> list[str]:
         """Get sorted list of all PV names from the registry."""
         if hasattr(self._registry, "pvs"):
             return sorted(self._registry.pvs.keys())
         return []
 
-    def get_all_pvs(self) -> Dict[str, Dict[str, str]]:
+    def get_all_pvs(self) -> dict[str, dict[str, str]]:
         """Get all PVs organized by device from the registry."""
-        result: Dict[str, Dict[str, str]] = {}
+        result: dict[str, dict[str, str]] = {}
         if hasattr(self._registry, "devices"):
             for name, device in self._registry.devices.items():
                 if device.pvs:
