@@ -1,19 +1,30 @@
-# IOS queueserver demo pod for ophyd-service (phase 1).
+# IOS queueserver demo pod for ophyd-service.
 #
 # Stands up the REAL upstream bluesky-queueserver + bluesky-httpserver (NOT the
 # repo's queueserver_service) running the NSLS-II IOS profile collection, so a
-# frontend can drive the beamline through the httpserver's HTTP API. This is the
-# "can the old queueserver open the IOS profile?" check — configuration_service
-# and direct_control_service are intentionally NOT part of this pod.
+# frontend can drive the beamline through the httpserver's HTTP API.
+# configuration_service and direct_control_service are intentionally NOT part
+# of this pod.
 #
 # Mirrors the NSLS-II ansible `bsqs` role (pixi-installed profile `qs` env,
 # start-re-manager + uvicorn bluesky_httpserver), adapted for containers.
+# The simulation is the SHARED suite from integration/queueserver-repro/iocs —
+# same IOCs, same blackhole type rules, same sentinel identity as the
+# host-process repro harness — so plans (E_ramp, XAS_scan with fluorescence)
+# actually RUN and their documents land in mongo, served by tiled.
 #
 #   redis        — 6379 plain (RE Manager queue store) + 6380 TLS (profile RE.md)
-#   mongo        — databroker 'ios' tiled profile backend (empty catalog)
-#   blackhole    — catch-all IOC so every IOS PV resolves (phase 1 stand-in)
+#   mongo        — databroker 'ios' tiled profile backend
+#   kafka        — single-node KRaft broker (RunEngine document publishing)
+#   olog         — mock Olog (the profile's logbook callback POSTs on run start)
+#   iocs         — simulated IOS beamline: 7 realistic caproto IOCs + blackhole
+#                  catch-all with harvested exclusion (one container, one CA
+#                  port each: 5064..5076 + 5078)
+#   seed-identity— one-shot: stamps the SIMULATED sentinel into RE.md
 #   queueserver  — bluesky-queueserver RE Manager, opens the IOS profile
 #   httpserver   — bluesky-httpserver, HTTP API for the frontend (port 60610)
+#   tiled        — tiled data API over the mongo catalog (port 8000, anonymous,
+#                  CORS for the frontend dev origin)
 #
 # Relative paths assume this file lives at integration/pods/ios-queueserver/.
 #
@@ -41,13 +52,76 @@ services:
       timeout: 5s
       retries: 10
 
-  blackhole:
-    build: ./ioc
+  kafka:
+    image: docker.io/apache/kafka:3.9.0
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      # Advertise the compose-network name: every client is in-network.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f blackhole_ioc > /dev/null"]
+      # The advertised listener resolves in-network, so the CLI probe is valid here.
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 24
+
+  olog:
+    # Reuses the iocs image purely for the file: mock_olog.py is stdlib-only.
+    build:
+      context: ../..
+      dockerfile: pods/ios-queueserver/ioc/Dockerfile
+    command: ["python", "/app/iocs/mock_olog.py", "--host", "0.0.0.0", "--port", "8181"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f mock_olog > /dev/null"]
       interval: 5s
       timeout: 2s
       retries: 10
+
+  iocs:
+    build:
+      context: ../..
+      dockerfile: pods/ios-queueserver/ioc/Dockerfile
+    healthcheck:
+      # run_sim_beamline.sh touches this only after every IOC (incl. the
+      # blackhole with its harvested exclusion list) is listening.
+      test: ["CMD-SHELL", "test -f /tmp/sim-ready"]
+      interval: 5s
+      timeout: 2s
+      retries: 24
+
+  seed-identity:
+    build:
+      context: .
+      dockerfile: Dockerfile.queueserver
+    command:
+      - pixi
+      - run
+      - --manifest-path
+      - /opt/bluesky/profile_collection/pixi.toml
+      - -e
+      - qs
+      - python
+      - /etc/bluesky/seed_sim_md.py
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6380"
+      REDIS_SECRET_FILE: /etc/bluesky/redis.secret
+      SSL_CERT_FILE: /certs/redis.crt
+    volumes:
+      - redis-certs:/certs:ro
+    restart: "no"
+    depends_on:
+      redis:
+        condition: service_healthy
 
   queueserver:
     build:
@@ -70,10 +144,11 @@ services:
       REDIS_SECRET_FILE: /etc/bluesky/redis.secret
       SSL_CERT_FILE: /certs/redis.crt
       REQUESTS_CA_BUNDLE: /certs/redis.crt
-      # --- kafka (no broker in pod; publishing is a non-fatal no-op) ---
+      # --- kafka broker (service `kafka`); publishing completes, plans run ---
       BLUESKY_KAFKA_CONFIG_PATH: /etc/bluesky/kafka.yml
-      # --- EPICS: resolve every PV against the catch-all IOC ---
-      EPICS_CA_ADDR_LIST: blackhole
+      # --- EPICS: the simulated beamline, one CA port per IOC + blackhole.
+      #     Explicit addresses, no broadcast — confinement is the compose network.
+      EPICS_CA_ADDR_LIST: "iocs:5064 iocs:5066 iocs:5068 iocs:5070 iocs:5072 iocs:5074 iocs:5076 iocs:5078"
       EPICS_CA_AUTO_ADDR_LIST: "NO"
       # --- headless Qt/matplotlib (profile imports pyqt GUI modules) ---
       QT_QPA_PLATFORM: offscreen
@@ -92,8 +167,14 @@ services:
         condition: service_healthy
       mongo:
         condition: service_healthy
-      blackhole:
+      kafka:
         condition: service_healthy
+      olog:
+        condition: service_healthy
+      iocs:
+        condition: service_healthy
+      seed-identity:
+        condition: service_completed_successfully
 
   httpserver:
     build:
@@ -123,6 +204,39 @@ services:
       - "60610:60610"
     depends_on:
       queueserver:
+        condition: service_healthy
+
+  tiled:
+    build:
+      context: .
+      dockerfile: Dockerfile.queueserver
+    command:
+      - pixi
+      - run
+      - --manifest-path
+      - /opt/bluesky/profile_collection/pixi.toml
+      - -e
+      - qs
+      - tiled
+      - serve
+      - config
+      - /etc/bluesky/tiled-server-config.yml
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    ports:
+      # Host port parameterized: the HEX sim's tiled also claims 8000 — run
+      # with TILED_HOST_PORT=8001 (etc.) when both stacks share a machine.
+      - "${TILED_HOST_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/v1/ > /dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+    depends_on:
+      mongo:
         condition: service_healthy
 
 volumes:

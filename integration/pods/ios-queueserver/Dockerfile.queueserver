@@ -44,6 +44,8 @@ COPY config/kafka.yml                     /etc/bluesky/kafka.yml
 COPY config/user_group_permissions.yaml   /etc/bluesky/user_group_permissions.yaml
 COPY config/bluesky-queueserver-config.yml /etc/bluesky/queueserver-config.yml
 COPY config/bluesky-httpserver-config.yml  /etc/bluesky/httpserver-config.yml
+COPY config/tiled-server-config.yml        /etc/bluesky/tiled-server-config.yml
+COPY config/seed_sim_md.py                 /etc/bluesky/seed_sim_md.py
 
 # nslsii.open_redis_client() reads a password from REDIS_SECRET_FILE when
 # redis_ssl=True. The pod's redis has no password, so an empty file is correct.

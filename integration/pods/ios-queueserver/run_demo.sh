@@ -43,7 +43,7 @@ done
 
 command -v docker >/dev/null || { echo "docker not on PATH" >&2; exit 1; }
 
-step "Build + up (redis, mongo, blackhole IOC, queueserver, httpserver)"
+step "Build + up (redis, mongo, kafka, olog, sim beamline IOCs, queueserver, httpserver, tiled)"
 build_flag=""; [ "$REBUILD" = "1" ] && build_flag="--build"
 # `up -d` waits on depends_on service_healthy; queueserver becomes healthy only
 # after its ZMQ control socket answers, i.e. after the manager is fully started.
@@ -102,11 +102,16 @@ if [ "$TEAR_DOWN" = "1" ]; then
 else
     cat <<EOF
 
-${BOLD}Pod is up.${RESET} bluesky-httpserver: ${HTTP}
+${BOLD}Pod is up.${RESET} bluesky-httpserver: ${HTTP}   tiled: http://localhost:8000
   API key (write ops):   ${APIKEY}   (Authorization: ApiKey <key>)
   Status:                curl -H "Authorization: ApiKey ${APIKEY}" ${HTTP}/api/status
   Allowed plans:         curl -H "Authorization: ApiKey ${APIKEY}" ${HTTP}/api/plans/allowed
   Allowed devices:       curl -H "Authorization: ApiKey ${APIKEY}" ${HTTP}/api/devices/allowed
+  Run a scan:            curl -H "Authorization: ApiKey ${APIKEY}" -H "Content-Type: application/json" \
+                           -X POST ${HTTP}/api/queue/item/add \
+                           -d '{"item":{"item_type":"plan","name":"XAS_scan","args":[635,670,0.1,6.5],"kwargs":{"inc_vortex":true}}}' \
+                         then POST ${HTTP}/api/queue/start; watch the run appear at
+                         http://localhost:8000/api/v1/search/
 Tear down: docker compose -f ${COMPOSE} down -v
 EOF
 fi

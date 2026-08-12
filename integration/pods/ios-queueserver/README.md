@@ -1,4 +1,4 @@
-# IOS queueserver demo pod (phase 1)
+# IOS queueserver demo pod
 
 **NSLS-II-specific development/demonstration asset.** Lives on the
 `demo/ios-nsls2*` branches only — never merged to the upstream community
@@ -7,10 +7,12 @@
 This pod stands up the **real upstream `bluesky-queueserver` +
 `bluesky-httpserver`** (the packages a beamline actually deploys — *not*
 this repo's `queueserver_service`) running the NSLS-II **IOS profile
-collection**. It answers one question:
+collection**. It answers two questions:
 
 > Can the existing queueserver open the IOS profile collection cleanly, and
-> serve its plans and devices over HTTP for a frontend to drive?
+> serve its plans and devices over HTTP for a frontend to drive? And can it
+> RUN those plans against a faithful simulated beamline, with the run data
+> landing in a Tiled-served catalog?
 
 `configuration_service` and `direct_control_service` are **not** part of this
 pod — this phase is only about the queueserver + httpserver + the profile.
@@ -75,9 +77,13 @@ docker compose -f integration/pods/ios-queueserver/docker-compose.yaml down -v
 |---|---|---|
 | `redis` | `./redis` (redis:7 + TLS) | 6379 plain = RE Manager queue store; 6380 TLS = the IOS profile's `RE.md` store (`nslsii.configure_base(redis_ssl=True)`) |
 | `mongo` | `mongo:6` | Backend for the databroker `ios` tiled profile. In databroker 2.0, `Broker.named('ios')` resolves via `tiled.from_profile('ios')`, which needs a live mongo |
-| `blackhole` | `./ioc` | Catch-all caproto IOC — resolves *every* IOS PV so all ~100 devices connect at profile import. Phase-1 stand-in for real hardware |
+| `kafka` | `apache/kafka:3.9.0` | Single-node KRaft broker — the RunEngine publishes documents during a plan; without it plans block |
+| `olog` | `./ioc` image | Mock Olog (stdlib) — the profile's logbook callback POSTs a logbook entry on every run start |
+| `iocs` | `./ioc` (context `integration/`) | The simulated IOS beamline: the SHARED suite from `integration/queueserver-repro/iocs` — 7 realistic caproto IOCs (pgm, curramp, epu, vortex, scaler, feedback, xspress3 with modeled absorption edges) on CA ports 5064..5076 plus the blackhole catch-all (with the HDF/AD type rules) on 5078, exclusion list harvested at start |
+| `seed-identity` | `Dockerfile.queueserver` | One-shot: stamps the SIMULATED sentinel identity (proposal `000000` / `pass-000000`) into `RE.md` so every run start document is unmistakably fake |
 | `queueserver` | `Dockerfile.queueserver` | `start-re-manager` against the profile's `qs` pixi env; imports `startup/*.py` on environment open |
 | `httpserver` | `Dockerfile.queueserver` | `bluesky-httpserver` — the HTTP API the frontend calls (port **60610**) |
+| `tiled` | `Dockerfile.queueserver` | `tiled serve config` over the mongo catalog (port **8000**, anonymous, CORS for the frontend dev origin) — what the RunEngine wrote is what browsers read |
 
 ## What the frontend talks to
 
@@ -131,12 +137,14 @@ satisfies each dependency without touching the profile source:
   `nslsii.open_redis_client`) and trusts the cert via `SSL_CERT_FILE`.
 - **databroker `ios`** — a tiled profile named `ios`
   (`config/home/.config/tiled/profiles/ios.yml`) backed by the empty `mongo`.
-- **Kafka** — `config/kafka.yml` is read, but there is no broker in the pod.
-  nslsii catches the connection failure and continues (publishing is a no-op);
-  environment open still succeeds after a short timeout.
-- **olog / amostra** — `~/.pyOlog.conf` is provided; both clients construct
-  lazily and need no server to open the profile.
-- **EPICS** — the `blackhole` IOC answers every PV, so all devices connect.
+- **Kafka** — `config/kafka.yml` points at the pod's `kafka` broker, so
+  document publishing (and therefore running plans) completes.
+- **olog / amostra** — `~/.pyOlog.conf` points at the pod's mock Olog, so the
+  logbook callback on every run start succeeds.
+- **EPICS** — the `iocs` service serves the realistic per-device IOCs plus the
+  blackhole catch-all (deferring on harvested PV names), so all ~100 devices
+  connect AND the ones plans touch behave like hardware (slew, counting,
+  spectra, an energy-coupled fluorescence edge).
 - **Permissions** — `config/user_group_permissions.yaml` (the standard
   permissive set) lets the RE Manager build the allowed plan/device lists the
   frontend reads.
@@ -151,12 +159,21 @@ config-file shape (`config/bluesky-queueserver-config.yml`,
 sockets bind on TCP instead of IPC, and Redis TLS + mongo are provided as pod
 services instead of beamline infrastructure.
 
-## Phase 2
+## Running a scan end to end
 
-Phase 1 uses the catch-all `blackhole` IOC so the profile opens with every PV
-resolved. Phase 2 swaps in the realistic per-device IOS IOCs already on this
-branch (`integration/ioc/ioc_ios_*.py`: pgm, curramp, epu, vortex, scaler,
-feedback) for a more faithful hardware simulation.
+With the pod up and the environment open:
+
+```bash
+KEY=iosdemosecretkey0123456789
+curl -H "Authorization: ApiKey $KEY" -H 'Content-Type: application/json' \
+  -X POST http://localhost:60610/api/queue/item/add \
+  -d '{"item":{"item_type":"plan","name":"XAS_scan","args":[635,670,0.1,6.5],"kwargs":{"inc_vortex":true}}}'
+curl -H "Authorization: ApiKey $KEY" -X POST http://localhost:60610/api/queue/start
+```
+
+The run's documents land in mongo and serve from Tiled:
+`http://localhost:8000/api/v1/search/` lists runs; PFY traces the simulated
+Mn L-edge. Every run carries the SIMULATED sentinel identity.
 
 ## Configuration reference
 
@@ -166,14 +183,18 @@ integration/pods/ios-queueserver/
 ├── run_demo.sh                    # build + up + open env + verify
 ├── Dockerfile.queueserver         # pixi + IOS profile `qs` env (queueserver & httpserver)
 ├── redis/                         # redis:7 + native TLS (self-signed cert at start)
-├── ioc/                           # catch-all "black hole" caproto IOC
+├── ioc/                           # sim-beamline image: shared queueserver-repro/iocs suite
+│   ├── Dockerfile                 #   (build context = integration/, no stale copies)
+│   └── run_sim_beamline.sh        #   start 7 IOCs, harvest PVs, start blackhole
 └── config/
     ├── bluesky-queueserver-config.yml   # RE Manager config (mirrors bsqs role)
     ├── bluesky-httpserver-config.yml    # httpserver config (zmq addrs + auth)
-    ├── kafka.yml                        # nslsii kafka config (no broker)
+    ├── kafka.yml                        # nslsii kafka config -> pod broker kafka:9092
+    ├── tiled-server-config.yml          # tiled read-view over mongo (+ CORS origins)
+    ├── seed_sim_md.py                   # sentinel identity seeder (one-shot service)
     ├── user_group_permissions.yaml      # allowed plans/devices per group
     └── home/                            # HOME for the profile
-        ├── .pyOlog.conf
+        ├── .pyOlog.conf                 #   -> mock olog service
         └── .config/tiled/profiles/ios.yml
 ```
 
