@@ -14,11 +14,12 @@ This complements:
 * the containerized ``integration/exercise/queueserver_api_compat.py`` exerciser,
   which drives the client over BOTH 0MQ and HTTP against a running pod.
 
-Because the 0MQ transport is slated for removal (the service is becoming
-HTTP-only), this in-process HTTP suite is the acceptance gate that the removal
-must not regress. It uses the single-user API-key auth mode (the default the HTTP
-transport is normally driven with); token/session client auth is covered
-separately in ``test_side_c_auth.py``.
+Both transports the api client speaks — 0MQ and HTTP — are frozen public
+contract (an HTTP-only pivot was considered and rejected; 0MQ stays
+first-class). This suite is the in-process acceptance gate for the HTTP side;
+the containerized exerciser above covers the 0MQ side. It uses the single-user
+API-key auth mode (the default the HTTP transport is normally driven with);
+token/session client auth is covered separately in ``test_side_c_auth.py``.
 """
 
 import time as ttime
