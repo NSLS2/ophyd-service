@@ -454,6 +454,9 @@ class HappiProfileLoader:
             args=args,
             kwargs=kwargs,
             active=entry.get("active", True),
+            # Optional advisory tag ('ophyd-sync' / 'ophyd-async'); an invalid
+            # value fails the entry (model validation) and thus the whole load.
+            framework=entry.get("framework"),
         )
 
         registry.add_device(device_metadata, instantiation_spec)

@@ -2252,6 +2252,18 @@
             "title": "Active",
             "description": "Whether this device should be instantiated",
             "default": true
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework",
+            "description": "Advisory device-framework tag: 'ophyd-sync' (classic threaded ophyd) or 'ophyd-async'. Consumers (direct_control) verify it against the imported class and refuse a mismatched tag. None for duck-typed protocol devices."
           }
         },
         "type": "object",
@@ -2336,6 +2348,18 @@
             ],
             "title": "Active",
             "description": "Whether this device should be instantiated"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework",
+            "description": "Advisory device-framework tag: 'ophyd-sync' (classic threaded ophyd) or 'ophyd-async'. Consumers (direct_control) verify it against the imported class and refuse a mismatched tag. None for duck-typed protocol devices."
           }
         },
         "type": "object",
