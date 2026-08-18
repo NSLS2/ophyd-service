@@ -195,6 +195,14 @@ def _sanitize_value(value: Any, device_names_by_id: Dict[int, str], notes: List[
         return value
     if isinstance(value, (list, tuple)):
         return [_sanitize_value(v, device_names_by_id, notes, where) for v in value]
+    if isinstance(value, (set, frozenset)):
+        # JSON has no set type; a sorted list is lossless in content and
+        # accepted wherever ophyd conventions use sets (e.g. 'labels').
+        try:
+            elements = sorted(value)
+        except TypeError:
+            elements = list(value)
+        return [_sanitize_value(v, device_names_by_id, notes, where) for v in elements]
     if isinstance(value, dict):
         return {
             str(k): _sanitize_value(v, device_names_by_id, notes, f"{where}[{k!r}]")
