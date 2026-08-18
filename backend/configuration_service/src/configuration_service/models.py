@@ -101,7 +101,8 @@ class DeviceInstantiationSpec(BaseModel):
         description="Keyword arguments for device constructor (e.g., {'name': 'det1'})",
     )
     active: bool = Field(default=True, description="Whether this device should be instantiated")
-    framework: str | None = Field(
+    # Literal (not str + validator) so the OpenAPI schema exposes the enum.
+    framework: Literal["ophyd-sync", "ophyd-async"] | None = Field(
         default=None,
         description=(
             "Advisory device-framework tag: 'ophyd-sync' (classic threaded ophyd) or "
@@ -114,15 +115,6 @@ class DeviceInstantiationSpec(BaseModel):
     @classmethod
     def _check_name(cls, v: str) -> str:
         return _validate_device_name(v)
-
-    @field_validator("framework")
-    @classmethod
-    def _check_framework(cls, v: str | None) -> str | None:
-        if v is not None and v not in ("ophyd-sync", "ophyd-async"):
-            raise ValueError(
-                f"Invalid framework tag {v!r}: must be 'ophyd-sync', 'ophyd-async' or None"
-            )
-        return v
 
     class Config:
         json_schema_extra = {
@@ -624,7 +616,9 @@ class DeviceInstantiationSpecUpdate(BaseModel):
     args: list[Any] | None = _partial_field(DeviceInstantiationSpec, "args")
     kwargs: dict[str, Any] | None = _partial_field(DeviceInstantiationSpec, "kwargs")
     active: bool | None = _partial_field(DeviceInstantiationSpec, "active")
-    framework: str | None = _partial_field(DeviceInstantiationSpec, "framework")
+    framework: Literal["ophyd-sync", "ophyd-async"] | None = _partial_field(
+        DeviceInstantiationSpec, "framework"
+    )
 
 
 class DeviceMetadataUpdate(BaseModel):
