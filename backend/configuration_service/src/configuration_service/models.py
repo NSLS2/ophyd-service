@@ -101,11 +101,28 @@ class DeviceInstantiationSpec(BaseModel):
         description="Keyword arguments for device constructor (e.g., {'name': 'det1'})",
     )
     active: bool = Field(default=True, description="Whether this device should be instantiated")
+    framework: str | None = Field(
+        default=None,
+        description=(
+            "Advisory device-framework tag: 'ophyd-sync' (classic threaded ophyd) or "
+            "'ophyd-async'. Consumers (direct_control) verify it against the imported "
+            "class and refuse a mismatched tag. None for duck-typed protocol devices."
+        ),
+    )
 
     @field_validator("name")
     @classmethod
     def _check_name(cls, v: str) -> str:
         return _validate_device_name(v)
+
+    @field_validator("framework")
+    @classmethod
+    def _check_framework(cls, v: str | None) -> str | None:
+        if v is not None and v not in ("ophyd-sync", "ophyd-async"):
+            raise ValueError(
+                f"Invalid framework tag {v!r}: must be 'ophyd-sync', 'ophyd-async' or None"
+            )
+        return v
 
     class Config:
         json_schema_extra = {
@@ -607,6 +624,7 @@ class DeviceInstantiationSpecUpdate(BaseModel):
     args: list[Any] | None = _partial_field(DeviceInstantiationSpec, "args")
     kwargs: dict[str, Any] | None = _partial_field(DeviceInstantiationSpec, "kwargs")
     active: bool | None = _partial_field(DeviceInstantiationSpec, "active")
+    framework: str | None = _partial_field(DeviceInstantiationSpec, "framework")
 
 
 class DeviceMetadataUpdate(BaseModel):

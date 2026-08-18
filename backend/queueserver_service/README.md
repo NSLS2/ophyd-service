@@ -160,6 +160,26 @@ when the option is not set. The plan-queue test suite runs against both backends
 (`tests/manager/test_plan_queue_ops.py` is parametrized over `["redis", "sqlite"]`).
 See `docs/source/manager_config.rst` for the full config surface.
 
+### Happi-format device list (config_service registry seeding)
+
+Opt-in: while the startup code runs, the worker captures every device
+constructor call at instantiation time (`manager/device_capture.py` — exact
+`device_class`/`args`/`kwargs`, both classic ophyd and ophyd-async) and writes
+the result as `happi_db.json`, a happi-format JSON database that
+configuration_service's happi seed strategy reads directly (point
+`CONFIG_PROFILE_PATH` at the output directory with `CONFIG_LOAD_STRATEGY=happi`).
+Neither side depends on the happi package — happi is used as the interchange
+schema only. Entries that can't be captured portably (constructor arguments
+that don't survive JSON, classes defined in the startup script itself) are
+emitted with `active: false` plus an explanatory `documentation` note; each
+entry carries an advisory `framework` tag (`ophyd-sync` / `ophyd-async`).
+
+- Manager: `--existing-devices-happi <dir-or-file.json>` (or config key
+  `startup/existing_devices_happi_path`); written at the same gate as
+  `existing_plans_and_devices.yaml`. Off when unset.
+- CLI: `qserver-list-plans-devices --happi-devices ON` writes the file next to
+  the YAML output.
+
 ## Running the tests
 
 One `pytest` run from this directory collects both suites (needs a local redis;

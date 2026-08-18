@@ -32,6 +32,9 @@ SERVICE_CONFIGURATION_FILE_NAME = "config_schema.yml"
 
 default_existing_pd_fln = "existing_plans_and_devices.yaml"
 default_user_group_pd_fln = "user_group_permissions.yaml"
+# Named so a directory holding the generated file can be pointed at directly
+# by configuration_service (its happi seed strategy searches for this name).
+default_existing_devices_happi_fln = "happi_db.json"
 
 
 def expand_environment_variables(config):
@@ -211,6 +214,7 @@ _key_mapping = {
     "keep_re": "startup/keep_re",
     "ignore_invalid_plans": "startup/ignore_invalid_plans",
     "existing_plans_and_devices_path": "startup/existing_plans_and_devices_path",
+    "existing_devices_happi_path": "startup/existing_devices_happi_path",
     "user_group_permissions_path": "startup/user_group_permissions_path",
     "startup_dir": "startup/startup_dir",
     "startup_profile": "startup/startup_profile",
@@ -580,6 +584,24 @@ class Settings:
         else:
             user_group_permissions_path = None
         self._settings["user_group_permissions_path"] = user_group_permissions_path
+
+        # Opt-in: no aux_dir fallback — the happi-format device list is only
+        # written when a location is explicitly configured.
+        existing_devices_happi_path = self._get_param(
+            value_default=args.existing_devices_happi_path,
+            value_config=self._get_value_from_config("existing_devices_happi_path"),
+            value_cli=self._args_existing("existing_devices_happi_path"),
+        )
+        if isinstance(existing_devices_happi_path, str):
+            existing_devices_happi_path = os.path.expanduser(existing_devices_happi_path)
+            existing_devices_happi_path = os.path.abspath(existing_devices_happi_path)
+            if not existing_devices_happi_path.endswith(".json"):
+                existing_devices_happi_path = os.path.join(
+                    existing_devices_happi_path, default_existing_devices_happi_fln
+                )
+        else:
+            existing_devices_happi_path = None
+        self._settings["existing_devices_happi_path"] = existing_devices_happi_path
 
         self._settings["print_console_output"] = self._get_param_boolean(
             value_default=args.console_output,

@@ -154,6 +154,38 @@ class TestHappiTemplateResolution:
         assert "plain" in registry.devices
 
 
+class TestHappiFramework:
+    """Optional `framework` entry key round-trips into the instantiation spec."""
+
+    def test_framework_read_into_spec(self, tmp_path):
+        profile = tmp_path / "profile"
+        e1 = _good_happi_entry("m1")
+        e1["framework"] = "ophyd-sync"
+        e2 = _good_happi_entry("m2")
+        e2["framework"] = "ophyd-async"
+        e3 = _good_happi_entry("m3")  # no framework key
+        _write_happi_profile(profile, {"m1": e1, "m2": e2, "m3": e3})
+
+        registry = HappiProfileLoader(profile).load_registry()
+
+        assert registry.instantiation_specs["m1"].framework == "ophyd-sync"
+        assert registry.instantiation_specs["m2"].framework == "ophyd-async"
+        assert registry.instantiation_specs["m3"].framework is None
+
+    def test_framework_invalid_fails_load(self, tmp_path):
+        profile = tmp_path / "profile"
+        bad = _good_happi_entry("m1")
+        bad["framework"] = "pyepics"
+        _write_happi_profile(profile, {"m1": bad})
+
+        with pytest.raises(RuntimeError) as excinfo:
+            HappiProfileLoader(profile).load_registry()
+
+        msg = str(excinfo.value)
+        assert "Failed to load 1 of 1 happi entries" in msg
+        assert "framework" in msg
+
+
 class TestHappiRequiredFields:
     """M4 regression: missing `device_class` is a hard failure, not "Unknown"."""
 
