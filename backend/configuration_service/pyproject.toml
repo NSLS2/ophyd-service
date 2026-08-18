@@ -39,7 +39,7 @@ dependencies = [
     # in the aioca backend that signal construction needs — imports only,
     # never invoked.
     "ophyd>=1.10",
-    "ophyd-async[ca]>=0.16",
+    "ophyd-async[ca]>=0.21",
 
     # Async HTTP client for the optional direct-control enrichment fallback.
     # The path_resolver returns ``needs_enrichment`` for FmtCpt placeholders;
