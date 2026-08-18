@@ -139,7 +139,7 @@ package. Since the goal is to reduce the execution time of the longest group, th
 splitting algorithm is calibrated based on execution time of the tests with enabled
 IPython kernel mode (more tests, each test takes a little longer to execute).
 Calibration is performed by running the script ``scripts/store_test_durations.sh`` locally,
-which saves execution time for each test in the ```.test_durations`` file. The file then
+which saves execution time for each test in the ``.test_durations`` file. The file then
 has to be committed and pushed to the repository.
 
 `pytest-split` will automatically guess execution time for new tests that are not
