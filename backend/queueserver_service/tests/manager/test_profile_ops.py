@@ -5272,7 +5272,7 @@ _stg_components = {
 
 _mtr_async_components = {
     "components": {
-        "acceleration_time": {}, "units": {}, "user_readback": {}, "user_setpoint": {}, "velocity": {}
+        "acceleration_time": {}, "user_readback": {}, "user_setpoint": {}, "velocity": {}
     }
 }
 
