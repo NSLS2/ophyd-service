@@ -47,6 +47,20 @@ Load explicitly:
 CONFIG_PROFILE_PATH=/path/to/profile CONFIG_LOAD_STRATEGY=happi bluesky-configuration-service
 ```
 
+Entries may carry an optional advisory `framework` tag (`"ophyd-sync"` or
+`"ophyd-async"`); it is stored on the instantiation spec and consumed by
+direct_control, which verifies it against the imported class. Any other value
+fails the load.
+
+The `happi_db.json` need not be hand-written: the queueserver worker can
+generate one from device constructor calls captured while its startup code
+runs (`start-re-manager --existing-devices-happi <dir>` or
+`qserver-list-plans-devices --happi-devices ON`). Pointing
+`CONFIG_PROFILE_PATH` at that output directory seeds the registry from the
+beamline's real startup profile; entries the capture could not make portable
+arrive with `active: false` and an explanatory `documentation` note, and are
+skipped at load.
+
 ## BITS format (BCDA-APS)
 
 YAML-based device definitions with labels and an optional instrument config.
