@@ -37,7 +37,7 @@ scikit-image # Needed for BEC/other stuff to run, factor out
 # Dependencies of ophyd-async
 h5py
 aioca
-ophyd-async==0.17
+ophyd-async==0.21.1
 # Required by the Layer 2.8 config-service integration tests
 # (tests/manager/test_config_service_integration.py).
 # The test module boots configuration_service.main.create_app in-process
