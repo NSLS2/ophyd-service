@@ -6506,6 +6506,11 @@
               }
             ],
             "title": "Config Service Sync Error"
+          },
+          "http_server_state": {
+            "type": "string",
+            "title": "Http Server State",
+            "default": "disabled"
           }
         },
         "additionalProperties": true,

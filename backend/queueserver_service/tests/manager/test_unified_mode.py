@@ -14,6 +14,7 @@ so the test does not need to mint an API key.
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import time
 from contextlib import contextmanager
@@ -26,6 +27,7 @@ from tests.manager.common import (
     ReManager,
     condition_manager_idle,
     wait_for_condition,
+    zmq_request,
 )
 
 
@@ -177,3 +179,128 @@ async def test_inprocess_client_delegates_to_dispatch_command():
     assert failed["success"] is False
     assert failed["msg"] == "boom"
     assert rm._inprocess_request_count == 3
+
+
+# ---------------------------------------------------------------------------
+#  Failure injection: an HTTP fault must degrade the service, never kill the
+#  manager (see also test_scenarios.py, which covers a running plan surviving
+#  a manager restart — the recovery path for http-induced manager loss).
+
+
+def test_http_port_occupied_manager_survives():
+    """With the HTTP port already bound by another process, the manager must
+    start normally, keep serving 0MQ, and report http_server_state='failed'
+    after the supervised task exhausts its retries — instead of exiting with
+    uvicorn's SystemExit and crash-looping under the watchdog."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocker:
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        blocker.bind(("127.0.0.1", 0))
+        blocker.listen(1)
+        occupied_port = blocker.getsockname()[1]
+
+        with _started_manager(params=["--http-port", str(occupied_port)]):
+            # Retries: MAX_STARTUP_ATTEMPTS x STARTUP_RETRY_DELAY_SECONDS.
+            deadline = time.monotonic() + 30.0
+            state = None
+            while time.monotonic() < deadline:
+                status, _ = zmq_request("status")
+                assert status is not None, "manager stopped answering 0MQ"
+                state = status.get("http_server_state")
+                if state == "failed":
+                    break
+                time.sleep(0.5)
+            assert state == "failed", f"http_server_state={state!r}"
+
+            # The manager is fully functional without HTTP.
+            status, _ = zmq_request("status")
+            assert status["manager_state"] == "idle"
+
+            with pytest.raises((httpx.HTTPError, httpx.ConnectError)):
+                httpx.get(f"http://127.0.0.1:{occupied_port}/api/ping", timeout=1.0)
+
+
+def test_http_status_field_running():
+    """Happy path: unified mode reports http_server_state='running' in the
+    manager status (both over 0MQ and in the HTTP status body)."""
+    http_port = _free_tcp_port()
+
+    with _started_manager(params=["--http-port", str(http_port)]):
+        deadline = time.monotonic() + 15.0
+        state = None
+        while time.monotonic() < deadline:
+            status, _ = zmq_request("status")
+            state = (status or {}).get("http_server_state")
+            if state == "running":
+                break
+            time.sleep(0.2)
+        assert state == "running", f"http_server_state={state!r}"
+
+
+class _FakeServerCrash:
+    """uvicorn.Server stand-in whose serve() fails immediately."""
+
+    def __init__(self, exc_factory):
+        self._exc_factory = exc_factory
+        self.started = False
+        self.should_exit = False
+
+    async def serve(self):
+        raise self._exc_factory()
+
+
+class _FakeServerRuns:
+    """uvicorn.Server stand-in that starts and runs until should_exit."""
+
+    def __init__(self):
+        self.started = False
+        self.should_exit = False
+
+    async def serve(self):
+        self.started = True
+        while not self.should_exit:
+            await asyncio.sleep(0.01)
+
+
+def _make_supervised_server(monkeypatch, fake_factory):
+    from queueserver_service.manager import http_server as http_server_module
+    from queueserver_service.manager.http_server import CoHostedHttpServer, HttpServerSettings
+
+    monkeypatch.setattr(http_server_module, "STARTUP_RETRY_DELAY_SECONDS", 0.01)
+
+    settings = HttpServerSettings(enabled=True, host="127.0.0.1", port=1)
+    server = CoHostedHttpServer(settings, manager=None, manager_zmq_bind_addr="tcp://*:1")
+    monkeypatch.setattr(server, "_new_server", fake_factory)
+    return server
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc_factory", [lambda: SystemExit(1), lambda: RuntimeError("boom")])
+async def test_supervised_serve_contains_failures(monkeypatch, exc_factory):
+    """Neither SystemExit (uvicorn's bind failure) nor an ordinary crash may
+    escape the supervised task; after the retries the state is 'failed'."""
+    server = _make_supervised_server(monkeypatch, lambda: _FakeServerCrash(exc_factory))
+
+    server._stop_event = asyncio.Event()
+    task = asyncio.ensure_future(server._supervised_serve())
+    await asyncio.wait_for(task, timeout=5.0)  # raises if the task raised
+
+    assert task.exception() is None
+    assert server.state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_supervised_serve_runs_and_stops(monkeypatch):
+    """The supervisor reports 'running' once uvicorn starts, and 'stopped'
+    after a clean stop — no restart is attempted on a requested shutdown."""
+    server = _make_supervised_server(monkeypatch, _FakeServerRuns)
+
+    server._stop_event = asyncio.Event()
+    server._task = asyncio.ensure_future(server._supervised_serve())
+
+    deadline = asyncio.get_event_loop().time() + 5.0
+    while server.state != "running":
+        assert asyncio.get_event_loop().time() < deadline, server.state
+        await asyncio.sleep(0.01)
+
+    await server.stop()
+    assert server.state == "stopped"

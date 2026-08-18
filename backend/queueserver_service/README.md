@@ -113,6 +113,17 @@ docker build -t queueserver_service backend/queueserver_service
 process-unification work (U1–U3). It requires a Redis instance and, for backend integration,
 a manager-config YAML pointing `config_service.url` at the configuration_service.
 
+The co-hosted HTTP task is **supervised**: a failure of the HTTP side (port already
+bound, a crash in the ASGI stack) is contained, retried a few times, and then abandoned —
+the manager keeps running and the 0MQ API stays available, so an operator can
+troubleshoot HTTP while an experiment continues. The manager status carries an
+`http_server_state` field (`disabled` / `starting` / `running` / `retrying` / `failed` /
+`stopped`) so a dead HTTP side is visible instead of silent. A running plan was never at
+risk either way: the RE worker is a separate process owned by the watchdog, which
+restarts a dead manager and re-attaches it to the live worker
+(failure-injection coverage: `tests/manager/test_unified_mode.py`, plan-survives-restart
+scenarios in `tests/manager/test_scenarios.py`).
+
 See `integration/pods/with-queueserver/` for the full pod (redis + the three backends + an IOC)
 and the manager-config YAML.
 
