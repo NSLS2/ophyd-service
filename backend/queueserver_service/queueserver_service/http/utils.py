@@ -9,7 +9,7 @@ import os
 import sys
 import time
 
-from bluesky_queueserver_api.zmq.aio import REManagerAPI
+from queueserver_service.http.manager_client import REManagerAPI
 from fastapi import HTTPException
 
 from .authorization import _DEFAULT_USERNAME_PUBLIC, _DEFAULT_USERNAME_SINGLE_USER

@@ -44,6 +44,11 @@ ophyd-async==0.17
 # and drives its ASGI lifespan via asgi-lifespan.LifespanManager.
 bluesky-configuration-service
 asgi-lifespan
+# Wire-compat test dependency: the runtime no longer imports the PyPI client
+# (the 0MQ asyncio client is ported in-tree as
+# queueserver_service.http.manager_client), but the compat test suite still
+# exercises the released client against this server.
+bluesky-queueserver-api
 # Merged from subprojects/bluesky-httpserver/requirements-dev.txt so a single
 # dev install can run both suites. Everything else that file lists is already
 # above; only these two were unique to the httpserver tests:

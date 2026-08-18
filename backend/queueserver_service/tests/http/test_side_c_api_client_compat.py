@@ -68,6 +68,19 @@ def _wait_for_manager_state(rm, states, timeout=_WAIT, period=0.2):
     return False
 
 
+def _wait_for_re_state(rm, states, timeout=_WAIT, period=0.2):
+    # The manager reports 'executing_queue' as soon as it picks the item,
+    # BEFORE the worker's RunEngine has actually started the plan — pausing
+    # in that window fails with "Run engine can be paused only in 'running'
+    # state". Wait on the RE state itself before exercising pause/resume.
+    deadline = ttime.monotonic() + timeout
+    while ttime.monotonic() < deadline:
+        if rm.status()["re_state"] in states:
+            return True
+        ttime.sleep(period)
+    return False
+
+
 def test_side_c_methods_without_environment(re_manager_console, rm):
     """Every read-only + queue-editing + permissions + locks client method
     round-trips over HTTP with the documented response shape, plus error
@@ -225,6 +238,7 @@ def test_side_c_run_engine_control(re_manager_console, rm):
     rm.item_add(BPlan("count", ["det1"], num=5, delay=1))
     assert rm.queue_start()["success"]
     assert _wait_for_manager_state(rm, ("executing_queue",)), "queue did not start executing"
+    assert _wait_for_re_state(rm, ("running",)), "RE did not start running the plan"
 
     assert rm.re_pause(option="deferred")["success"], "re_pause failed"
     rm.wait_for_idle_or_paused(timeout=_WAIT)
@@ -237,6 +251,7 @@ def test_side_c_run_engine_control(re_manager_console, rm):
     rm.item_add(BPlan("count", ["det1"], num=5, delay=1))
     assert rm.queue_start()["success"]
     assert _wait_for_manager_state(rm, ("executing_queue",)), "queue did not start executing (2)"
+    assert _wait_for_re_state(rm, ("running",)), "RE did not start running the plan (2)"
     assert rm.re_pause(option="deferred")["success"]
     rm.wait_for_idle_or_paused(timeout=_WAIT)
     assert rm.status()["re_state"] == "paused"

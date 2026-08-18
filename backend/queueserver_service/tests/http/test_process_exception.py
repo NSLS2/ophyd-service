@@ -8,7 +8,7 @@ flaky ZMQ-timeout integration tests), so pin the mapping directly here.
 """
 
 import pytest
-from bluesky_queueserver_api.zmq.aio import REManagerAPI
+from queueserver_service.http.manager_client import REManagerAPI
 from fastapi import HTTPException
 
 from queueserver_service.http.utils import process_exception

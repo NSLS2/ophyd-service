@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 # The DISTRIBUTION is named bluesky-queueserver (the import package is
-# queueserver_service): the PyPI bluesky-queueserver-api client we depend on
-# declares Requires-Dist: bluesky-queueserver (it imports nothing from it).
-# Keeping the dist name makes this package satisfy that requirement, so
-# installers never pull the upstream bluesky-queueserver dist — which would
-# silently shadow the qserver/start-re-manager console scripts with the
-# upstream implementation.
+# queueserver_service): the PyPI bluesky-queueserver-api client (a test
+# dependency here, and commonly installed alongside this service by external
+# tooling) declares Requires-Dist: bluesky-queueserver (it imports nothing
+# from it beyond the legacy shim surface). Keeping the dist name makes this
+# package satisfy that requirement, so installers never pull the upstream
+# bluesky-queueserver dist — which would silently shadow the
+# qserver/start-re-manager console scripts with the upstream implementation.
 name = "bluesky-queueserver"
 # VERSION story — the dist-name trick above only holds if the resolver actually
 # picks THIS distribution over the upstream one. Upstream bluesky-queueserver
@@ -58,7 +59,6 @@ dependencies = [
     # httpx is imported unconditionally by http.authorization.api_access but is
     # missing from httpserver's own requirements (upstream omission).
     "alembic",
-    "bluesky-queueserver-api",
     # cachetools: TTL cache on the OIDC JWKS key fetch (authenticators.py,
     # tiled-v0.2.12 alignment).
     "cachetools",
@@ -72,6 +72,10 @@ dependencies = [
     "sqlalchemy",
     "starlette",
     "uvicorn",
+    # uvicorn serves the WebSocket endpoints but the bare dist ships no WS
+    # protocol implementation and silently starts with ws=none without one.
+    # This was previously satisfied transitively via bluesky-queueserver-api.
+    "websockets",
 ]
 
 [project.optional-dependencies]
@@ -186,6 +190,10 @@ force-exclude = '''
 [dependency-groups]
 dev = [
     "aiosqlite>=0.22.1",
+    # No longer a runtime dependency (the 0MQ asyncio client is ported in-tree
+    # as queueserver_service.http.manager_client); the wire-compat test suite
+    # still exercises the released PyPI client against this server.
+    "bluesky-queueserver-api",
     "cryptography>=50.0.0",
     "h5py>=3.16.0",
     "happi>=3.0.1",
