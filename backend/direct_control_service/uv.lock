@@ -196,7 +196,7 @@ requires-dist = [
     { name = "opentelemetry-api", specifier = ">=1.21.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.21.0" },
     { name = "ophyd", specifier = ">=1.9.0" },
-    { name = "ophyd-async", extras = ["ca"], specifier = ">=0.13.0" },
+    { name = "ophyd-async", extras = ["ca"], specifier = ">=0.21" },
     { name = "p4p", specifier = ">=4.1.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "prometheus-client", specifier = ">=0.19.0" },
@@ -1024,7 +1024,7 @@ wheels = [
 
 [[package]]
 name = "ophyd-async"
-version = "0.21.0"
+version = "0.21.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "bluesky" },
@@ -1038,9 +1038,9 @@ dependencies = [
     { name = "stamina" },
     { name = "velocity-profile" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/13/4a/823545c9f0bd1b8a9695c658caece4a9f0e52d6a0138bd7e02825f7c9cba/ophyd_async-0.21.0.tar.gz", hash = "sha256:082a1494276d69b6e893049c268d13b25a28c7d1528f983d6d1a79faa9b34fdc", size = 668561, upload-time = "2026-08-03T12:17:32.841Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b6/f0/91b6071faf34e87769e2522ddfabdd9fd592cd8fd12cabf4926408cab70b/ophyd_async-0.21.1.tar.gz", hash = "sha256:d0f2b9c72a444797484071b5f61b7ab0ae307d0779ca750daf2237c6ba5965ea", size = 668752, upload-time = "2026-08-04T08:53:00.232Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c1/26/8b1bc3feaea1dcfbcea03c48224b418dd04a2b4849c0ed6f0f83e2661899/ophyd_async-0.21.0-py3-none-any.whl", hash = "sha256:a018bc483d904bfcb1146ec714758e026b5386c7d3b626408ea61250713cfd6b", size = 258829, upload-time = "2026-08-03T12:17:31.302Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/fd/aad3337b0d14352589af31719112d25f0f27958547c81ed0dc01301a1b3a/ophyd_async-0.21.1-py3-none-any.whl", hash = "sha256:a94ad8d02a3b03d9cb023d1e988dfc2dbb1ea9a22d6cbea25bbcd9575a8fe1ee", size = 258851, upload-time = "2026-08-04T08:52:58.863Z" },
 ]
 
 [package.optional-dependencies]

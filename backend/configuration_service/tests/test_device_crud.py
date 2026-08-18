@@ -401,6 +401,7 @@ class TestDeviceRegistryStore:
             args=["BL01:MOTOR:"],
             kwargs={"name": "test_motor"},
             active=True,
+            framework="ophyd-sync",
         )
         registry.add_device(metadata, spec)
         store.seed_from_registry(registry)
@@ -415,6 +416,7 @@ class TestDeviceRegistryStore:
         assert entry["documentation"] == "Test motor"
         assert entry["prefix"] == "BL01:MOTOR:"
         assert entry["active"] is True
+        assert entry["framework"] == "ophyd-sync"
 
         store.close()
 

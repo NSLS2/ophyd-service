@@ -538,3 +538,42 @@ def test_gen_list_of_plans_and_devices_cli_04(tmp_path, use_ip_kernel):
         assert os.path.isfile(fln_yaml_path)
     else:
         assert not os.path.exists(fln_yaml_path)
+
+
+def test_gen_list_of_plans_and_devices_happi_01(tmp_path):
+    """
+    ``gen_list_of_plans_and_devices``: parameter ``happi_devices`` — also write a
+    happi-format JSON device list generated from captured constructor calls.
+    """
+    import json
+
+    using_ipython = use_ipykernel_for_tests()
+    pp = dict(use_ipython_kernel=using_ipython) if using_ipython else {}
+
+    pc_path = copy_default_profile_collection(tmp_path, copy_yaml=False)
+    fln_yaml = "list.yaml"
+    happi_path = os.path.join(pc_path, "happi_db.json")
+
+    # Default: the happi file is not written.
+    gen_list_of_plans_and_devices(startup_dir=pc_path, file_dir=pc_path, file_name=fln_yaml, **pp)
+    assert not os.path.exists(happi_path)
+
+    gen_list_of_plans_and_devices(
+        startup_dir=pc_path, file_dir=pc_path, file_name=fln_yaml, overwrite=True, happi_devices=True, **pp
+    )
+    assert os.path.isfile(happi_path)
+
+    with open(happi_path) as f:
+        db = json.load(f)
+
+    existing_plans, existing_devices = load_existing_plans_and_devices(os.path.join(pc_path, fln_yaml))
+    for name in existing_devices:
+        assert name in db, f"device {name!r} is missing from the happi file"
+
+    # 'motor' (SynAxis) has a clean captured constructor call; 'det' (SynGauss)
+    # takes a device reference as an argument, so it is recorded but inactive.
+    assert db["motor"]["device_class"] == "ophyd.sim.SynAxis"
+    assert db["motor"]["framework"] == "ophyd-sync"
+    assert db["motor"]["active"] is True
+    assert db["det"]["args"] == ["det", "motor", "motor"]
+    assert db["det"]["active"] is False

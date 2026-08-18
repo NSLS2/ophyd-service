@@ -313,6 +313,8 @@ class DeviceRegistryStore:
                 entry["location_group"] = metadata_model.location_group
             if metadata_model.documentation:
                 entry["documentation"] = metadata_model.documentation
+            if spec.framework:
+                entry["framework"] = spec.framework
 
             if spec.args and isinstance(spec.args[0], str) and ":" in str(spec.args[0]):
                 entry["prefix"] = spec.args[0]

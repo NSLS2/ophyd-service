@@ -423,6 +423,18 @@ def start_manager():
     )
 
     parser.add_argument(
+        "--existing-devices-happi",
+        dest="existing_devices_happi_path",
+        type=str,
+        help="Path for the happi-format JSON list of existing devices generated from "
+        "constructor calls captured while the startup code runs. If the path is a "
+        "directory, then the default file name 'happi_db.json' is used, so the directory "
+        "can be pointed at directly by bluesky-configuration-service's happi seed "
+        "strategy. The file is only written when this option (or the matching config "
+        "file parameter) is set.",
+    )
+
+    parser.add_argument(
         "--update-existing-plans-devices",
         dest="update_existing_plans_devices",
         type=str,
@@ -899,7 +911,20 @@ def start_manager():
             user_group_pd_path,
         )
 
+    existing_devices_happi_path = settings.existing_devices_happi_path
+    if existing_devices_happi_path:
+        happi_dname, _ = os.path.split(existing_devices_happi_path)
+        if not os.path.isdir(happi_dname):
+            logger.error(
+                "The directory for the happi-format device list ('%s') does not exist. "
+                "Create the directory manually and restart RE Manager.",
+                happi_dname,
+            )
+            ttime.sleep(0.01)
+            return 1
+
     config_worker["existing_plans_and_devices_path"] = existing_pd_path
+    config_worker["existing_devices_happi_path"] = existing_devices_happi_path
     config_manager["existing_plans_and_devices_path"] = existing_pd_path
     config_manager["user_group_permissions_path"] = user_group_pd_path
 

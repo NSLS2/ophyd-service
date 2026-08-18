@@ -37,7 +37,7 @@ scikit-image # Needed for BEC/other stuff to run, factor out
 # Dependencies of ophyd-async
 h5py
 aioca
-ophyd-async==0.17
+ophyd-async==0.21.1
 # Required by the Layer 2.8 config-service integration tests
 # (tests/manager/test_config_service_integration.py).
 # The test module boots configuration_service.main.create_app in-process
@@ -49,7 +49,7 @@ asgi-lifespan
 # queueserver_service.http.manager_client), but the compat test suite still
 # exercises the released client against this server.
 bluesky-queueserver-api
-# Merged from subprojects/bluesky-httpserver/requirements-dev.txt so a single
+# Merged from the bluesky-httpserver shim's old requirements-dev.txt so a single
 # dev install can run both suites. Everything else that file lists is already
 # above; only these two were unique to the httpserver tests:
 #   requests -- used directly by the httpserver test client

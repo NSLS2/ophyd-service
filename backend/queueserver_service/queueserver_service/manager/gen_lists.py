@@ -10,6 +10,8 @@ import traceback
 
 import queueserver_service
 
+from .config import default_existing_devices_happi_fln
+from .device_capture import build_instantiation_specs, capture_device_instantiations, write_happi_json
 from .profile_ops import (
     existing_plans_and_devices_from_nspace,
     load_worker_startup_code,
@@ -36,6 +38,7 @@ class GenLists(multiprocessing.Process):
         ignore_invalid_plans,
         device_max_depth,
         use_ipython_kernel,
+        happi_devices=False,
     ):
         super().__init__()
         self._pconn, self._cconn = multiprocessing.Pipe()
@@ -55,6 +58,7 @@ class GenLists(multiprocessing.Process):
         self._ignore_invalid_plans = ignore_invalid_plans
         self._device_max_depth = device_max_depth
         self._use_ipython_kernel = use_ipython_kernel
+        self._happi_devices = happi_devices
 
     @property
     def exception(self):
@@ -89,6 +93,7 @@ class GenLists(multiprocessing.Process):
                 logger.exception(ex)
 
     def run(self):
+        capture_cm, capture = None, None
         try:
             from .config import get_profile_name_from_path, profile_name_to_startup_dir
             from .profile_tools import (
@@ -117,6 +122,10 @@ class GenLists(multiprocessing.Process):
 
             set_re_worker_active()
             set_ipython_mode(use_ipython_kernel)
+
+            if self._happi_devices:
+                capture_cm = capture_device_instantiations()
+                capture = capture_cm.__enter__()
 
             if use_ipython_kernel:
                 # Make sure that there is an even loop in the main thread
@@ -215,9 +224,14 @@ class GenLists(multiprocessing.Process):
                     startup_script_path=startup_script_path,
                 )
 
-            existing_plans, existing_devices, _, _ = existing_plans_and_devices_from_nspace(
+            if capture_cm is not None:
+                capture_cm.__exit__(None, None, None)
+                capture_cm = None
+
+            epd = existing_plans_and_devices_from_nspace(
                 nspace=nspace, ignore_invalid_plans=ignore_invalid_plans, max_depth=device_max_depth
             )
+            existing_plans, existing_devices, _, devices_in_nspace = epd
 
             save_existing_plans_and_devices(
                 existing_plans=existing_plans,
@@ -227,11 +241,20 @@ class GenLists(multiprocessing.Process):
                 overwrite=overwrite,
             )
 
+            if capture is not None:
+                happi_path = os.path.join(file_dir, default_existing_devices_happi_fln)
+                if os.path.exists(happi_path) and not overwrite:
+                    raise IOError(f"File {happi_path!r} already exists")
+                specs = build_instantiation_specs(devices_in_nspace, capture)
+                write_happi_json(specs, file_dir=file_dir, file_name=default_existing_devices_happi_fln)
+
         except Exception:
             error = traceback.format_exc()
             self._cconn.send((error,))
 
         finally:
+            if capture_cm is not None:
+                capture_cm.__exit__(None, None, None)
             clear_re_worker_active()
             clear_ipython_mode()
 
@@ -249,6 +272,7 @@ def gen_list_of_plans_and_devices(
     ignore_invalid_plans=False,
     device_max_depth=0,
     use_ipython_kernel=False,
+    happi_devices=False,
 ):
     """
     Generate the list of plans and devices from a collection of startup files, python module or
@@ -295,6 +319,10 @@ def gen_list_of_plans_and_devices(
     use_ipython_kernel: boolean
         Select between loading startup code using pure Python (``False``) or use IPython (``True``).
         IPython mode allows to load the code that contains IPython features.
+    happi_devices: boolean
+        Also write a happi-format JSON list of existing devices (``happi_db.json`` in ``file_dir``)
+        generated from device constructor calls captured while the startup code runs. The file is
+        shaped for the configuration-service happi seed strategy.
 
     Returns
     -------
@@ -337,6 +365,7 @@ def gen_list_of_plans_and_devices(
             ignore_invalid_plans=ignore_invalid_plans,
             device_max_depth=device_max_depth,
             use_ipython_kernel=use_ipython_kernel,
+            happi_devices=happi_devices,
         )
 
         p = GenLists(**gen_lists_kwargs)
@@ -473,6 +502,18 @@ def gen_list_of_plans_and_devices_cli():
         "(default: %(default)s).",
     )
 
+    parser.add_argument(
+        "--happi-devices",
+        dest="happi_devices",
+        type=str,
+        choices=["ON", "OFF"],
+        default="OFF",
+        help="Also write a happi-format JSON list of existing devices ('happi_db.json' in the "
+        "output directory) generated from device constructor calls captured while the startup "
+        "code runs. The file is shaped for the configuration-service happi seed strategy "
+        "(default: %(default)s).",
+    )
+
     args = parser.parse_args()
     file_dir = args.file_dir
     file_name = args.file_name
@@ -486,6 +527,7 @@ def gen_list_of_plans_and_devices_cli():
     device_max_depth = int(args.device_max_depth)
 
     use_ipython_kernel = use_ipython_kernel == "ON"
+    happi_devices = args.happi_devices == "ON"
 
     if file_dir is not None:
         file_dir = os.path.abspath(os.path.expanduser(file_dir))
@@ -503,6 +545,7 @@ def gen_list_of_plans_and_devices_cli():
             ignore_invalid_plans=ignore_invalid_plans,
             device_max_depth=device_max_depth,
             use_ipython_kernel=use_ipython_kernel,
+            happi_devices=happi_devices,
         )
         print("The list of existing plans and devices was created successfully.")
         exit_code = 0

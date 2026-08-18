@@ -484,6 +484,7 @@ def _get_expected_settings_default_1(_1, _2):
         "demo_mode": True,
         "emergency_lock_key": None,
         "existing_plans_and_devices_path": existing_plans_and_devices_path,
+        "existing_devices_happi_path": None,
         "ignore_invalid_plans": False,
         "ipython_dir": ipython_dir,
         "device_max_depth": 0,
@@ -596,6 +597,7 @@ def _get_expected_settings_config_2(file_dir, ip_con_dir):
         "demo_mode": False,
         "emergency_lock_key": "different_lock_key",
         "existing_plans_and_devices_path": existing_plans_and_devices_path,
+        "existing_devices_happi_path": None,
         "ipython_dir": ipython_dir,
         "device_max_depth": 2,
         "ignore_invalid_plans": True,
@@ -699,6 +701,7 @@ def _get_expected_settings_params_3(file_dir, _):
         "demo_mode": False,
         "emergency_lock_key": "different_lock_key",
         "existing_plans_and_devices_path": existing_plans_and_devices_path,
+        "existing_devices_happi_path": None,
         "ipython_dir": ipython_dir,
         "device_max_depth": 5,
         "ignore_invalid_plans": True,
@@ -1312,4 +1315,70 @@ def test_cli_ignore_invalid_plans_02(tmp_path, re_manager_cmd, ignore_invalid_pl
     assert resp9["success"] is True
     assert resp9["msg"] == ""
 
+    assert wait_for_condition(time=3, condition=condition_environment_closed)
+
+
+def test_cli_existing_devices_happi_01(re_manager_cmd, tmp_path):  # noqa: F811
+    """
+    Testing ``--existing-devices-happi`` parameter: start RE Manager with the parameter
+    pointing to an output directory, open and close the environment and verify that the
+    generated ``happi_db.json`` contains an entry for every namespace device, shaped for
+    the configuration-service happi seed strategy (``device_class``/``args``/``kwargs``/
+    ``active``/``framework``).
+    """
+    import json
+
+    pc_path = copy_default_profile_collection(tmp_path, copy_yaml=True)
+    happi_dir = os.path.join(tmp_path, "happi_out")
+    os.makedirs(happi_dir, exist_ok=True)
+    happi_path = os.path.join(happi_dir, "happi_db.json")
+
+    params = ["--startup-dir", pc_path, "--existing-devices-happi", happi_dir]
+    re_manager_cmd(params)
+
+    assert not os.path.isfile(happi_path)
+
+    resp1, _ = zmq_request("environment_open")
+    assert resp1["success"] is True, f"resp={resp1}"
+    assert wait_for_condition(time=timeout_env_open, condition=condition_environment_created)
+
+    assert os.path.isfile(happi_path)
+    with open(happi_path) as f:
+        db = json.load(f)
+
+    resp2, _ = zmq_request("devices_existing")
+    assert resp2["success"] is True, f"resp={resp2}"
+    for name in resp2["devices_existing"]:
+        assert name in db, f"device {name!r} is missing from the happi file"
+
+    for name, entry in db.items():
+        assert entry["_id"] == name
+        assert entry["name"] == name
+        assert entry["type"] == "OphydItem"
+        assert entry["device_class"]
+        assert "." in entry["device_class"]
+        assert isinstance(entry["args"], list)
+        assert isinstance(entry["kwargs"], dict)
+        assert isinstance(entry["active"], bool)
+        # Duck-typed protocol devices (e.g. ophyd.sim flyers) carry no
+        # framework tag; every ophyd/ophyd-async device does.
+        if "framework" in entry:
+            assert entry["framework"] in ("ophyd-sync", "ophyd-async")
+
+    # Spot-check exact capture of canonical sim devices. 'motor' has a clean
+    # captured constructor call; 'det' (SynGauss) takes a device reference as
+    # an argument, so it is recorded but demoted to inactive.
+    assert db["motor"]["device_class"] == "ophyd.sim.SynAxis"
+    assert db["motor"]["framework"] == "ophyd-sync"
+    assert db["motor"]["kwargs"]["name"] == "motor"
+    assert db["motor"]["kwargs"]["labels"] == ["motors"]
+    assert db["motor"]["active"] is True
+
+    assert db["det"]["device_class"] == "ophyd.sim.SynGauss"
+    assert db["det"]["args"] == ["det", "motor", "motor"]
+    assert db["det"]["active"] is False
+    assert "device reference" in db["det"]["documentation"]
+
+    resp3, _ = zmq_request("environment_close")
+    assert resp3["success"] is True
     assert wait_for_condition(time=3, condition=condition_environment_closed)
