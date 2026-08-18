@@ -136,7 +136,7 @@ Added
   ``bluesky.protocols.Subscribable``, ``bluesky.protocols.Checkable``.
 
 - RE Manager is now adding a prefix to each Redis key name. The default prefix is ``qs_default``.
-  Custom prefix can be passed with ``--redis-name-prefix`` CLI parameter or set as ```network/redis_name_prefix```
+  Custom prefix can be passed with ``--redis-name-prefix`` CLI parameter or set as ``network/redis_name_prefix``
   parameter in YML config file.
 
 Changed

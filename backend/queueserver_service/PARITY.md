@@ -20,6 +20,16 @@ their upstream names (`bluesky-queueserver` 1.0.0, plus the `bluesky-httpserver`
 shim) so `bluesky-queueserver-api` and legacy imports resolve here — see the
 provenance comments in `pyproject.toml` and the two shim `__init__.py` files.
 
+**Ancestry credits.** Both ancestors are BSD-3-Clause projects maintained by
+Brookhaven National Laboratory and the Bluesky collaboration; the inherited
+license text is kept verbatim in `LICENSE`. Credit for the inherited code
+belongs to the upstream authors — see the contributor records of
+[bluesky-queueserver](https://github.com/bluesky/bluesky-queueserver/graphs/contributors)
+and
+[bluesky-httpserver](https://github.com/bluesky/bluesky-httpserver/graphs/contributors).
+(This note replaces the fork's boilerplate `AUTHORS.rst`/`CONTRIBUTING.rst`,
+which carried no content beyond the BNL maintainer line.)
+
 ## What is preserved (audited 2026-08-07)
 
 A three-way surface inventory (both ancestors vs this tree) found **zero dropped
