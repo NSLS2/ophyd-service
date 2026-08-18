@@ -142,10 +142,10 @@ class BItem:
             item_meta = dict(item_meta)
         elif isinstance(item_meta, Iterable) and not isinstance(item_meta, str):
             item_meta = list(item_meta)
-            for md in item_meta:
+            for n, md in enumerate(item_meta):
                 if not isinstance(md, Mapping):
                     raise TypeError(f"One of the elements of item metadata list is not a mapping ({type(md)})")
-                md = dict(md)
+                item_meta[n] = dict(md)
         else:
             raise TypeError(f"Item metadata {item_meta!r} must be a mapping or an iterable: ({type(item_meta)!r})")
         return item_meta

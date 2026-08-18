@@ -709,7 +709,7 @@ class API_Base:
         if (task_uids is None) or (task_status is None):
             return {}
         elif isinstance(task_uids, str):
-            return {task_uids: task_status} if task_status in completed_status_vals else []
+            return {task_uids: task_status} if task_status in completed_status_vals else {}
         elif isinstance(task_uids, list):
             return {_: task_status[_] for _ in task_uids if task_status[_] in completed_status_vals}
         else:
