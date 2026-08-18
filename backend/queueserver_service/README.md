@@ -20,28 +20,25 @@ bluesky-httpserver, maintained here independently):
 
 ## Compatibility contract
 
-This service is maintained independently of upstream bluesky-queueserver. It is
-moving to an **HTTP-only** design, so the compatibility surface has two tiers:
+This service is maintained independently of upstream bluesky-queueserver, but it
+keeps the full existing bluesky-queueserver + bluesky-httpserver functionality in
+place. (An HTTP-only design was considered and rejected — 0MQ stays first-class;
+see the design record.) The frozen compatibility surface is everything the
+**bluesky-queueserver-api** client library consumes, over BOTH transports:
 
-- **Stable, frozen contract** — the HTTP REST + WebSocket API consumed by the
-  **bluesky-queueserver-api** client library's HTTP transport. This MUST keep
-  working with the api package; anything behavior-visible against it is a
-  breaking change.
-- **Deprecated, pending removal** — the 0MQ CONTROL request/response protocol and
-  INFO (PUB) message formats that `REManagerAPI`'s ZMQ transport and its
-  console/system-info monitors speak. The 0MQ layer is being removed entirely
-  (the manager already serves the control path in-process in unified mode); until
-  it is deleted it still functions, but it is not a frozen contract and gets no
-  new robustness investment. When it is removed, the api package's **ZMQ**
-  transport, external PUB subscribers, and the legacy top-level
-  `bluesky_queueserver` ZMQ shim names (e.g. `ZMQCommSendThreads`,
-  `ZMQCommSendAsync`) stop being supported — the
-  HTTP transport is the supported replacement.
+- the **HTTP REST + WebSocket API** its HTTP transport speaks, and
+- the **0MQ CONTROL** request/response protocol and **INFO (PUB)** message
+  formats that `REManagerAPI`'s ZMQ transport and its console/system-info
+  monitors speak, including the legacy top-level `bluesky_queueserver` ZMQ shim
+  names (e.g. `ZMQCommSendThreads`, `ZMQCommSendAsync`).
+
+Anything behavior-visible against the api package on either transport is a
+breaking change; new capability on these surfaces is added additively.
 
 (The http half of this service itself imports `bluesky_queueserver_api`, so
 breaking the api package breaks the service too.) Internal divergence — new endpoints,
 new config sections, manager internals — is fine; changing or removing what
-bluesky-queueserver-api's HTTP transport consumes is not.
+bluesky-queueserver-api consumes is not.
 
 Two install-level consequences of that contract (see the notes in `pyproject.toml`
 and `bluesky_queueserver/__init__.py`): the **distribution** is named
@@ -81,9 +78,8 @@ Enforced in CI: the HTTP contract is exercised by the in-process side-C suite
 (`tests/http/test_side_c_api_client_compat.py` / `tests/http/test_side_c_auth.py`), which
 drives the PyPI `bluesky-queueserver-api` HTTP client against a live
 manager+server, and by the `with-queueserver` integration job that installs the
-api package from PyPI (`integration/exercise/queueserver_api_compat.py`). The
-integration job still drives both transports today; its 0MQ leg is retained only
-until the 0MQ layer is removed, after which HTTP is the sole exercised transport.
+api package from PyPI and drives BOTH transports — 0MQ and HTTP — against a
+running pod (`integration/exercise/queueserver_api_compat.py`).
 
 ## How the image is built
 
