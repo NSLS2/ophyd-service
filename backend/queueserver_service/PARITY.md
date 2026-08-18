@@ -49,6 +49,12 @@ features**:
 
 ## What the restructure changed (shape, not behavior)
 
+- 2026-08: the outbound compatibility veneers (the `bluesky_queueserver`
+  import surface and the `bluesky-httpserver` shim distribution) moved under
+  `compat/`, with their reasons-to-exist and retirement conditions documented
+  in `compat/README.md`. Import names, distribution names, and behavior are
+  unchanged; only the directory layout moved.
+
 - One package, one test tree, one CI pipeline instead of two repos.
 - Composition and dependency injection over inheritance where seams were
   needed: `QueueStore` protocol (Redis or SQL queue storage), authenticator

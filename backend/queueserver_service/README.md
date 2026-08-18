@@ -74,7 +74,7 @@ httpserver in alongside and clobbering the `start-bluesky-httpserver` console sc
 (which the `bluesky-queueserver` dist above already owns — the shim deliberately does
 NOT re-declare it). The shim pins `bluesky-queueserver==<same version>` so a
 version-skewed pair is uninstallable. It is installed alongside the main package
-(`pip install -e . -e ./bluesky-httpserver`), which the Dockerfile and the
+(`pip install -e . -e ./compat/bluesky-httpserver`), which the Dockerfile and the
 queueserver-tests CI job both do.
 
 Enforced in CI: the HTTP contract is exercised by the in-process side-C suite
