@@ -72,6 +72,10 @@ dependencies = [
     "sqlalchemy",
     "starlette",
     "uvicorn",
+    # uvicorn serves the WebSocket endpoints but the bare dist ships no WS
+    # protocol implementation and silently starts with ws=none without one.
+    # This was previously satisfied transitively via bluesky-queueserver-api.
+    "websockets",
 ]
 
 [project.optional-dependencies]

@@ -178,6 +178,7 @@ dependencies = [
     { name = "sqlalchemy", marker = "python_full_version >= '3.11'" },
     { name = "starlette", marker = "python_full_version >= '3.11'" },
     { name = "uvicorn", marker = "python_full_version >= '3.11'" },
+    { name = "websockets", marker = "python_full_version >= '3.11'" },
 ]
 
 [package.optional-dependencies]
@@ -246,6 +247,7 @@ requires-dist = [
     { name = "sqlalchemy" },
     { name = "starlette" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 provides-extras = ["spreadsheet", "sim", "epics", "all"]
 
