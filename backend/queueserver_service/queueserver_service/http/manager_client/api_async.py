@@ -24,7 +24,7 @@ class API_Async_Mixin(API_Base):
 
         # Use tasks instead of threads
         self._task_status_get = asyncio.create_task(self._task_status_get_func())
-        self._task_status_get = asyncio.create_task(self._task_status_poll_func())
+        self._task_status_poll = asyncio.create_task(self._task_status_poll_func())
 
     def _validate_loop(self, loop):
         """
