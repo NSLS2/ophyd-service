@@ -69,6 +69,8 @@ properties:
             type: boolean
           existing_plans_and_devices_path:
             type: string
+          existing_devices_happi_path:
+            type: string
           user_group_permissions_path:
             type: string
           startup_dir:
@@ -93,6 +95,8 @@ properties:
                 type: boolean
               existing_plans_and_devices_path:
                 type: string
+              existing_devices_happi_path:
+                type: string
               user_group_permissions_path:
                 type: string
           - type: object
@@ -105,6 +109,8 @@ properties:
               ignore_invalid_plans:
                 type: boolean
               existing_plans_and_devices_path:
+                type: string
+              existing_devices_happi_path:
                 type: string
               user_group_permissions_path:
                 type: string
@@ -124,6 +130,8 @@ properties:
                 type: boolean
               existing_plans_and_devices_path:
                 type: string
+              existing_devices_happi_path:
+                type: string
               user_group_permissions_path:
                 type: string
 
@@ -141,6 +149,8 @@ properties:
               ignore_invalid_plans:
                 type: boolean
               existing_plans_and_devices_path:
+                type: string
+              existing_devices_happi_path:
                 type: string
               user_group_permissions_path:
                 type: string
@@ -162,6 +172,8 @@ properties:
               ignore_invalid_plans:
                 type: boolean
               existing_plans_and_devices_path:
+                type: string
+              existing_devices_happi_path:
                 type: string
               user_group_permissions_path:
                 type: string
@@ -181,6 +193,8 @@ properties:
                 type: boolean
               existing_plans_and_devices_path:
                 type: string
+              existing_devices_happi_path:
+                type: string
               user_group_permissions_path:
                 type: string
 
@@ -199,6 +213,8 @@ properties:
                 type: boolean
               existing_plans_and_devices_path:
                 type: string
+              existing_devices_happi_path:
+                type: string
               user_group_permissions_path:
                 type: string
 
@@ -216,6 +232,8 @@ properties:
               ignore_invalid_plans:
                 type: boolean
               existing_plans_and_devices_path:
+                type: string
+              existing_devices_happi_path:
                 type: string
               user_group_permissions_path:
                 type: string
@@ -238,6 +256,8 @@ properties:
                 type: boolean
               existing_plans_and_devices_path:
                 type: string
+              existing_devices_happi_path:
+                type: string
               user_group_permissions_path:
                 type: string
 
@@ -258,6 +278,8 @@ properties:
               ignore_invalid_plans:
                 type: boolean
               existing_plans_and_devices_path:
+                type: string
+              existing_devices_happi_path:
                 type: string
               user_group_permissions_path:
                 type: string
@@ -283,6 +305,8 @@ properties:
                 type: boolean
               existing_plans_and_devices_path:
                 type: string
+              existing_devices_happi_path:
+                type: string
               user_group_permissions_path:
                 type: string
 
@@ -304,6 +328,8 @@ properties:
                 type: boolean
               existing_plans_and_devices_path:
                 type: string
+              existing_devices_happi_path:
+                type: string
               user_group_permissions_path:
                 type: string
 
@@ -324,6 +350,8 @@ properties:
               ignore_invalid_plans:
                 type: boolean
               existing_plans_and_devices_path:
+                type: string
+              existing_devices_happi_path:
                 type: string
               user_group_permissions_path:
                 type: string

@@ -16,6 +16,7 @@ from threading import Thread
 
 from ..common.comms import PipeJsonRpcReceive
 from .config import profile_name_to_startup_dir
+from .device_capture import build_instantiation_specs, capture_device_instantiations, write_happi_json
 from .device_introspection import build_config_service_payload, instantiate_device_from_spec
 from ..common.logging_setup import PPrintForLogging as ppfl
 from ..common.logging_setup import setup_loggers
@@ -164,6 +165,10 @@ class RunEngineWorker(Process):
         self._existing_plans_and_devices_changed = False
         self._existing_plans, self._existing_devices = {}, {}
         self._config_service_device_data: dict = {}
+        # Constructor calls captured while the startup code ran (see
+        # device_capture.py); used to emit the happi-format device list.
+        self._device_capture = None
+        self._happi_device_specs = None
         # Names this worker has overlaid from config-service specs. Used by the
         # pre-plan staleness handler to compute implicit deletes on a full
         # replace (reset_occurred / epoch mismatch) without accidentally
@@ -814,6 +819,12 @@ class RunEngineWorker(Process):
             with self._existing_items_lock:
                 self._existing_plans, self._existing_devices = existing_plans, existing_devices
                 self._config_service_device_data = build_config_service_payload(devices_in_nspace)
+            if self._config_dict.get("existing_devices_happi_path"):
+                # Devices added after startup (script loads) have no captured
+                # constructor call and fall back to introspection.
+                self._happi_device_specs = build_instantiation_specs(
+                    devices_in_nspace, self._device_capture
+                )
             self._generate_lists_of_allowed_plans_and_devices()
             self._update_existing_pd_file(options=("ALWAYS",))
 
@@ -836,6 +847,15 @@ class RunEngineWorker(Process):
                 existing_plans=existing_plans,
                 existing_devices=existing_devices,
             )
+
+            path_happi = self._config_dict.get("existing_devices_happi_path")
+            if path_happi and self._happi_device_specs is not None:
+                write_happi_json(
+                    self._happi_device_specs,
+                    file_dir=os.path.dirname(path_happi),
+                    file_name=os.path.basename(path_happi),
+                )
+                logger.info("Happi-format device list is saved to '%s'", path_happi)
 
     def _load_script_into_environment(self, *, script, update_lists, update_re):
         """
@@ -1547,12 +1567,14 @@ class RunEngineWorker(Process):
 
             # If IPython kernel is used, the startup code is loaded during kernel initialization.
             if not self._use_ipython_kernel:
-                self._re_namespace = load_worker_startup_code(
-                    startup_dir=startup_dir,
-                    startup_module_name=startup_module_name,
-                    startup_script_path=startup_script_path,
-                    nspace=self._re_namespace,
-                )
+                with capture_device_instantiations() as capture:
+                    self._re_namespace = load_worker_startup_code(
+                        startup_dir=startup_dir,
+                        startup_module_name=startup_module_name,
+                        startup_script_path=startup_script_path,
+                        nspace=self._re_namespace,
+                    )
+                self._device_capture = capture
 
             # Overlay config-service-sourced devices so all services agree
             # on device definitions. Hard-fail on instantiation error —
@@ -1592,6 +1614,11 @@ class RunEngineWorker(Process):
             # Dictionaries of references to plans and devices from the namespace
             self._plans_in_nspace = plans_in_nspace
             self._devices_in_nspace = devices_in_nspace
+
+            if self._config_dict.get("existing_devices_happi_path"):
+                self._happi_device_specs = build_instantiation_specs(
+                    devices_in_nspace, self._device_capture
+                )
 
             # Always download existing plans and devices when loading the new environment
             self._existing_plans_and_devices_changed = True
@@ -2014,7 +2041,11 @@ class RunEngineWorker(Process):
                 ttime.sleep(0.5)  # Wait unitl 0MQ monitor is connected to the kernel ports
 
                 logger.info("Initializing IPython kernel ...")
-                self._ip_kernel_app.initialize([])
+                # Startup code runs inside kernel initialization; capture the
+                # device constructor calls it makes (see device_capture.py).
+                with capture_device_instantiations() as capture:
+                    self._ip_kernel_app.initialize([])
+                self._device_capture = capture
                 logger.info("IPython kernel initialization is complete.")
 
                 ttime.sleep(0.2)  # Wait until the error message are delivered (if startup fails)
