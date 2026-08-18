@@ -1,5 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
-import { useOphydPVSocket, HistogramPlot } from '@blueskyproject/finch'
+import { useState, useEffect, useRef } from 'react'
 import type { ElementData } from '../components/ElementPicker'
 import { useFullPreset, type EdgeFullPreset, type ScanPresetEntry } from '../api/presets'
 import { getEdgesForElement } from '../api/edgeMapping'
@@ -11,6 +10,7 @@ import {
   DETECTOR_ADDRESSES,
 } from '../components/DetectorSettings'
 import { ControlsPanel } from '../components/ControlsPanel'
+import { LiveSpectrumPanel } from '../components/LiveSpectrumPanel'
 import { Toast, type ToastType } from '../components/Toast'
 import { useQueueExecute, useStopScan, useAllowedPlans, isPlanAllowed, useQueueStatus } from '../api/queueserver'
 import { useResolveAddresses, usePvSetBatch, usePvSet, type PvCaput } from '../api/directControl'
@@ -88,7 +88,7 @@ export default function ScanConfig({ element, onBack }: ScanConfigProps) {
         </div>
       )}
 
-        {data && <PresetPanels data={data} />}
+        {data && <PresetPanels key={selectedEdge} data={data} />}
       </div>
     </div>
   )
@@ -144,12 +144,6 @@ function PresetPanels({ data }: { data: EdgeFullPreset }) {
   const ipfyCountPv = pvMap?.[IPFY_COUNT_ADDRESS]
   const prtmPv = pvMap?.[DETECTOR_ADDRESSES.vortexTime]
 
-  const socketPvs = useMemo(
-    () => [spectrumPv, pfyCountPv, ipfyCountPv].filter((p): p is string => Boolean(p)),
-    [spectrumPv, pfyCountPv, ipfyCountPv],
-  )
-  const { devices } = useOphydPVSocket(socketPvs)
-
   const [isCounting, setIsCounting] = useState(false)
   const pvSet = usePvSet()
 
@@ -169,18 +163,6 @@ function PresetPanels({ data }: { data: EdgeFullPreset }) {
     return () => clearInterval(id)
   }, [isCounting])
 
-  // While counting, drive the PFY/IPFY count fields from the live ROI sums.
-  const pfyLive = pfyCountPv ? devices[pfyCountPv]?.value : undefined
-  const ipfyLive = ipfyCountPv ? devices[ipfyCountPv]?.value : undefined
-  useEffect(() => {
-    if (!isCounting) return
-    setDetectorVortex((prev) => ({
-      ...prev,
-      ...(typeof pfyLive === 'number' ? { pfyCounts: pfyLive } : {}),
-      ...(typeof ipfyLive === 'number' ? { ipfyCounts: ipfyLive } : {}),
-    }))
-  }, [isCounting, pfyLive, ipfyLive])
-
   const handleCount = () => {
     if (!isCounting && !prtmPv) {
       showToast('Vortex trigger PV not resolved yet — try again in a moment', 'warning')
@@ -188,11 +170,6 @@ function PresetPanels({ data }: { data: EdgeFullPreset }) {
     }
     setIsCounting((c) => !c)
   }
-
-  // The MCA spectrum arrives from the WebSocket as a JSON array of channel
-  // counts; the socket value type is scalar, so narrow it here.
-  const spectrumValue = spectrumPv ? (devices[spectrumPv]?.value as unknown) : undefined
-  const spectrumArray = Array.isArray(spectrumValue) ? (spectrumValue as number[]) : null
 
   const showToast = (message: string, type: ToastType) => {
     setToast({ message, type })
@@ -368,16 +345,13 @@ function PresetPanels({ data }: { data: EdgeFullPreset }) {
       </div>
 
       <div className="grid grid-cols-[minmax(0,1fr)_minmax(14rem,18rem)] gap-4 items-stretch max-lg:grid-cols-1">
-        <section className="flex min-w-0 min-h-[clamp(18rem,32vh,24rem)] flex-col bg-white border border-panel-border rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(16,92,120,0.08)]" aria-label="Live Spectrum">
-          <div className="bg-brand-teal text-white text-center px-4 py-[0.66rem] text-lg font-bold tracking-[0.02em]">Live Spectrum (Vortex MCA)</div>
-          <div className="flex min-h-0 flex-1 px-4 pt-3 pb-4">
-            <HistogramPlot
-              arrayData={spectrumArray}
-              title="Vortex MCA Spectrum"
-              className="min-h-[14rem] flex-1"
-            />
-          </div>
-        </section>
+        <LiveSpectrumPanel
+          spectrumPv={spectrumPv}
+          pfyCountPv={pfyCountPv}
+          ipfyCountPv={ipfyCountPv}
+          isCounting={isCounting}
+          setDetectorVortex={setDetectorVortex}
+        />
         <ControlsPanel onPdScan={handlePdScan} onSingleScan={handleSingleScan} onStop={handleStop} isRunning={scanStatus === 'running' || isManagerBusy} activeScan={activeScan} />
       </div>
 

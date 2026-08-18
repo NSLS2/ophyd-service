@@ -3,6 +3,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { createServer as createHttpServer } from 'node:http';
 import express from 'express';
 import correlator from 'express-correlation-id';
 import { createServer as createViteServer } from 'vite';
@@ -104,6 +105,24 @@ const isAdminPath = (url) => {
 };
 
 const deriveAuthDecision = (req) => {
+  // Dev-only bypass: without an auth proxy in front, synthesize an identity from
+  // DEV_AUTH_* env vars so the app is usable locally. Ignored in production.
+  if (!isProduction && process.env.DEV_AUTH_UPN) {
+    const upn = normalizeUpn(process.env.DEV_AUTH_UPN);
+    const recognizedRoles = getRecognizedRoles(parseRoles(process.env.DEV_AUTH_ROLES || ''));
+    if (upn && recognizedRoles.length > 0) {
+      return {
+        scopes: rolesToScopes(recognizedRoles),
+        user: {
+          upn,
+          name: normalizeHeaderValue(process.env.DEV_AUTH_NAME || '', MAX_NAME_HEADER_LENGTH) || upn,
+          givenName: normalizeOptionalHeaderValue(process.env.DEV_AUTH_GIVEN_NAME || ''),
+          familyName: normalizeOptionalHeaderValue(process.env.DEV_AUTH_FAMILY_NAME || ''),
+        },
+      };
+    }
+  }
+
   const upn = normalizeUpn(getHeader(req, 'access-token-upn'));
   const name = normalizeHeaderValue(getHeader(req, 'access-token-name'), MAX_NAME_HEADER_LENGTH) || upn;
   const recognizedRoles = getRecognizedRoles(parseRoles(getHeader(req, 'access-token-roles')));
@@ -210,6 +229,7 @@ if (isProduction) {
 
 // Create http server
 const app = express();
+const httpServer = sslConfig ? undefined : createHttpServer(app);
 
 // Middleware: Depends on environment
 /** @type {import('vite').ViteDevServer | undefined} */
@@ -254,7 +274,7 @@ if (isProduction) {
 } else {
   // Vite server as middleware
   vite = await createViteServer({
-    server: { middlewareMode: true },
+    server: { middlewareMode: true, hmr: { server: httpServer } },
     appType: 'custom',
     base: basePath,
   });
@@ -316,7 +336,7 @@ if (sslConfig) {
     console.log(`Server started at https://localhost:${port}`);
   });
 } else {
-  app.listen(port, () => {
+  httpServer.listen(port, () => {
     console.log(`Server started at http://localhost:${port}`);
   });
 }

@@ -10,7 +10,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 const BASE = '/api/queueserver'
 
 // Default API key for development — in production this would come from auth
-const API_KEY = 'd97fca2277896ea9e0a2576efae94c82'
+const API_KEY = 'b927abb6addb3363f97db96fcecbf795'
 
 // ── Types ─────────────────────────────────────────────────────────
 

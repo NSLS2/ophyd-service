@@ -1,5 +1,3 @@
-import { useState } from 'react'
-import { LoginGate } from '../components/LoginGate'
 import { EditableTable, ColumnDef } from '../components/EditableTable'
 import {
   useScanPresets,
@@ -79,12 +77,6 @@ function PresetsTables() {
 }
 
 export default function PresetsAdmin() {
-  const [authed, setAuthed] = useState(false)
-
-  if (!authed) {
-    return <LoginGate onAuth={() => setAuthed(true)} />
-  }
-
   return (
     <div className="w-full min-h-screen bg-white">
       <div className="p-6 w-full max-w-app mx-auto box-border">
@@ -92,13 +84,6 @@ export default function PresetsAdmin() {
         <h1 className="m-0 text-brand-teal text-[1.4rem] font-bold">
           Presets Admin
         </h1>
-        <button
-          type="button"
-          className="px-[0.9rem] py-[0.45rem] bg-white text-brand-teal border border-[#9fc8d8] rounded-lg text-[0.85rem] font-semibold cursor-pointer transition-all hover:bg-brand-teal hover:text-white"
-          onClick={() => setAuthed(false)}
-        >
-          Sign Out
-        </button>
         </div>
         <PresetsTables />
       </div>
