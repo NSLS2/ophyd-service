@@ -207,6 +207,7 @@ class CoHostedHttpServer:
         attempts = 0
         while True:
             attempts += 1
+            serve_task: Optional[asyncio.Task] = None
             try:
                 self._set_state("starting")
                 self._server = self._new_server()
@@ -241,6 +242,16 @@ class CoHostedHttpServer:
                         "Co-hosted HTTP server exited unexpectedly; the manager continues"
                     )
             except asyncio.CancelledError:
+                # Cancelling an await does not cancel the awaited task: left
+                # alone, the inner serve task would keep uvicorn (and the
+                # port) alive with no supervisor, and die later with "Task
+                # was destroyed but it is pending".
+                if serve_task is not None and not serve_task.done():
+                    if self._server is not None:
+                        self._server.should_exit = True
+                    serve_task.cancel()
+                    with contextlib.suppress(BaseException):
+                        await serve_task
                 self._set_state("stopped")
                 raise
             except Exception:

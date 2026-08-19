@@ -304,3 +304,50 @@ async def test_supervised_serve_runs_and_stops(monkeypatch):
 
     await server.stop()
     assert server.state == "stopped"
+
+
+class _FakeServerHangs:
+    """uvicorn.Server stand-in that starts, then hangs until cancelled."""
+
+    def __init__(self):
+        self.started = False
+        self.should_exit = False
+        self.cancelled = False
+
+    async def serve(self):
+        self.started = True
+        try:
+            while True:
+                await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+
+@pytest.mark.asyncio
+async def test_supervised_serve_cancellation_stops_inner_task(monkeypatch):
+    """Cancelling the supervisor must also cancel the inner serve task —
+    otherwise uvicorn keeps running (and holding the port) with no
+    supervisor left."""
+    fakes = []
+
+    def factory():
+        fakes.append(_FakeServerHangs())
+        return fakes[-1]
+
+    server = _make_supervised_server(monkeypatch, factory)
+    server._stop_event = asyncio.Event()
+    task = asyncio.ensure_future(server._supervised_serve())
+
+    deadline = asyncio.get_event_loop().time() + 5.0
+    while server.state != "running":
+        assert asyncio.get_event_loop().time() < deadline, server.state
+        await asyncio.sleep(0.01)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(fakes) == 1
+    assert fakes[0].cancelled, "inner serve task was not cancelled"
+    assert server.state == "stopped"
