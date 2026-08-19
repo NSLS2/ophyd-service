@@ -546,6 +546,18 @@ class RunEngineManager(Process):
     def _compute_re_state(self):
         return self._worker_state_info["re_state"] if self._worker_state_info else None
 
+    def _http_server_state(self):
+        """
+        Health of the co-hosted HTTP server for the manager status.
+        """
+        if not self._http_server_settings.enabled:
+            return "disabled"
+        if self._http_server is None:
+            # Enabled but not (yet / any longer) instantiated: before
+            # zmq_server_comm() starts it, or after shutdown released it.
+            return "stopped"
+        return self._http_server.state
+
     def _status_update(self):
         """
         Compute the updated status
@@ -591,6 +603,11 @@ class RunEngineManager(Process):
             "lock": {"environment": self._lock_info.environment, "queue": self._lock_info.queue},
             # None unless the most recent config-service device sync failed.
             "config_service_sync_error": self._config_service_sync_error,
+            # Health of the co-hosted HTTP server (unified mode):
+            # "disabled" / "starting" / "running" / "retrying" / "failed" /
+            # "stopped". A failed HTTP side leaves the manager (and 0MQ API)
+            # fully functional — this field is what makes that visible.
+            "http_server_state": self._http_server_state(),
         }
 
         self._status_publish()  # Add the updated status to 'msg_queue'

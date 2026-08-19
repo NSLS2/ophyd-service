@@ -16,6 +16,7 @@ legacy (HTTP-disabled) path never imports them.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import logging
 import re
@@ -27,6 +28,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 60610
 SHUTDOWN_TIMEOUT_SECONDS = 10.0
+# Supervision policy: a serve() failure (port already bound, crash in the
+# ASGI stack) is retried a few times, then the server gives up and the
+# manager continues 0MQ-only. The manager process must never die for it.
+STARTUP_RETRY_DELAY_SECONDS = 2.0
+MAX_STARTUP_ATTEMPTS = 3
 
 
 @dataclasses.dataclass(frozen=True)
@@ -124,6 +130,14 @@ class CoHostedHttpServer:
     (so the in-app REManagerAPI client can connect); stop with
     ``await stop()`` before the 0MQ socket closes (so in-flight HTTP→0MQ
     round-trips drain cleanly).
+
+    The serve task is SUPERVISED: uvicorn raises SystemExit when the port
+    cannot be bound, and an unhandled exception anywhere in the ASGI stack
+    would otherwise die silently in an unawaited task. Both are contained
+    here — retried up to ``MAX_STARTUP_ATTEMPTS`` and then abandoned with
+    ``state == "failed"`` — so an HTTP failure degrades the service to
+    0MQ-only instead of killing (or crash-looping) the manager process.
+    ``state`` is surfaced as ``http_server_state`` in the manager status.
     """
 
     def __init__(
@@ -143,6 +157,120 @@ class CoHostedHttpServer:
         self._manager_zmq_connect_addr = _bind_addr_to_connect_addr(manager_zmq_bind_addr)
         self._server: Any = None  # uvicorn.Server
         self._task: Optional[asyncio.Task] = None
+        self._uvicorn_config: Any = None
+        self._state = "starting"
+        self._stop_event: Optional[asyncio.Event] = None
+
+    @property
+    def state(self) -> str:
+        """One of ``starting`` / ``running`` / ``retrying`` / ``failed`` / ``stopped``."""
+        return self._state
+
+    def _set_state(self, state: str) -> None:
+        if state == self._state:
+            return
+        self._state = state
+        # The manager serves a CACHED status dict; refresh it so the new
+        # http_server_state is visible without waiting for another event.
+        manager = self._manager
+        if manager is not None:
+            with contextlib.suppress(Exception):
+                manager._status_update()
+
+    async def _serve_and_capture_exit(self) -> Optional[SystemExit]:
+        # SystemExit raised inside an asyncio task propagates THROUGH the
+        # event loop (Task.__step re-raises it), killing the whole process —
+        # the exact uvicorn bind-failure path this supervisor exists to
+        # contain. Convert it to a return value inside the task so it can
+        # never reach the loop.
+        try:
+            await self._server.serve()
+            return None
+        except SystemExit as exc:
+            return exc
+
+    def _new_server(self) -> Any:
+        import uvicorn
+
+        server = uvicorn.Server(self._uvicorn_config)
+        # The manager owns signal handling for its process. Left alone,
+        # uvicorn installs its own SIGINT/SIGTERM handlers on the main
+        # thread for the lifetime of serve() and re-raises captured
+        # signals inside this (supervised) task — which would turn a
+        # Ctrl-C into an HTTP-restart instead of a manager shutdown.
+        server.capture_signals = contextlib.nullcontext
+        return server
+
+    async def _supervised_serve(self) -> None:
+        stop_event = self._stop_event
+        assert stop_event is not None  # set in start() before this task is created
+        attempts = 0
+        while True:
+            attempts += 1
+            serve_task: Optional[asyncio.Task] = None
+            try:
+                self._set_state("starting")
+                self._server = self._new_server()
+                serve_task = asyncio.ensure_future(self._serve_and_capture_exit())
+                while not serve_task.done() and not self._server.started:
+                    await asyncio.sleep(0.05)
+                if self._server.started:
+                    self._set_state("running")
+                    logger.info(
+                        "Co-hosted HTTP server is running on %s:%d",
+                        self._settings.host,
+                        self._settings.port,
+                    )
+                exit_exc = await serve_task
+                if exit_exc is not None:
+                    # uvicorn calls sys.exit(1) when the port cannot be
+                    # bound; left uncontained it would kill the manager and
+                    # the watchdog would restart it into the same failure,
+                    # forever.
+                    logger.error(
+                        "Co-hosted HTTP server failed (SystemExit code %s) — "
+                        "typically the port %s:%d is unavailable; the manager continues",
+                        exit_exc.code,
+                        self._settings.host,
+                        self._settings.port,
+                    )
+                elif stop_event.is_set():
+                    self._set_state("stopped")
+                    return
+                else:
+                    logger.error(
+                        "Co-hosted HTTP server exited unexpectedly; the manager continues"
+                    )
+            except asyncio.CancelledError:
+                # Cancelling an await does not cancel the awaited task: left
+                # alone, the inner serve task would keep uvicorn (and the
+                # port) alive with no supervisor, and die later with "Task
+                # was destroyed but it is pending".
+                if serve_task is not None and not serve_task.done():
+                    if self._server is not None:
+                        self._server.should_exit = True
+                    serve_task.cancel()
+                    with contextlib.suppress(BaseException):
+                        await serve_task
+                self._set_state("stopped")
+                raise
+            except Exception:
+                logger.exception("Co-hosted HTTP server crashed; the manager continues")
+
+            if stop_event.is_set():
+                self._set_state("stopped")
+                return
+            if attempts >= MAX_STARTUP_ATTEMPTS:
+                self._set_state("failed")
+                logger.error(
+                    "Co-hosted HTTP server gave up after %d attempt(s); "
+                    "continuing without HTTP (0MQ API remains available)",
+                    attempts,
+                )
+                return
+            self._set_state("retrying")
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(stop_event.wait(), STARTUP_RETRY_DELAY_SECONDS)
 
     async def start(self) -> None:
         import uvicorn
@@ -177,15 +305,15 @@ class CoHostedHttpServer:
 
         app = build_app(**build_kwargs)
 
-        config = uvicorn.Config(
+        self._uvicorn_config = uvicorn.Config(
             app,
             host=self._settings.host,
             port=self._settings.port,
             log_level="info",
             lifespan="on",
         )
-        self._server = uvicorn.Server(config)
-        self._task = asyncio.ensure_future(self._server.serve())
+        self._stop_event = asyncio.Event()
+        self._task = asyncio.ensure_future(self._supervised_serve())
         logger.info(
             "Co-hosted HTTP server starting on %s:%d (manager 0MQ at %s)",
             self._settings.host,
@@ -194,9 +322,12 @@ class CoHostedHttpServer:
         )
 
     async def stop(self) -> None:
-        if self._server is None or self._task is None:
+        if self._task is None:
             return
-        self._server.should_exit = True
+        if self._stop_event is not None:
+            self._stop_event.set()
+        if self._server is not None:
+            self._server.should_exit = True
         try:
             await asyncio.wait_for(self._task, timeout=SHUTDOWN_TIMEOUT_SECONDS)
             logger.info("Co-hosted HTTP server stopped cleanly")
@@ -211,5 +342,6 @@ class CoHostedHttpServer:
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
         finally:
+            self._set_state("stopped")
             self._server = None
             self._task = None

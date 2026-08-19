@@ -2256,7 +2256,11 @@
           "framework": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "ophyd-sync",
+                  "ophyd-async"
+                ]
               },
               {
                 "type": "null"
@@ -2352,7 +2356,11 @@
           "framework": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "ophyd-sync",
+                  "ophyd-async"
+                ]
               },
               {
                 "type": "null"

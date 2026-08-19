@@ -123,6 +123,10 @@ class StatusResponse(RMResponse):
     lock_info_uid: str
     lock: LockState
     config_service_sync_error: Optional[str] = None
+    # Health of the co-hosted HTTP server in unified mode ("disabled" /
+    # "starting" / "running" / "retrying" / "failed" / "stopped"). Default
+    # tolerates a manager predating the field.
+    http_server_state: str = "disabled"
 
 
 class QueueGetResponse(RMResponse):

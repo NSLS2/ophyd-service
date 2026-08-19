@@ -1292,7 +1292,10 @@ def test_http_server_manager_kill(re_manager, fastapi_server):  # noqa F811
 
     resp = request_to_json("post", "/test/manager/kill")
     assert "success" not in resp
-    assert "Request timeout: ZMQ communication error: timeout occurred" in resp["detail"]
+    # The killed manager surfaces either a recv timeout or EAGAIN
+    # ("Resource temporarily unavailable") depending on when the socket
+    # dies relative to the request — both mean "manager unreachable".
+    assert "Request timeout: ZMQ communication error:" in resp["detail"], resp["detail"]
 
     ttime.sleep(10)
 
