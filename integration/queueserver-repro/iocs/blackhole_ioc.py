@@ -11,8 +11,9 @@ otherwise a float). This is the standard bluesky "spoof beamline" technique.
 Ported from the demo/ios-nsls2-queueserver phase-1 pod. Added here: an
 exclusion set (BLACKHOLE_EXCLUDE_PVS_FILE, one PV name per line) of the exact
 PVs served by the realistic per-device IOS IOCs (ioc_ios_*.py). This IOC will
-not answer those exact PVs, so the realistic IOCs serve them without a Channel
-Access duplicate-PV race — while every OTHER PV (including sub-PVs of the same
+not answer those PVs — nor the ``.FIELD``s of a listed record, since a record
+IOC lists only the record name — so the realistic IOCs serve them without a
+Channel Access duplicate-PV race — while every OTHER PV (including sub-PVs of the same
 devices that the realistic IOCs happen not to serve) still resolves here, so
 the whole profile opens quickly.
 """
@@ -56,14 +57,25 @@ EXCLUDE_PVS = _load_excluded_pvs()
 ASYN_PORT = os.environ.get("BLACKHOLE_ASYN_PORT", "BHPORT")
 
 
+def is_excluded(key):
+    """True when a realistic IOC owns ``key``: listed exactly, or a ``.FIELD``
+    of a listed record. A record IOC (caproto ``record='motor'`` etc.) lists
+    only the record name under ``--list-pvs`` and answers every field of it,
+    so answering ``…Mtr.DMOV`` here would race the motor IOC."""
+    if key in EXCLUDE_PVS:
+        return True
+    base, dot, _ = key.partition('.')
+    return bool(dot) and base in EXCLUDE_PVS
+
+
 class BlackholeDB(dict):
-    """A pvdb that claims every PV except the exact ones a realistic IOC owns."""
+    """A pvdb that claims every PV except the ones a realistic IOC owns."""
 
     def __contains__(self, key):
-        return key not in EXCLUDE_PVS
+        return not is_excluded(key)
 
     def __missing__(self, key):
-        if key in EXCLUDE_PVS:
+        if is_excluded(key):
             # Owned by a realistic IOC — let Channel Access find it there.
             raise KeyError(key)
         # Collapse common record/field suffixes onto their base PV so a record

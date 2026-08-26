@@ -131,7 +131,7 @@ WITH_IOS_IOCS="${WITH_IOS_IOCS:-1}"
 IOC_BASE_PORT="${IOC_BASE_PORT:-5064}"
 # ioc_ios_pgm must stay FIRST: the xspress3 sim is told the PGM's CA address
 # (ioc_port 0) so its ROI counts can follow the live energy during E_ramp.
-IOS_IOCS="ioc_ios_pgm ioc_ios_curramp ioc_ios_epu ioc_ios_vortex ioc_ios_scaler ioc_ios_feedback ioc_ios_xspress3"
+IOS_IOCS="ioc_ios_pgm ioc_ios_curramp ioc_ios_epu ioc_ios_vortex ioc_ios_scaler ioc_ios_feedback ioc_ios_xspress3 ioc_ios_motor"
 
 # The six realistic IOCs each cover one device family. Toggle them off to run
 # the blackhole alone (still opens the whole profile, just no realistic values).
@@ -968,6 +968,17 @@ cmd_smoke() {
         fi
     else
         note "xs3 acceptance CANNOT RUN: smoke python lacks ophyd+nslsii (run '$0 up' first)"
+        fails=$((fails+1))
+    fi
+
+    if smoke_py "$runner" -c "import ophyd" >/dev/null 2>&1; then
+        if smoke_py "$runner" "$IOC_DIR/verify_motor_sim.py"; then
+            ok "motor acceptance: EpicsMotor.set() completes, readback ramps, blackhole defers"
+        else
+            note "motor acceptance FAILED"; fails=$((fails+1))
+        fi
+    else
+        note "motor acceptance CANNOT RUN: smoke python lacks ophyd (run '$0 up' first)"
         fails=$((fails+1))
     fi
 

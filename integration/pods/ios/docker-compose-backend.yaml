@@ -11,7 +11,7 @@
 #
 # Vite's dev-server proxy already defaults to those localhost targets
 # (frontend/vite.config.ts), so a host-side `npm run dev` will reach them with
-# no extra env. The simulated IOS beamline (ios_iocs: seven realistic IOCs +
+# no extra env. The simulated IOS beamline (ios_iocs: eight realistic IOCs +
 # blackhole, built from integration/queueserver-repro/iocs) is included so
 # direct_control has live PVs for the IOS round-trip.
 #
@@ -62,9 +62,9 @@ services:
       # makes every /pv/set return 403. Set false so the frontend Apply button
       # can write scan + detector values to the live PVs.
       DIRECT_CONTROL_GLOBAL_READ_ONLY: "false"
-      # Every CA server port inside the ios_iocs container (seven IOCs +
+      # Every CA server port inside the ios_iocs container (eight IOCs +
       # blackhole, IOC_BASE_PORT step 2).
-      EPICS_CA_ADDR_LIST: "ios_iocs:5064 ios_iocs:5066 ios_iocs:5068 ios_iocs:5070 ios_iocs:5072 ios_iocs:5074 ios_iocs:5076 ios_iocs:5078"
+      EPICS_CA_ADDR_LIST: "ios_iocs:5064 ios_iocs:5066 ios_iocs:5068 ios_iocs:5070 ios_iocs:5072 ios_iocs:5074 ios_iocs:5076 ios_iocs:5078 ios_iocs:5080"
       EPICS_CA_AUTO_ADDR_LIST: "NO"
     ports:
       - "8003:8003"

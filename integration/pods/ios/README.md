@@ -5,7 +5,7 @@
 `main`. See the project memo for the why (`feedback_ios_demo_not_upstream`
 in the workspace memory dir).
 
-This pod brings up the simulated IOS beamline — seven realistic caproto
+This pod brings up the simulated IOS beamline — eight realistic caproto
 IOCs plus a blackhole catch-all, in one container — serving the PVs that
 the IOS happi database references, behind the standard ophyd-service stack
 (configuration_service + direct_control_service + presets_service, plus
@@ -67,16 +67,16 @@ docker compose -f integration/pods/ios/docker-compose.yaml down
                                  │ Channel Access (UDP 5064 + TCP 5064)
                                  ▼
    ios_iocs container (integration/queueserver-repro/iocs, one CA port each)
-   ┌───────┬─────────┬─────────┬────────┬─────────┬──────────┬──────────┬───────────┐
-   │ pgm   │ curramp │ epu     │ vortex │ scaler  │ feedback │ xspress3 │ blackhole │
-   │ :5064 │ :5066   │ :5068   │ :5070  │ :5072   │ :5074    │ :5076    │ :5078     │
-   │ slew  │ enum    │ echo +  │ Poisson│ preset- │ P-loop   │ energy-  │ every     │
-   │ +fly  │ echo    │ FLT calc│ MCA+ROI│ time cnt│ converge │ following│ other PV  │
-   └───────┴─────────┴─────────┴────────┴─────────┴──────────┴──────────┴───────────┘
+   ┌───────┬─────────┬─────────┬────────┬─────────┬──────────┬──────────┬─────────┬───────────┐
+   │ pgm   │ curramp │ epu     │ vortex │ scaler  │ feedback │ xspress3 │ motor   │ blackhole │
+   │ :5064 │ :5066   │ :5068   │ :5070  │ :5072   │ :5074    │ :5076    │ :5078   │ :5080     │
+   │ slew  │ enum    │ echo +  │ Poisson│ preset- │ P-loop   │ energy-  │ real    │ every     │
+   │ +fly  │ echo    │ FLT calc│ MCA+ROI│ time cnt│ converge │ following│ records │ other PV  │
+   └───────┴─────────┴─────────┴────────┴─────────┴──────────┴──────────┴─────────┴───────────┘
 ```
 
 One container, one image: `integration/queueserver-repro/iocs/Dockerfile`
-runs `run_all_iocs.sh`, which starts the seven realistic IOCs with
+runs `run_all_iocs.sh`, which starts the eight realistic IOCs with
 `--list-pvs`, harvests the PV names they serve, and then starts the
 blackhole with that list as its exclusion set — the same sequence
 `reproduce.sh` runs on a host. That directory is the single source of the
@@ -95,6 +95,7 @@ CA client that `localguard` restricts to loopback.
 | `ios_scaler` | `XF:23ID2-ES{Sclr:1}` | synApps scaler with .CNT/.TP preset-time counting; S1=10 MHz clock, S2-S4 at simulated rates; CNT auto-clears when T reaches TP | 3 |
 | `ios_feedback` | `XF:23ID2-OP{FBck}` | M1B1 PID — when Sts:FB-Sel='On', a P-only loop closes ~16% of (PID-SP − CVAL) per 100 ms tick until error ≤ deadband | 3 |
 | `ios_xspress3` | `XF:23ID2-ES{Xsp:1}:` | Xspress3 `xs3` with typed HDF5-plugin PVs (so ophyd FileStore staging succeeds) and four MCA ROIs whose totals follow the PGM energy through a simple absorption model — `XAS_scan` gets real PFY/TFY traces | 4 |
+| `ios_motor` | `XF:23ID2-BI{IOXAS:1-Ax:X}Mtr`, `{Diag:3-Ax:Y}Mtr`, `{AuMesh:1-Ax:Y}Mtr`, `{Vortex:1-Ax:X}Mtr` | Full EPICS motor records (caproto `FakeMotor` with real put-completion and a guaranteed DMOV 1→0→1 cycle): the sample bar (0–300 mm; operator presets SAMPLE 1..6 = 252..290) and the axes the edge plans move, so `mv(ioxas_x, pos)` completes | 5 |
 | `blackhole` | everything else | Catch-all that answers any PV not served above with a type inferred from its name (AreaDetector enums, asyn ports, …), so the whole profile collection opens | 4 |
 
 All prefixes match the literal PV names declared in

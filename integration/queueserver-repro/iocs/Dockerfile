@@ -1,4 +1,4 @@
-# Simulated IOS beamline image: the seven realistic caproto IOCs plus the
+# Simulated IOS beamline image: the eight realistic caproto IOCs plus the
 # blackhole catch-all, run together by run_all_iocs.sh in ONE container so the
 # Xspress3 sim's PGM follower (a CA client that localguard restricts to loopback)
 # can reach the PGM IOC on 127.0.0.1 — the same topology reproduce.sh uses on a
@@ -19,5 +19,5 @@ RUN chmod +x /app/run_all_iocs.sh \
 USER ioc
 
 # One CA port per IOC from IOC_BASE_PORT (default 5064) stepping by 2, blackhole
-# on the slot after the last IOC (5078 with the seven shipped here).
+# on the slot after the last IOC (5080 with the eight shipped here).
 CMD ["/app/run_all_iocs.sh"]

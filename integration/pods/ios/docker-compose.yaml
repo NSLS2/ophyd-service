@@ -12,9 +12,10 @@
 #   ios_iocs               — the simulated IOS beamline in one container, built
 #                            from integration/queueserver-repro/iocs (the single
 #                            source of the IOC scripts): PGM, current amps, EPU,
-#                            Vortex, scaler, M1B1 feedback and Xspress3 on CA
-#                            ports 5064..5076 (step 2) plus the blackhole
-#                            catch-all on 5078 — the same layout reproduce.sh
+#                            Vortex, scaler, M1B1 feedback, Xspress3 and the
+#                            sample-bar/edge-plan motors on CA ports 5064..5078
+#                            (step 2) plus the blackhole catch-all on 5080 —
+#                            the same layout reproduce.sh
 #                            runs on a host, so XAS_scan stages here too.
 #   configuration_service  — registry, loaded from integration/happi/sites/ios/happi_db.json
 #   direct_control_service — WS/REST PV commanding
@@ -75,10 +76,10 @@ services:
       # can write scan + detector values to the live PVs.
       DIRECT_CONTROL_GLOBAL_READ_ONLY: "false"
       # pyepics: point CA search at every CA server port inside the ios_iocs
-      # container (seven IOCs + blackhole, IOC_BASE_PORT step 2). AUTO_ADDR_LIST
+      # container (eight IOCs + blackhole, IOC_BASE_PORT step 2). AUTO_ADDR_LIST
       # off means no broadcast — explicit list keeps search packets on the
       # compose network.
-      EPICS_CA_ADDR_LIST: "ios_iocs:5064 ios_iocs:5066 ios_iocs:5068 ios_iocs:5070 ios_iocs:5072 ios_iocs:5074 ios_iocs:5076 ios_iocs:5078"
+      EPICS_CA_ADDR_LIST: "ios_iocs:5064 ios_iocs:5066 ios_iocs:5068 ios_iocs:5070 ios_iocs:5072 ios_iocs:5074 ios_iocs:5076 ios_iocs:5078 ios_iocs:5080"
       EPICS_CA_AUTO_ADDR_LIST: "NO"
     ports:
       - "8003:8003"

@@ -7,7 +7,7 @@ against the IOS profile collection — including the beamline's `E_ramp` plan.
 
 `reproduce.sh up` now also:
 
-- runs the seven purpose-built IOS caproto IOCs (`iocs/ioc_ios_*.py`): `pgm`,
+- runs the eight purpose-built IOS caproto IOCs (`iocs/ioc_ios_*.py`): `pgm`,
   `curramp`, `epu`, `vortex`, `scaler`, `feedback`, `xspress3` — each a
   separate Channel Access server on its own port (`5064`, `5066`, …);
 - runs a catch-all **blackhole** IOC (`iocs/blackhole_ioc.py`) for every other
@@ -64,11 +64,28 @@ exclusion list):
 | Level (FDR D4) | Here |
 |---|---|
 | stand-in | the blackhole catch-all (name-inferred channel types) |
-| controls-level | the seven `ioc_ios_*.py` caproto IOCs (typed records, device dynamics) |
+| controls-level | the eight `ioc_ios_*.py` caproto IOCs (typed records, device dynamics) |
 
 Hybrid simulated/real operation (SC-D4-3) maps onto the same exclusion
 mechanism: a real IOC's PVs would be excluded from the blackhole exactly
 like a realistic sim's are today.
+
+## The motor sim (`ioc_ios_motor.py` + `motor_sim.py`): moves that complete
+
+Every `EpicsMotor` in the happi seed used to resolve at the blackhole, which
+fabricates `.DMOV` as a float 0 — so any `mv(motor, pos)` in a plan waited
+forever. `ioc_ios_motor.py` serves the sample bar (`ioxas_x`, 0–300 mm; the
+operator screen's SAMPLE 1..6 presets are 252..290 mm) and the axes the edge
+plans move (`diag3_y`, `au_mesh`, `vortex_x`) as FULL EPICS motor records:
+caproto's shipped `FakeMotor`, patched (`motor_sim.py`, ported from the HEX
+simulated beamline) so that CA put-completion is held until the move finishes,
+a zero-distance move still cycles `.DMOV` 1→0→1 (ophyd's `MoveStatus` needs
+it), `.STOP` keeps position, and `.EGU`/`.VMAX`/`.DHLM`/`.DLLM` are set.
+A record IOC lists only the record name under `--list-pvs`, so the blackhole
+treats a listed record as owning every `.FIELD` of it. `iocs/verify_motor_sim.py`
+is the acceptance check (ophyd `EpicsMotor.set()` completes, readback ramps,
+zero move completes, stop works, blackhole silent on motor fields); it runs in
+`reproduce.sh smoke`. Adding another motor is one line in `IOS_MOTORS`.
 
 ## What it takes to RUN a plan (beyond opening the profile)
 

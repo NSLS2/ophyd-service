@@ -30,7 +30,7 @@ export XS3_HDF_FILE_PATH="${XS3_HDF_FILE_PATH:-/tmp/xs3}"
 
 # Keep in step with IOS_IOCS in reproduce.sh: ioc_ios_pgm must stay first
 # (the Xspress3 follower is pointed at slot 0).
-IOS_IOCS="ioc_ios_pgm ioc_ios_curramp ioc_ios_epu ioc_ios_vortex ioc_ios_scaler ioc_ios_feedback ioc_ios_xspress3"
+IOS_IOCS="ioc_ios_pgm ioc_ios_curramp ioc_ios_epu ioc_ios_vortex ioc_ios_scaler ioc_ios_feedback ioc_ios_xspress3 ioc_ios_motor"
 
 mkdir -p "$RUN_DIR"
 rm -f "$RUN_DIR/ready"

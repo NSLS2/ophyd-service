@@ -99,6 +99,42 @@ def test_rbv_suffix_collapses_onto_base_channel(db):
     assert db[_XS3_HDF + "AutoSave_RBV"] is db[_XS3_HDF + "AutoSave"]
 
 
+def _db_with_exclusions(monkeypatch, tmp_path, names):
+    exclude = tmp_path / "exclude_pvs.txt"
+    exclude.write_text("\n".join(names) + "\n")
+    monkeypatch.setenv("BLACKHOLE_EXCLUDE_PVS_FILE", str(exclude))
+    spec = importlib.util.spec_from_file_location("blackhole_ioc_excl", _MODULE_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.BlackholeDB()
+
+
+def test_excluded_record_owns_its_fields(monkeypatch, tmp_path):
+    """A motor IOC lists only '...Mtr' under --list-pvs but answers every
+    field; the blackhole must stay silent on Mtr.DMOV/.RBV/... too."""
+    mtr = "XF:23ID2-BI{IOXAS:1-Ax:X}Mtr"
+    db2 = _db_with_exclusions(monkeypatch, tmp_path, [mtr])
+    assert mtr not in db2
+    for field in ("DMOV", "RBV", "VELO", "EGU", "STOP"):
+        assert f"{mtr}.{field}" not in db2
+        with pytest.raises(KeyError):
+            db2[f"{mtr}.{field}"]
+    # An unrelated motor is still fabricated, fields included.
+    other = "XF:23ID2-BI{Diag:1-Ax:Y}Mtr"
+    assert other in db2 and f"{other}.DMOV" in db2
+    assert isinstance(db2[f"{other}.DMOV"], ChannelDouble)
+
+
+def test_field_rule_needs_the_record_itself_listed(monkeypatch, tmp_path):
+    """The scaler lists its fields (.S1, .CNT, ...) individually, never the bare
+    record, so an unserved field like .DLY must still fall through here."""
+    sclr = "XF:23ID2-ES{Sclr:1}"
+    db2 = _db_with_exclusions(monkeypatch, tmp_path, [f"{sclr}.S1", f"{sclr}.CNT"])
+    assert f"{sclr}.S1" not in db2
+    assert f"{sclr}.DLY" in db2
+    assert isinstance(db2[f"{sclr}.DLY"], ChannelDouble)
+
+
 def test_asyn_port_name_is_env_overridable(monkeypatch):
     """BLACKHOLE_ASYN_PORT renames the fabricated asyn port, so two
     fabricated device trees can coexist without claiming the same name."""
