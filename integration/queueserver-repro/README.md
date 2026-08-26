@@ -66,6 +66,10 @@ What a full plan run actually writes (audited against the IOS profile @
 |------|------|
 | 5064, 5066, … (base + 2n) | realistic IOS caproto IOCs, one CA server each (`ioc_ios_pgm` first) |
 | base + 2·N(IOCs) | blackhole catch-all CA server |
+
+The same `iocs/` directory is the single source of the simulated beamline for the
+container pods too: `iocs/Dockerfile` + `iocs/run_all_iocs.sh` run this exact
+port layout inside one `ios_iocs` container for `integration/pods/ios`.
 | 60610 | bluesky-httpserver HTTP API |
 | 8000 | tiled data API (read view over the mongo catalog; what the frontend's data browser reads) |
 | 60590 | redis — RE Manager queue/history store |

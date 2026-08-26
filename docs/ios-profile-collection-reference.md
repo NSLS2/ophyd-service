@@ -18,7 +18,7 @@
 | Scan params in multi-spectra framework / `98-ramp.py` | `presets_service` **scan-presets** table |
 | Detector settings (commented `DET_SETTINGS` in `99-settings.py`) | `presets_service` **detector-presets** table |
 | Ophyd device classes in `startup/*.py` | `configuration_service` device registry (happi) |
-| Live IOCs (PGM, EPU, scaler, vortex…) | Simulated caproto IOCs in `integration/ioc/` |
+| Live IOCs (PGM, EPU, scaler, vortex, Xspress3…) | Simulated caproto IOCs in `integration/queueserver-repro/iocs/` (single source; the pod and `reproduce.sh` both run them) |
 | Beamline happi DB | `integration/happi/sites/ios/happi_db.json` |
 
 > Note: **detector presets** (sample gains/decades, vortex thresholds) are **not** in

@@ -9,12 +9,13 @@
 #   → simulated readback (PGM has slew dynamics, CurrAmp/EPU are echo-only)
 #
 # Services:
-#   ios_pgm                — caproto PGM IOC (XF:23ID2-OP{Mono prefix), Phase 1
-#   ios_curramp            — three SR570 current amps (XF:23ID2-ES{CurrAmp:1/2/3}), Phase 2
-#   ios_epu                — EPU1 + EPU2 (XF:23ID-ID{EPU:1/2}, FLT/RLT calc), Phases 2+3
-#   ios_vortex             — Vortex MCA with 8 ROIs (XF:23ID2-ES{Vortex}), Phase 3
-#   ios_scaler             — synApps scaler (XF:23ID2-ES{Sclr:1}, 4 channels), Phase 3
-#   ios_feedback           — M1B1 PID feedback (XF:23ID2-OP{FBck}), Phase 3
+#   ios_iocs               — the simulated IOS beamline in one container, built
+#                            from integration/queueserver-repro/iocs (the single
+#                            source of the IOC scripts): PGM, current amps, EPU,
+#                            Vortex, scaler, M1B1 feedback and Xspress3 on CA
+#                            ports 5064..5076 (step 2) plus the blackhole
+#                            catch-all on 5078 — the same layout reproduce.sh
+#                            runs on a host, so XAS_scan stages here too.
 #   configuration_service  — registry, loaded from integration/happi/sites/ios/happi_db.json
 #   direct_control_service — WS/REST PV commanding
 #
@@ -26,64 +27,18 @@
 #   docker compose down
 #   docker compose logs -f direct_control_service
 
-x-ioc-base: &ioc-base
-  build:
-    context: ../../ioc
-
 services:
-  ios_pgm:
-    <<: *ioc-base
-    command: ["python", "/app/ioc_ios_pgm.py", "--list-pvs", "--interfaces", "0.0.0.0"]
+  ios_iocs:
+    build:
+      context: ../../queueserver-repro/iocs
+    environment:
+      IOC_BASE_PORT: "5064"
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f ioc_ios_pgm > /dev/null"]
+      # run_all_iocs.sh touches this once every IOC and the blackhole listen.
+      test: ["CMD-SHELL", "test -f /tmp/ios_iocs/ready"]
       interval: 5s
       timeout: 2s
-      retries: 10
-
-  ios_curramp:
-    <<: *ioc-base
-    command: ["python", "/app/ioc_ios_curramp.py", "--list-pvs", "--interfaces", "0.0.0.0"]
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -f ioc_ios_curramp > /dev/null"]
-      interval: 5s
-      timeout: 2s
-      retries: 10
-
-  ios_epu:
-    <<: *ioc-base
-    command: ["python", "/app/ioc_ios_epu.py", "--list-pvs", "--interfaces", "0.0.0.0"]
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -f ioc_ios_epu > /dev/null"]
-      interval: 5s
-      timeout: 2s
-      retries: 10
-
-  ios_vortex:
-    <<: *ioc-base
-    command: ["python", "/app/ioc_ios_vortex.py", "--list-pvs", "--interfaces", "0.0.0.0"]
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -f ioc_ios_vortex > /dev/null"]
-      interval: 5s
-      timeout: 2s
-      retries: 10
-
-  ios_scaler:
-    <<: *ioc-base
-    command: ["python", "/app/ioc_ios_scaler.py", "--list-pvs", "--interfaces", "0.0.0.0"]
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -f ioc_ios_scaler > /dev/null"]
-      interval: 5s
-      timeout: 2s
-      retries: 10
-
-  ios_feedback:
-    <<: *ioc-base
-    command: ["python", "/app/ioc_ios_feedback.py", "--list-pvs", "--interfaces", "0.0.0.0"]
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -f ioc_ios_feedback > /dev/null"]
-      interval: 5s
-      timeout: 2s
-      retries: 10
+      retries: 24
 
   configuration_service:
     build:
@@ -119,27 +74,18 @@ services:
       # makes every /pv/set return 403. Set false so the frontend Apply button
       # can write scan + detector values to the live PVs.
       DIRECT_CONTROL_GLOBAL_READ_ONLY: "false"
-      # pyepics: point CA search at every IOC service in the pod. AUTO_ADDR_LIST
+      # pyepics: point CA search at every CA server port inside the ios_iocs
+      # container (seven IOCs + blackhole, IOC_BASE_PORT step 2). AUTO_ADDR_LIST
       # off means no broadcast — explicit list keeps search packets on the
       # compose network.
-      EPICS_CA_ADDR_LIST: "ios_pgm ios_curramp ios_epu ios_vortex ios_scaler ios_feedback"
+      EPICS_CA_ADDR_LIST: "ios_iocs:5064 ios_iocs:5066 ios_iocs:5068 ios_iocs:5070 ios_iocs:5072 ios_iocs:5074 ios_iocs:5076 ios_iocs:5078"
       EPICS_CA_AUTO_ADDR_LIST: "NO"
     ports:
       - "8003:8003"
     depends_on:
       configuration_service:
         condition: service_healthy
-      ios_pgm:
-        condition: service_healthy
-      ios_curramp:
-        condition: service_healthy
-      ios_epu:
-        condition: service_healthy
-      ios_vortex:
-        condition: service_healthy
-      ios_scaler:
-        condition: service_healthy
-      ios_feedback:
+      ios_iocs:
         condition: service_healthy
 
   presets_service:
