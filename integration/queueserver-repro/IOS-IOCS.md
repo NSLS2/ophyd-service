@@ -45,7 +45,8 @@ The sim serves:
 - **energy-coupled ROI counts**: the sim polls the PGM sim's
   `}}Enrgy-I` (address passed via `XS3_PGM_ADDR`; the PGM must stay first
   in `IOS_IOCS`) and evaluates a synthetic absorption model
-  (edge step + white line + post-edge decay for Ti_L/O_K/Mn_L/Fe_L/Ni_L/Cu_L),
+  (edge step + white line + post-edge decay for every edge in the presets
+  seed — C_K through Al_K, 17 edges — so any edge the sample manager queues shows a jump),
   so an `E_ramp` across an edge traces real-looking XAS structure.
   ROI names are served as `PFY`/`TFY`/`ELASTIC`/`BKG`.
 

@@ -64,14 +64,28 @@ PGM_ENERGY_PV = "XF:23ID2-OP{Mono}Enrgy-I"
 # (start just below E0) shows a clear rise + white line, like a real
 # TEY/PFY XAS trace.
 # --------------------------------------------------------------------------
+# One entry per edge the presets service offers (integration/presets/
+# scan_presets_seed.json) so every edge the sample manager can queue produces a
+# visible PFY/TFY jump, not a flat trace. E0 = tabulated L3/K/M5 onset (eV).
 _EDGES = (
     # (name, E0 eV, amplitude)
+    ("C_K", 284.2, 0.8),
+    ("N_K", 409.9, 0.8),
     ("Ti_L", 456.0, 0.8),
     ("O_K", 543.0, 0.7),
+    ("Cr_L", 574.1, 0.9),
     ("Mn_L", 640.0, 1.0),   # the repro's demo scan window (635-670)
+    ("F_K", 696.7, 0.7),
     ("Fe_L", 707.0, 0.9),
+    ("Co_L", 778.1, 1.0),
+    ("La_M", 832.0, 0.9),
     ("Ni_L", 852.7, 1.0),   # the Ni_L preset the vortex sim also models
+    ("Ce_M", 883.8, 0.9),
     ("Cu_L", 931.0, 0.9),
+    ("Zn_L", 1021.8, 0.8),
+    ("Na_K", 1070.8, 0.7),
+    ("Mg_K", 1303.0, 0.7),
+    ("Al_K", 1559.6, 0.7),
 )
 _STEP_WIDTH = 1.5      # eV, arctan edge sharpness
 _WHITELINE_FWHM = 2.5  # eV
