@@ -4337,6 +4337,12 @@ class RunEngineManager(Process):
                 # HTTP path the response is still being written when the
                 # handler returns, and stopping uvicorn under it would cut it.
                 await asyncio.sleep(0.5)
+                # Shutdown guard: if the manager began stopping meanwhile, or the
+                # instance this request was about has been dropped/replaced, a
+                # restart now would bring uvicorn back under a stopping manager.
+                if self._manager_stopping or self._http_server is not http_server:
+                    logger.info("Scheduled restart of the co-hosted HTTP server skipped: manager is stopping")
+                    return
                 try:
                     await http_server.restart()
                 except Exception:
@@ -4726,6 +4732,10 @@ class RunEngineManager(Process):
 
                 # Stop HTTP first so in-flight HTTP->0MQ round-trips don't see
                 # timeouts against a closed 0MQ socket further down this block.
+                # A restart scheduled moments ago must not race the stop.
+                pending_restart = self._http_server_restart_task
+                if pending_restart is not None and not pending_restart.done():
+                    pending_restart.cancel()
                 if self._http_server is not None:
                     await self._http_server.stop()
                     self._http_server = None
