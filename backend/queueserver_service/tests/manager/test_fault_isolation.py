@@ -184,28 +184,29 @@ def _unified_tree(monkeypatch, tmp_path, http_port: int):
     """start-re-manager --http-port <port>, environment opened, PIDs known."""
     monkeypatch.setenv("QSERVER_HTTP_SERVER_ALLOW_ANONYMOUS_ACCESS", "1")
     log_path = tmp_path / "manager.log"
-    log_file = open(log_path, "w")
-    re = ReManager(params=["--http-port", str(http_port)], stdout=log_file, stderr=log_file)
-    tree = _Tree(re)
-    tree.log = _ManagerLog(log_path)
-    try:
-        assert wait_for_condition(time=60, condition=condition_manager_idle), "RE Manager failed to start"
-        tree.discover_manager()
-        tree.open_environment()
-        _wait_http_running()
-        yield tree
-    finally:
-        # Whatever the test left behind: an orderly stop if the tree is
-        # intact, otherwise kill the survivors ourselves.
-        if re._p is not None and re._p.poll() is None:
-            re.stop_manager()
-        else:
-            for pid in (tree.manager, tree.worker):
-                if pid and _alive(pid):
-                    os.kill(pid, signal.SIGKILL)
-            re._p = None
-            clear_redis_pool()
-        log_file.close()
+    # The subprocess gets its own copy of the descriptor, so closing ours on
+    # the way out (including when ReManager() itself raises) is safe.
+    with open(log_path, "w") as log_file:
+        re = ReManager(params=["--http-port", str(http_port)], stdout=log_file, stderr=log_file)
+        tree = _Tree(re)
+        tree.log = _ManagerLog(log_path)
+        try:
+            assert wait_for_condition(time=60, condition=condition_manager_idle), "RE Manager failed to start"
+            tree.discover_manager()
+            tree.open_environment()
+            _wait_http_running()
+            yield tree
+        finally:
+            # Whatever the test left behind: an orderly stop if the tree is
+            # intact, otherwise kill the survivors ourselves.
+            if re._p is not None and re._p.poll() is None:
+                re.stop_manager()
+            else:
+                for pid in (tree.manager, tree.worker):
+                    if pid and _alive(pid):
+                        os.kill(pid, signal.SIGKILL)
+                re._p = None
+                clear_redis_pool()
 
 
 # ---------------------------------------------------------------- tests
