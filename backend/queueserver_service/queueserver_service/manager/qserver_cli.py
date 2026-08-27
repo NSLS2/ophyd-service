@@ -200,6 +200,9 @@ If called with 'safe off' option, the request will force RE Manager to terminate
 exit even if a plan is running.
 
 qserver manager kill test  # Kills RE Manager by stopping asyncio event loop. Used only for testing.
+
+qserver http-server restart  # Restart the co-hosted HTTP server (unified mode) without
+                             # affecting RE Manager, RE Worker or a running plan.
 """
 
 
@@ -1196,6 +1199,15 @@ def create_msg(params, *, lock_key):
                 )
         else:
             raise CommandParameterError(f"Request '{command} {params[0]}' is not supported")
+
+    elif command == "http-server":
+        if params == ["restart"]:
+            method = "http_server_restart"
+            prms = {}
+        else:
+            raise CommandParameterError(
+                f"Unsupported number or combination of parameters: {format_list_as_command(params)}"
+            )
 
     elif command == "kernel":
         if len(params) < 1:

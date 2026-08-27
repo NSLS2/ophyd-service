@@ -351,3 +351,159 @@ async def test_supervised_serve_cancellation_stops_inner_task(monkeypatch):
     assert len(fakes) == 1
     assert fakes[0].cancelled, "inner serve task was not cancelled"
     assert server.state == "stopped"
+
+
+# ---------------------------------------------------------------------------
+#  Supervisor: the attempt budget is for CONSECUTIVE failed starts, restart()
+#  and the fault-injection hook.
+
+
+def _running_fakes_server(monkeypatch, fakes, *, stable_run_seconds):
+    from queueserver_service.manager import http_server as http_server_module
+
+    monkeypatch.setattr(http_server_module, "STABLE_RUN_SECONDS", stable_run_seconds)
+
+    def factory():
+        fakes.append(_FakeServerRuns())
+        return fakes[-1]
+
+    server = _make_supervised_server(monkeypatch, factory)
+    server._stop_event = asyncio.Event()
+    server._task = asyncio.ensure_future(server._supervised_serve())
+    return server
+
+
+async def _wait_state(server, state, timeout=5.0):
+    deadline = asyncio.get_event_loop().time() + timeout
+    while server.state != state:
+        assert asyncio.get_event_loop().time() < deadline, f"state={server.state!r}, wanted {state!r}"
+        await asyncio.sleep(0.01)
+
+
+async def _wait_new_server(fakes, count, timeout=5.0):
+    deadline = asyncio.get_event_loop().time() + timeout
+    while len(fakes) < count:
+        assert asyncio.get_event_loop().time() < deadline, f"only {len(fakes)} servers created, wanted {count}"
+        await asyncio.sleep(0.01)
+
+
+@pytest.mark.asyncio
+async def test_supervised_serve_budget_counts_consecutive_failed_starts(monkeypatch):
+    """A server that ran (long enough to count as a stable run) and then died
+    is a fresh incident: it must be restarted again and again, never parked
+    as 'failed' because it died MAX_STARTUP_ATTEMPTS times over its life."""
+    from queueserver_service.manager import http_server as http_server_module
+
+    fakes = []
+    server = _running_fakes_server(monkeypatch, fakes, stable_run_seconds=0.0)
+    try:
+        for n in range(1, http_server_module.MAX_STARTUP_ATTEMPTS + 3):
+            await _wait_state(server, "running")
+            assert len(fakes) == n
+            fakes[-1].should_exit = True  # dies without a stop request
+            await _wait_new_server(fakes, n + 1)
+        await _wait_state(server, "running")
+        assert server.state == "running"
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_supervised_serve_budget_exhausts_on_quick_deaths(monkeypatch):
+    """Deaths that come before a stable run are consecutive failed starts:
+    after MAX_STARTUP_ATTEMPTS of them the supervisor gives up ('failed')."""
+    from queueserver_service.manager import http_server as http_server_module
+
+    fakes = []
+    server = _running_fakes_server(monkeypatch, fakes, stable_run_seconds=1e9)
+    for n in range(1, http_server_module.MAX_STARTUP_ATTEMPTS + 1):
+        await _wait_state(server, "running")
+        fakes[-1].should_exit = True
+        if n < http_server_module.MAX_STARTUP_ATTEMPTS:
+            await _wait_new_server(fakes, n + 1)
+    await asyncio.wait_for(server._task, timeout=5.0)
+    assert server.state == "failed"
+    assert len(fakes) == http_server_module.MAX_STARTUP_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_simulate_unexpected_exit_takes_the_retry_path(monkeypatch):
+    fakes = []
+    server = _running_fakes_server(monkeypatch, fakes, stable_run_seconds=1e9)
+    try:
+        await _wait_state(server, "running")
+        assert server.simulate_unexpected_exit() is True
+        await _wait_new_server(fakes, 2)
+        await _wait_state(server, "running")
+        assert fakes[0].should_exit and not fakes[1].should_exit
+    finally:
+        await server.stop()
+    assert server.simulate_unexpected_exit() is False  # nothing running any more
+
+
+@pytest.mark.asyncio
+async def test_restart_replaces_the_server_and_lands_running(monkeypatch):
+    """restart() = clean stop + fresh start: a new uvicorn Server, state back
+    to 'running', and a fresh attempt budget."""
+    fakes = []
+    server = _running_fakes_server(monkeypatch, fakes, stable_run_seconds=1e9)
+
+    async def fake_start():  # start() minus building the FastAPI app
+        server._stop_event = asyncio.Event()
+        server._task = asyncio.ensure_future(server._supervised_serve())
+
+    monkeypatch.setattr(server, "start", fake_start)
+    try:
+        await _wait_state(server, "running")
+        first = server._server
+        await server.restart()
+        await _wait_state(server, "running")
+        assert server._server is not first
+        assert len(fakes) == 2 and fakes[0].should_exit and not fakes[1].should_exit
+    finally:
+        await server.stop()
+    assert server.state == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_each_attempt_serves_a_fresh_app(monkeypatch):
+    """The FastAPI app's lifespan shutdown closes its in-process manager client,
+    so a retry/restart must build a NEW app: serving the old one again accepts
+    connections and hangs on the closed client (seen live as GET /api/status
+    timing out after a runtime restart)."""
+    import uvicorn
+
+    from queueserver_service.manager import http_server as http_server_module
+    from queueserver_service.manager.http_server import CoHostedHttpServer, HttpServerSettings
+
+    monkeypatch.setattr(http_server_module, "STARTUP_RETRY_DELAY_SECONDS", 0.01)
+    monkeypatch.setattr(http_server_module, "STABLE_RUN_SECONDS", 0.0)
+
+    apps_served = []
+
+    class _FakeUvicornServer(_FakeServerRuns):
+        def __init__(self, config):
+            super().__init__()
+            apps_served.append(config.app)
+
+    monkeypatch.setattr(uvicorn, "Server", _FakeUvicornServer)
+
+    settings = HttpServerSettings(enabled=True, host="127.0.0.1", port=1)
+    server = CoHostedHttpServer(settings, manager=None, manager_zmq_bind_addr="tcp://*:1")
+    built = []
+    monkeypatch.setattr(server, "_build_app", lambda: built.append(object()) or built[-1])
+
+    server._stop_event = asyncio.Event()
+    server._task = asyncio.ensure_future(server._supervised_serve())
+    try:
+        for n in range(1, 4):
+            await _wait_state(server, "running")
+            assert len(apps_served) == n
+            server._server.should_exit = True  # dies without a stop request
+            deadline = asyncio.get_event_loop().time() + 5.0
+            while len(apps_served) < n + 1:
+                assert asyncio.get_event_loop().time() < deadline
+                await asyncio.sleep(0.01)
+        assert len({id(a) for a in apps_served}) == len(apps_served), "an app was served twice"
+    finally:
+        await server.stop()

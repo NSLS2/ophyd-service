@@ -305,3 +305,9 @@ running or paused plans or the state of the queue. Another potential use of the 
 is to test handling of communication timeouts, since RE Manager does not respond to the request::
 
   qserver manager kill test
+
+When the manager co-hosts the HTTP server (unified mode), restart just the HTTP server —
+RE Manager, RE Worker and a running plan are not affected (the counterpart of restarting
+a standalone httpserver service)::
+
+  qserver http-server restart

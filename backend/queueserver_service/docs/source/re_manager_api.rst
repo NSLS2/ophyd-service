@@ -153,6 +153,10 @@ Stopping RE Manager (mostly used in testing):
 - :ref:`method_manager_stop`
 - :ref:`method_manager_kill`
 
+Restarting the co-hosted HTTP server (unified mode):
+
+- :ref:`method_http_server_restart`
+
 
 Detailed Reference
 ------------------
@@ -2235,6 +2239,36 @@ Returns       **success**: *boolean*
 Execution     The request only initiates the operation of exiting RE Manager. If the request succeeds
               it may be expected that RE Manager application will eventually be exited and stops it
               stops responding to requests.
+============  =========================================================================================
+
+
+.. _method_http_server_restart:
+
+**'http_server_restart'**
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+============  =========================================================================================
+Method        **'http_server_restart'**
+------------  -----------------------------------------------------------------------------------------
+Description   Stops and restarts the HTTP server co-hosted in the RE Manager process (unified mode,
+              i.e. the manager was started with ``--http-port`` or ``http_server.enabled``). The RE
+              Manager process, the RE Worker and any running plan are not affected: this is the
+              in-process equivalent of restarting a standalone httpserver service. The restart is
+              scheduled after the reply is sent, so a request that arrives over HTTP itself is
+              answered before the listener goes down (the connection then drops and the server is
+              back a few seconds later; the ``http_server_state`` status field goes through
+              ``stopped``/``starting`` to ``running``). The request fails if the manager runs in
+              split-process mode (no co-hosted server).
+------------  -----------------------------------------------------------------------------------------
+Parameters    ---
+------------  -----------------------------------------------------------------------------------------
+Returns       **success**: *boolean*
+                  success of the request.
+
+              **msg**: *str*
+                  error message in case of failure; otherwise a note that the restart is scheduled.
+------------  -----------------------------------------------------------------------------------------
+Execution     Immediate: the restart itself runs in the background; poll ``http_server_state``.
 ============  =========================================================================================
 
 

@@ -43,6 +43,35 @@ async def manager_stop_handler(
 
 
 @admin_router.post(
+    "/http_server/restart",
+    response_model=SuccessMsgResponse,
+    response_model_exclude_unset=True,
+    summary="Restart the co-hosted HTTP server (unified mode)",
+    description=(
+        "Stop and start the HTTP server that is co-hosted in the RE Manager process, "
+        "leaving the manager, the worker and any running plan untouched — the unified-mode "
+        "equivalent of restarting a standalone httpserver service. The restart is scheduled "
+        "after this response is sent, so the connection then drops and the server comes back "
+        "a few seconds later. Fails when the manager runs in split-process mode. "
+        "Required scope: `write:manager:control`."
+    ),
+    tags=["Admin"],
+)
+async def http_server_restart_handler(
+    principal=Security(get_current_principal, scopes=["write:manager:control"]),
+):
+    """
+    Restart the co-hosted HTTP server without affecting the RE Manager process, the RE Worker
+    or a running plan.
+    """
+    try:
+        msg = await SR.RM.send_request(method="http_server_restart")
+    except Exception:
+        process_exception()
+    return msg
+
+
+@admin_router.post(
     "/test/manager/kill",
     response_model=SuccessMsgResponse,
     response_model_exclude_unset=True,

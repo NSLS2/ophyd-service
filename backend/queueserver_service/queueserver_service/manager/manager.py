@@ -248,6 +248,7 @@ class RunEngineManager(Process):
         "unlock": "_unlock_handler",
         "manager_stop": "_manager_stop_handler",
         "manager_kill": "_manager_kill_handler",
+        "http_server_restart": "_http_server_restart_handler",
         "manager_test": "_manager_test_handler",
     }
 
@@ -4297,6 +4298,40 @@ class RunEngineManager(Process):
 
         return {"success": success, "msg": msg}
 
+    async def _http_server_restart_handler(self, request):
+        """
+        Restart the co-hosted HTTP server (unified mode) without touching the RE Manager
+        process, the RE Worker or a running plan — the in-process equivalent of restarting
+        a standalone httpserver service. The restart is scheduled to run after this reply
+        is sent, so a request that arrived over HTTP itself is answered before the listener
+        goes down (the client then sees the connection drop, as with a service restart).
+        Fails in split-process mode, where there is no co-hosted server to restart.
+        """
+        success, msg = True, ""
+
+        try:
+            self._check_request_for_unsupported_params(request=request, param_names=[])
+
+            http_server = self._http_server
+            if not self._http_server_settings.enabled or http_server is None:
+                raise RuntimeError(
+                    "The co-hosted HTTP server is not enabled (RE Manager is running in "
+                    "split-process mode); restart the httpserver service instead"
+                )
+
+            async def _restart():
+                try:
+                    await http_server.restart()
+                except Exception:
+                    logger.exception("Restart of the co-hosted HTTP server failed")
+
+            self._loop.create_task(_restart())
+            msg = "Restart of the co-hosted HTTP server is scheduled"
+        except Exception as ex:
+            success, msg = False, f"Error: {ex}"
+
+        return {"success": success, "msg": msg}
+
     async def _manager_kill_handler(self, request):
         """
         Testing API: blocks event loop of RE Manager process forever and
@@ -4331,9 +4366,20 @@ class RunEngineManager(Process):
             test_name = request.get("test_name", None)
 
             supported_param_names = ["test_name"]
-            known_tests = ["reserve_kernel"]
+            known_tests = ["reserve_kernel", "http_server_exit"]
 
-            if test_name == "reserve_kernel":
+            if test_name == "http_server_exit":
+                # Fault injection for the co-hosted HTTP server: make the running
+                # uvicorn task exit as if it had died, without stopping the manager.
+                self._check_request_for_unsupported_params(request=request, param_names=supported_param_names)
+                if self._http_server is None:
+                    raise RuntimeError("The co-hosted HTTP server is not enabled")
+                if not self._http_server.simulate_unexpected_exit():
+                    raise RuntimeError(
+                        f"The co-hosted HTTP server is not running (state {self._http_server.state!r})"
+                    )
+
+            elif test_name == "reserve_kernel":
                 self._check_request_for_unsupported_params(request=request, param_names=supported_param_names)
 
                 if not self._use_ipython_kernel:

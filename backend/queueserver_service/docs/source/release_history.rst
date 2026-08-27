@@ -9,6 +9,22 @@ v0.0.25 (Unreleased)
 Added
 -----
 
+- New ``http_server_restart`` manager API (0MQ), ``POST /api/http_server/restart`` (HTTP, scope
+  ``write:manager:control``) and ``qserver http-server restart`` (CLI): restart the HTTP server
+  co-hosted in the RE Manager process (unified mode) without affecting the RE Manager process,
+  the RE Worker or a running plan — the counterpart of restarting a standalone httpserver service.
+
+- Process-level fault-isolation tests (``tests/manager/test_fault_isolation.py``): killing the
+  RE Manager, the RE Worker, the watchdog, or the co-hosted HTTP server task, one at a time,
+  leaves the others serving.
+
+Fixed
+-----
+
+- The co-hosted HTTP server's startup-attempt budget now counts *consecutive* failed starts (it
+  is reset after a stable run), so a server that dies occasionally over a long life is restarted
+  instead of being parked as ``failed`` after its third death.
+
 - New ``re_metadata`` manager API endpoint that allows clients to query the current Run Engine metadata
   dictionary. The metadata dictionary is filtered based on the list of permitted metadata keys defined
   in the manager configuration. If the list of permitted keys is empty, then all metadata keys are allowed.
