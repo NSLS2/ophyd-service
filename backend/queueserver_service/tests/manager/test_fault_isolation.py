@@ -44,6 +44,11 @@ from tests.manager.common import (  # noqa: F401
 
 pytestmark = pytest.mark.skipif(not os.path.isdir("/proc"), reason="needs /proc to walk the process tree")
 
+# Single-user API key for the co-hosted HTTP server (all scopes); anonymous
+# access stays read-only, which the scope-gating assertion relies on.
+_API_KEY = "APIKEYFORTESTS"
+_AUTH = {"Authorization": f"ApiKey {_API_KEY}"}
+
 
 # ---------------------------------------------------------------- helpers
 
@@ -183,6 +188,7 @@ class _ManagerLog:
 def _unified_tree(monkeypatch, tmp_path, http_port: int):
     """start-re-manager --http-port <port>, environment opened, PIDs known."""
     monkeypatch.setenv("QSERVER_HTTP_SERVER_ALLOW_ANONYMOUS_ACCESS", "1")
+    monkeypatch.setenv("QSERVER_HTTP_SERVER_SINGLE_USER_API_KEY", _API_KEY)
     log_path = tmp_path / "manager.log"
     # The subprocess gets its own copy of the descriptor, so closing ours on
     # the way out (including when ReManager() itself raises) is safe.
@@ -312,8 +318,9 @@ def test_http_task_exit_is_contained_and_restarted(monkeypatch, tmp_path):
 def test_http_server_restart_command_bounces_only_http(monkeypatch, tmp_path):
     """``http_server_restart`` over 0MQ stops and restarts the HTTP server
     (clean stop, then a fresh start that answers); manager and worker PIDs
-    are unchanged. Over HTTP the endpoint exists and is gated by a write
-    scope (anonymous is read-only here)."""
+    are unchanged. Then the same through ``POST /api/http_server/restart``:
+    anonymous (read-only) is refused by the scope gate; the single-user API
+    key gets ``success: true`` and the server really bounces."""
     http_port = _free_tcp_port()
     with _unified_tree(monkeypatch, tmp_path, http_port) as tree:
         manager0, worker0 = tree.manager, tree.worker
@@ -333,6 +340,20 @@ def test_http_server_restart_command_bounces_only_http(monkeypatch, tmp_path):
 
         gated = httpx.post(f"http://127.0.0.1:{http_port}/api/http_server/restart", timeout=5.0)
         assert gated.status_code in (401, 403), gated.text
+
+        # Authorized: the reply is sent BEFORE the listener goes down.
+        tree.log.mark()
+        authorized = httpx.post(
+            f"http://127.0.0.1:{http_port}/api/http_server/restart", headers=_AUTH, timeout=5.0
+        )
+        assert authorized.status_code == 200, authorized.text
+        body = authorized.json()
+        assert body["success"] is True and "scheduled" in body["msg"], body
+        tree.log.wait_for("Co-hosted HTTP server stopped cleanly", timeout=20)
+        tree.log.wait_for("Co-hosted HTTP server is running on", timeout=20)
+        _wait_http_running()
+        assert _http_get_status(http_port).status_code == 200
+        assert tree.discover_manager() == manager0 and tree.discover_worker() == worker0
 
 
 def test_http_server_restart_refused_in_split_process_mode(re_manager):  # noqa: F811

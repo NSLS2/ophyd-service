@@ -4312,11 +4312,19 @@ class RunEngineManager(Process):
         try:
             self._check_request_for_unsupported_params(request=request, param_names=[])
 
-            http_server = self._http_server
-            if not self._http_server_settings.enabled or http_server is None:
+            if not self._http_server_settings.enabled:
                 raise RuntimeError(
                     "The co-hosted HTTP server is not enabled (RE Manager is running in "
                     "split-process mode); restart the httpserver service instead"
+                )
+            http_server = self._http_server
+            if http_server is None:
+                # Enabled, but the instance does not exist right now: the manager
+                # is still initializing (it is created after the 0MQ bind) or is
+                # shutting down (it is dropped first in the stop path).
+                raise RuntimeError(
+                    "The co-hosted HTTP server is not instantiated at the moment "
+                    "(RE Manager is starting up or shutting down); try again shortly"
                 )
 
             async def _restart():
