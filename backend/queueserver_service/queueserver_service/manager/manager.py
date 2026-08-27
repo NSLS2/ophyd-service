@@ -443,6 +443,7 @@ class RunEngineManager(Process):
         # so that uvicorn / queueserver_service.http imports happen on the manager's
         # event loop, not in the parent Process before the loop starts.
         self._http_server = None
+        self._http_server_restart_task = None  # de-duplicates concurrent http_server_restart
 
         self._existing_plans_uid = _generate_uid()
         self._existing_devices_uid = _generate_uid()
@@ -4327,13 +4328,21 @@ class RunEngineManager(Process):
                     "(RE Manager is starting up or shutting down); try again shortly"
                 )
 
+            pending = self._http_server_restart_task
+            if pending is not None and not pending.done():
+                return {"success": True, "msg": "Restart of the co-hosted HTTP server is already scheduled"}
+
             async def _restart():
+                # Let this reply leave the process first: over the in-process
+                # HTTP path the response is still being written when the
+                # handler returns, and stopping uvicorn under it would cut it.
+                await asyncio.sleep(0.5)
                 try:
                     await http_server.restart()
                 except Exception:
                     logger.exception("Restart of the co-hosted HTTP server failed")
 
-            self._loop.create_task(_restart())
+            self._http_server_restart_task = self._loop.create_task(_restart())
             msg = "Restart of the co-hosted HTTP server is scheduled"
         except Exception as ex:
             success, msg = False, f"Error: {ex}"
@@ -4366,6 +4375,8 @@ class RunEngineManager(Process):
         This API is intended exclusively for unit testing. Available tests (selected using 'test_name'):
 
         - ``reserve_kernel`` - calls the function that reserves kernel running in the worker space.
+        - ``http_server_exit`` - makes the co-hosted HTTP server (unified mode) exit as if it had
+          died, so its supervisor's unexpected-exit/restart path can be exercised.
 
         """
         success, msg = True, ""

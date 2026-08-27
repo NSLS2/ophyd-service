@@ -329,6 +329,8 @@ def test_http_server_restart_command_bounces_only_http(monkeypatch, tmp_path):
         resp, _ = zmq_request("http_server_restart")
         assert resp and resp["success"], resp
         assert "scheduled" in resp["msg"]
+        again, _ = zmq_request("http_server_restart")  # overlapping request: one restart, not two
+        assert again and again["success"] and "already scheduled" in again["msg"], again
 
         tree.log.wait_for("Co-hosted HTTP server stopped cleanly", timeout=20)
         tree.log.wait_for("Co-hosted HTTP server is running on", timeout=20)
