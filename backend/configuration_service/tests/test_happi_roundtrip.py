@@ -54,7 +54,9 @@ def test_inactive_entry_is_skipped_loudly_with_the_emitters_reason(caplog):
         registry = HappiProfileLoader(FIXTURE_DIR).load_registry()
 
     assert "kinetix1" not in registry.devices
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "kinetix1" in r.getMessage()]
+    warnings = [
+        r for r in caplog.records if r.levelno == logging.WARNING and "kinetix1" in r.getMessage()
+    ]
     assert warnings, "an inactive device must be reported, not silently dropped"
     message = warnings[0].getMessage()
     # The reason the worker wrote into the entry travels into the log line.
