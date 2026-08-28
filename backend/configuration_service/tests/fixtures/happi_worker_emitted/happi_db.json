@@ -1,0 +1,34 @@
+{
+  "kinetix1": {
+    "_id": "kinetix1",
+    "active": false,
+    "args": [
+      "XF:27ID1-ES{Kinetix:1}",
+      "ADWriterFactory(writer_cls=<class 'ophyd_async.epics.adcore._io.NDFileHDF5IO'>, writer_suffix='HDF1:', writer_name='hdf', datakey_suffix='', array_description=None, data_logic_factory=<function ADWriterFactory.hdf.<locals>.<lambda> at 0x7fb97584d940>)"
+    ],
+    "device_class": "ophyd_async.epics.adkinetix.KinetixDetector",
+    "documentation": "args: non-serializable value replaced by repr ADWriterFactory(writer_cls=<class 'ophyd_async.epics.adcore._io.NDFileHDF5IO'>, writer_suffix='HDF1:', writer_name='hdf'",
+    "framework": "ophyd-async",
+    "kwargs": {
+      "name": "kinetix1"
+    },
+    "name": "kinetix1",
+    "prefix": "XF:27ID1-ES{Kinetix:1}",
+    "type": "OphydItem"
+  },
+  "sim_motor": {
+    "_id": "sim_motor",
+    "active": true,
+    "args": [],
+    "device_class": "ophyd.sim.SynAxis",
+    "framework": "ophyd-sync",
+    "kwargs": {
+      "labels": [
+        "motors"
+      ],
+      "name": "motor"
+    },
+    "name": "sim_motor",
+    "type": "OphydItem"
+  }
+}

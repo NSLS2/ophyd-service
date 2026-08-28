@@ -355,7 +355,13 @@ class HappiProfileLoader:
 
         for name, entry in db.items():
             if not entry.get("active", True):
-                logger.debug(f"Skipping inactive device: {name}")
+                # An inactive entry is usually one the emitting side demoted on
+                # purpose (e.g. a constructor argument it could not serialize) and
+                # wrote the reason into `documentation`. Skipping it is happi's
+                # semantics; doing so silently is not ours — say which device
+                # and why, at a level operators actually see.
+                reason = entry.get("documentation") or "no reason recorded in the entry"
+                logger.warning(f"Skipping inactive happi device {name!r}: {reason}")
                 continue
 
             try:
