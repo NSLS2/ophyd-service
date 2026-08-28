@@ -330,6 +330,12 @@ is to test handling of communication timeouts, since RE Manager does not respond
 
   http POST http://localhost:60610/api/test/manager/kill
 
+Restart only the co-hosted HTTP server (unified mode; scope ``write:manager:control``). The
+response is sent first, then the listener goes down and comes back a few seconds later; the
+RE Manager process, the RE Worker and a running plan are not affected::
+
+  http POST http://localhost:60610/api/http_server/restart
+
 
 Additional API
 --------------

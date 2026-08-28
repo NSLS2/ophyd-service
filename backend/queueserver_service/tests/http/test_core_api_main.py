@@ -1757,3 +1757,12 @@ def test_http_server_sleep_01(fastapi_server):  # noqa F811
     resp2 = request_to_json("get", "/test/server/sleep", json={})
     assert "success" not in resp2
     assert "The required parameter 'time' is missing in the API call" in resp2["detail"]
+
+
+def test_http_server_restart_handler_split_process_mode(re_manager, fastapi_server):  # noqa F811
+    """In split-process mode (this fixture: standalone uvicorn + separate
+    manager) there is no co-hosted server to restart; the endpoint exists and
+    the manager says so."""
+    resp = request_to_json("post", "/http_server/restart")
+    assert resp["success"] is False, resp
+    assert "not enabled" in resp["msg"]

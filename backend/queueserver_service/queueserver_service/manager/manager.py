@@ -248,6 +248,7 @@ class RunEngineManager(Process):
         "unlock": "_unlock_handler",
         "manager_stop": "_manager_stop_handler",
         "manager_kill": "_manager_kill_handler",
+        "http_server_restart": "_http_server_restart_handler",
         "manager_test": "_manager_test_handler",
     }
 
@@ -442,6 +443,7 @@ class RunEngineManager(Process):
         # so that uvicorn / queueserver_service.http imports happen on the manager's
         # event loop, not in the parent Process before the loop starts.
         self._http_server = None
+        self._http_server_restart_task = None  # de-duplicates concurrent http_server_restart
 
         self._existing_plans_uid = _generate_uid()
         self._existing_devices_uid = _generate_uid()
@@ -4297,6 +4299,62 @@ class RunEngineManager(Process):
 
         return {"success": success, "msg": msg}
 
+    async def _http_server_restart_handler(self, request):
+        """
+        Restart the co-hosted HTTP server (unified mode) without touching the RE Manager
+        process, the RE Worker or a running plan — the in-process equivalent of restarting
+        a standalone httpserver service. The restart is scheduled to run after this reply
+        is sent, so a request that arrived over HTTP itself is answered before the listener
+        goes down (the client then sees the connection drop, as with a service restart).
+        Fails in split-process mode, where there is no co-hosted server to restart.
+        """
+        success, msg = True, ""
+
+        try:
+            self._check_request_for_unsupported_params(request=request, param_names=[])
+
+            if not self._http_server_settings.enabled:
+                raise RuntimeError(
+                    "The co-hosted HTTP server is not enabled (RE Manager is running in "
+                    "split-process mode); restart the httpserver service instead"
+                )
+            http_server = self._http_server
+            if http_server is None:
+                # Enabled, but the instance does not exist right now: the manager
+                # is still initializing (it is created after the 0MQ bind) or is
+                # shutting down (it is dropped first in the stop path).
+                raise RuntimeError(
+                    "The co-hosted HTTP server is not instantiated at the moment "
+                    "(RE Manager is starting up or shutting down); try again shortly"
+                )
+
+            pending = self._http_server_restart_task
+            if pending is not None and not pending.done():
+                return {"success": True, "msg": "Restart of the co-hosted HTTP server is already scheduled"}
+
+            async def _restart():
+                # Let this reply leave the process first: over the in-process
+                # HTTP path the response is still being written when the
+                # handler returns, and stopping uvicorn under it would cut it.
+                await asyncio.sleep(0.5)
+                # Shutdown guard: if the manager began stopping meanwhile, or the
+                # instance this request was about has been dropped/replaced, a
+                # restart now would bring uvicorn back under a stopping manager.
+                if self._manager_stopping or self._http_server is not http_server:
+                    logger.info("Scheduled restart of the co-hosted HTTP server skipped: manager is stopping")
+                    return
+                try:
+                    await http_server.restart()
+                except Exception:
+                    logger.exception("Restart of the co-hosted HTTP server failed")
+
+            self._http_server_restart_task = self._loop.create_task(_restart())
+            msg = "Restart of the co-hosted HTTP server is scheduled"
+        except Exception as ex:
+            success, msg = False, f"Error: {ex}"
+
+        return {"success": success, "msg": msg}
+
     async def _manager_kill_handler(self, request):
         """
         Testing API: blocks event loop of RE Manager process forever and
@@ -4323,6 +4381,8 @@ class RunEngineManager(Process):
         This API is intended exclusively for unit testing. Available tests (selected using 'test_name'):
 
         - ``reserve_kernel`` - calls the function that reserves kernel running in the worker space.
+        - ``http_server_exit`` - makes the co-hosted HTTP server (unified mode) exit as if it had
+          died, so its supervisor's unexpected-exit/restart path can be exercised.
 
         """
         success, msg = True, ""
@@ -4331,9 +4391,20 @@ class RunEngineManager(Process):
             test_name = request.get("test_name", None)
 
             supported_param_names = ["test_name"]
-            known_tests = ["reserve_kernel"]
+            known_tests = ["reserve_kernel", "http_server_exit"]
 
-            if test_name == "reserve_kernel":
+            if test_name == "http_server_exit":
+                # Fault injection for the co-hosted HTTP server: make the running
+                # uvicorn task exit as if it had died, without stopping the manager.
+                self._check_request_for_unsupported_params(request=request, param_names=supported_param_names)
+                if self._http_server is None:
+                    raise RuntimeError("The co-hosted HTTP server is not enabled")
+                if not self._http_server.simulate_unexpected_exit():
+                    raise RuntimeError(
+                        f"The co-hosted HTTP server is not running (state {self._http_server.state!r})"
+                    )
+
+            elif test_name == "reserve_kernel":
                 self._check_request_for_unsupported_params(request=request, param_names=supported_param_names)
 
                 if not self._use_ipython_kernel:
@@ -4661,6 +4732,10 @@ class RunEngineManager(Process):
 
                 # Stop HTTP first so in-flight HTTP->0MQ round-trips don't see
                 # timeouts against a closed 0MQ socket further down this block.
+                # A restart scheduled moments ago must not race the stop.
+                pending_restart = self._http_server_restart_task
+                if pending_restart is not None and not pending_restart.done():
+                    pending_restart.cancel()
                 if self._http_server is not None:
                     await self._http_server.stop()
                     self._http_server = None
