@@ -11,7 +11,7 @@
 #        - CurrAmp gain/decade (Phase 2, echo)
 #        - EPU1 table / offset / deadband (Phase 2, echo)
 #   4. Verify readback against ios_pgm + ios_curramp + ios_epu IOCs.
-#   5. Trigger a fly scan and verify Sts:Scan-Sts cycles.
+#   5. Trigger a fly scan and verify Sts:Scan-Sts returns to Ready.
 #   6. Phase 3 dynamics:
 #        - EPU FLT calc: write input + offset, verify output = sum
 #        - Vortex MCA: write ROI bounds + PRTM, verify ROI sum > 0
@@ -384,9 +384,12 @@ sleep 0.5
 status=$(req GET "${DIRECT_URL}/api/v1/pv/$(encode "$PV_SCAN_STS")/value")
 expect_status 200 "$status" "GET Sts:Scan-Sts"
 got=$(jq -r '.value' < /tmp/exer_body)
+# The PGM rests at "Ready" (index 2) and returns there when a fly completes:
+# the profile's E_ramp treats the Scanning→Ready transition as the
+# fly-scan-done event, so "Idle" is only ever a transient/initial state.
 case "$got" in
-    Idle|0)  pass "Sts:Scan-Sts = ${got} (fly scan completed)" ;;
-    *)       fail "Sts:Scan-Sts = ${got}, expected Idle/0" ;;
+    Ready|2) pass "Sts:Scan-Sts = ${got} (fly scan completed, back to Ready)" ;;
+    *)       fail "Sts:Scan-Sts = ${got}, expected Ready/2" ;;
 esac
 
 check_pv "$PV_ENRGY_I" "$NI_L_STOP" "Enrgy-I (fly endpoint)" 0.5

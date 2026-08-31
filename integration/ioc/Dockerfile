@@ -14,8 +14,10 @@ COPY ioc_adsim.py /app/ioc_adsim.py
 
 RUN useradd -m -u 1000 ioc && chown -R ioc:ioc /app
 
-# Custom site IOC scripts (ioc_ios_pgm, etc.). Built-in caproto.ioc_examples.*
+# Any further custom IOC scripts placed here. Built-in caproto.ioc_examples.*
 # modules don't need anything copied — they ship inside the caproto package.
+# (Site simulators live elsewhere: the IOS beamline sim is
+# integration/queueserver-repro/iocs with its own Dockerfile.)
 COPY --chown=ioc:ioc *.py /app/
 
 USER ioc

@@ -2584,7 +2584,7 @@
           "Plans"
         ],
         "summary": "List all plans registered in the worker",
-        "description": "Returns all plans registered in the worker namespace, not filtered by user permissions. Parameter: `reduced` (bool, default `False`) \u2014 when `True`, plan descriptions are simplified to save bandwidth.",
+        "description": "Returns all plans registered in the worker namespace, not filtered by user permissions. Parameter: `reduced` (bool, default `False`) \u2014 when `True`, plan descriptions are simplified to save bandwidth. Required scope: `read:resources`.",
         "operationId": "plans_existing_handler_api_plans_existing_get",
         "requestBody": {
           "content": {
@@ -2619,7 +2619,29 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "read:resources"
+            ]
+          },
+          {
+            "APIKeyQuery": [
+              "read:resources"
+            ]
+          },
+          {
+            "APIKeyAuthorizationHeader": [
+              "read:resources"
+            ]
+          },
+          {
+            "APIKeyCookie": [
+              "read:resources"
+            ]
+          }
+        ]
       }
     },
     "/api/devices/existing": {

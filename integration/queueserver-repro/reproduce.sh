@@ -26,6 +26,8 @@
 # Services launched (pixi, from the profile's qs env):
 #   - start-re-manager --config ...                  -> 0MQ on IPC sockets
 #   - uvicorn bluesky_httpserver.server:app          -> HTTP API on port 60610
+#   - tiled serve config ...                         -> Tiled data API on port 8000
+#     (read view over the mongo catalog; what the frontend's data browser reads)
 #   - six simulated IOS IOCs (caproto), one CA port each, plus a catch-all
 #     "blackhole" IOC, so plans can actually read/move the profile's devices
 #     (WITH_IOS_IOCS=1, on by default)
@@ -61,6 +63,10 @@
 #   PROFILE_BRANCH=main
 #   QS_REPRO_HOME=$HOME/qs-repro           # work dir (clone, configs, sockets, logs)
 #   HTTP_PORT=60610                        # host port for the HTTP API
+#   TILED_PORT=8000                        # host port for the Tiled data API
+#   TILED_HOST=127.0.0.1                   # bind address for tiled (loopback by default)
+#   TILED_ALLOW_ORIGINS="http://localhost:5173 http://127.0.0.1:5173"
+#                                          # browser origins allowed CORS access to tiled
 #   REDIS_QUEUE_PORT=60590                 # host port for the queue-store redis
 #   REDIS_TLS_PORT=6380                    # host port for the RE.md TLS redis
 #   MONGO_PORT=27017                       # host port for mongodb
@@ -91,6 +97,14 @@ QS_REPRO_HOME="${QS_REPRO_HOME:-$HOME/qs-repro}"
 
 HTTP_PORT="${HTTP_PORT:-60610}"
 TILED_PORT="${TILED_PORT:-8000}"
+# Loopback by default, like everything else here; the frontend dev server (vite
+# on :5173) is a browser context, so tiled must also allow its Origin via CORS.
+TILED_HOST="${TILED_HOST:-127.0.0.1}"
+# Where THIS script reaches tiled (readiness probe, smoke checks): the bind
+# address, except the bind-all wildcard, which is not routable as a destination.
+TILED_PROBE_HOST="$TILED_HOST"
+[ "$TILED_PROBE_HOST" = "0.0.0.0" ] && TILED_PROBE_HOST="127.0.0.1"
+TILED_ALLOW_ORIGINS="${TILED_ALLOW_ORIGINS:-http://localhost:5173 http://127.0.0.1:5173}"
 REDIS_QUEUE_PORT="${REDIS_QUEUE_PORT:-60590}"
 REDIS_TLS_PORT="${REDIS_TLS_PORT:-6380}"
 MONGO_PORT="${MONGO_PORT:-27017}"
@@ -121,7 +135,7 @@ WITH_IOS_IOCS="${WITH_IOS_IOCS:-1}"
 IOC_BASE_PORT="${IOC_BASE_PORT:-5064}"
 # ioc_ios_pgm must stay FIRST: the xspress3 sim is told the PGM's CA address
 # (ioc_port 0) so its ROI counts can follow the live energy during E_ramp.
-IOS_IOCS="ioc_ios_pgm ioc_ios_curramp ioc_ios_epu ioc_ios_vortex ioc_ios_scaler ioc_ios_feedback ioc_ios_xspress3"
+IOS_IOCS="ioc_ios_pgm ioc_ios_curramp ioc_ios_epu ioc_ios_vortex ioc_ios_scaler ioc_ios_feedback ioc_ios_xspress3 ioc_ios_motor"
 
 # The six realistic IOCs each cover one device family. Toggle them off to run
 # the blackhole alone (still opens the whole profile, just no realistic values).
@@ -295,7 +309,9 @@ EOF
     ok "tiled profile '${ENDSTATION}'"
 
     # --- tiled server config: for `tiled serve config` ---
-    # This is server-side config with different YAML structure
+    # This is server-side config with different YAML structure. allow_origins
+    # grants the frontend dev server's browser origin CORS access — without it
+    # every browser fetch to tiled is blocked and the data browser shows nothing.
     cat > "$CONFIG_DIR/tiled/server-config.yml" <<EOF
 trees:
   - tree: databroker.mongo_normalized:Tree.from_uri
@@ -305,8 +321,10 @@ trees:
       asset_registry_uri: mongodb://localhost:${MONGO_PORT}/asset-registry-local
 authentication:
   allow_anonymous_access: true
+allow_origins:
+$(for origin in $TILED_ALLOW_ORIGINS; do echo "  - $origin"; done)
 EOF
-    ok "tiled server config"
+    ok "tiled server config (CORS origins: $TILED_ALLOW_ORIGINS)"
 
     # --- kafka config: point at the local broker (WITH_KAFKA) or nowhere ---
     # abort_run_on_kafka_exception stays false so a flaky broker never fails a
@@ -418,7 +436,8 @@ prepare_sim_data_root() {
     step "Sim data root (disposable, marked)"
     # Mimic the tree the profile's xs3 HDF plugin names — under the sim root
     # ONLY. No sim process ever touches the real /nsls2.
-    mkdir -p "$SIM_DATA_ROOT/nsls2/data3/${ENDSTATION}/legacy/xspress3_data"
+    mkdir -p "$SIM_DATA_ROOT/nsls2/data3/${ENDSTATION}/legacy/xspress3_data" \
+             "$SIM_DATA_ROOT/xs3"
     cat > "$SIM_DATA_ROOT/_SIMULATED_DATA_README" <<EOF
 Everything under this tree was produced by the SIMULATED beamline stack
 (integration/queueserver-repro). Run identity is the simulation sentinel
@@ -553,11 +572,13 @@ wait_infra() {
     ok "redis (queue + TLS) and mongodb are up"
     if [ "$WITH_KAFKA" = "1" ]; then
         note "waiting for the kafka broker ..."
+        # Probe the broker's own startup log marker. An in-container CLI probe
+        # (kafka-broker-api-versions) follows the ADVERTISED listener
+        # (localhost:${KAFKA_PORT}), which doesn't exist inside the container —
+        # with any non-default KAFKA_PORT it times out against a healthy broker.
         local ready=0
         for _ in $(seq 1 60); do
-            if docker_ exec "$CT_KAFKA" \
-                /opt/kafka/bin/kafka-broker-api-versions.sh \
-                --bootstrap-server localhost:9092 >/dev/null 2>&1; then
+            if docker_ logs "$CT_KAFKA" 2>&1 | grep -q "Kafka Server started"; then
                 ready=1; break
             fi
             sleep 2
@@ -647,6 +668,7 @@ start_iocs() {
             fi
             setsid env EPICS_CA_SERVER_PORT="$port" \
                 XS3_PGM_ADDR="127.0.0.1:$(ioc_port 0)" \
+                XS3_HDF_FILE_PATH="$SIM_DATA_ROOT/xs3" \
                 pixi run --manifest-path "$PROFILE_DIR/pixi.toml" -e qs \
                 python "$IOC_DIR/$name.py" --list-pvs --interfaces 127.0.0.1 \
                 > "$RUN_DIR/iocs/$name.log" 2>&1 < /dev/null &
@@ -767,19 +789,28 @@ start_tiled() {
     step "Tiled data server"
     if pid_alive "$RUN_DIR/tiled.pid"; then
         ok "Tiled server already running"
-    else
-        # Start tiled serve using the server config (not the profile)
-        setsid env \
-            pixi run --manifest-path "$PROFILE_DIR/pixi.toml" -e qs \
-            tiled serve config "$CONFIG_DIR/tiled/server-config.yml" \
-                --host 0.0.0.0 --port "$TILED_PORT" \
-            > "$RUN_DIR/tiled.log" 2>&1 < /dev/null &
-        echo $! > "$RUN_DIR/tiled.launcher.pid"
-        sleep 3
-        pgrep -f "tiled serve config.*--port $TILED_PORT" | head -1 \
-            > "$RUN_DIR/tiled.pid" || true
-        ok "Tiled server launched (log: $RUN_DIR/tiled.log)"
+        return
     fi
+    # Start tiled serve using the server config (not the profile)
+    setsid env \
+        pixi run --manifest-path "$PROFILE_DIR/pixi.toml" -e qs \
+        tiled serve config "$CONFIG_DIR/tiled/server-config.yml" \
+            --host "$TILED_HOST" --port "$TILED_PORT" \
+        > "$RUN_DIR/tiled.log" 2>&1 < /dev/null &
+    echo $! > "$RUN_DIR/tiled.launcher.pid"
+    # Readiness: the API must actually answer. A taken port or a crashed
+    # startup must fail the bring-up loudly, not print a URL that 404s.
+    local up=0
+    for _ in $(seq 1 15); do
+        if curl -fsS "http://${TILED_PROBE_HOST}:${TILED_PORT}/api/v1/" >/dev/null 2>&1; then
+            up=1; break
+        fi
+        sleep 2
+    done
+    # -n: newest match — the pixi wrapper matches the same pattern but is older
+    pgrep -fn "tiled serve config.*--port $TILED_PORT" > "$RUN_DIR/tiled.pid" || true
+    [ "$up" = "1" ] || die "tiled did not answer on http://${TILED_PROBE_HOST}:${TILED_PORT}/api/v1/ — port taken or startup failure; see $RUN_DIR/tiled.log (override the port with TILED_PORT=...)"
+    ok "Tiled server  ->  http://${TILED_PROBE_HOST}:${TILED_PORT} (log: $RUN_DIR/tiled.log)"
 }
 
 open_environment() {
@@ -814,7 +845,11 @@ verify() {
     ok "allowed devices: $devices"
     echo
     ok "HTTP API:  http://localhost:${HTTP_PORT}   (Swagger UI at /docs)"
-    ok "Tiled API: http://localhost:${TILED_PORT}   (data browser)"
+    if curl -fsS "http://${TILED_PROBE_HOST}:${TILED_PORT}/api/v1/" >/dev/null 2>&1; then
+        ok "Tiled API: http://${TILED_PROBE_HOST}:${TILED_PORT}   (data browser)"
+    else
+        note "Tiled API: NOT answering on :${TILED_PORT} — see $RUN_DIR/tiled.log"
+    fi
     ok "API key:   $HTTP_API_KEY"
     note "example: curl -s http://localhost:${HTTP_PORT}/api/status -H \"Authorization: ApiKey $HTTP_API_KEY\""
 }
@@ -940,6 +975,17 @@ cmd_smoke() {
         fails=$((fails+1))
     fi
 
+    if smoke_py "$runner" -c "import ophyd" >/dev/null 2>&1; then
+        if smoke_py "$runner" "$IOC_DIR/verify_motor_sim.py"; then
+            ok "motor acceptance: EpicsMotor.set() completes, readback ramps, blackhole defers"
+        else
+            note "motor acceptance FAILED"; fails=$((fails+1))
+        fi
+    else
+        note "motor acceptance CANNOT RUN: smoke python lacks ophyd (run '$0 up' first)"
+        fails=$((fails+1))
+    fi
+
     if pid_alive "$RUN_DIR/iocs/blackhole.pid"; then
         local bhport; bhport="$(blackhole_port)"
         if EPICS_CA_ADDR_LIST="127.0.0.1:$bhport" EPICS_CA_AUTO_ADDR_LIST=NO \
@@ -959,6 +1005,26 @@ PY
         fi
     else
         note "live round-trip CANNOT RUN: blackhole not running (run '$0 up' first)"
+        fails=$((fails+1))
+    fi
+
+    # Tiled contract: the data API the frontend reads must be up, searchable,
+    # and CORS-reachable from the dev origin. Guards the frontend's only
+    # service contract that has no test anywhere else.
+    if pid_alive "$RUN_DIR/tiled.pid"; then
+        local tiled_base="http://${TILED_PROBE_HOST}:${TILED_PORT}/api/v1"
+        local first_origin="${TILED_ALLOW_ORIGINS%% *}"
+        if curl -fsS "$tiled_base/" | grep -q '"api_version"' \
+           && curl -fsS "$tiled_base/search/?page%5Blimit%5D=1" | grep -q '"data"' \
+           && curl -fsS -o /dev/null -D - -H "Origin: $first_origin" "$tiled_base/" \
+                | grep -qi '^access-control-allow-origin:'; then
+            ok "tiled contract: /api/v1 answers, catalog searchable, CORS allows $first_origin"
+        else
+            note "tiled contract FAILED (about/search/CORS) — see $RUN_DIR/tiled.log"
+            fails=$((fails+1))
+        fi
+    else
+        note "tiled contract CANNOT RUN: tiled not running (run '$0 up' first)"
         fails=$((fails+1))
     fi
 

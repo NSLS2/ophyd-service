@@ -5,12 +5,24 @@
 `main`. See the project memo for the why (`feedback_ios_demo_not_upstream`
 in the workspace memory dir).
 
-This pod brings up six simulated caproto IOCs serving the PVs that the
-IOS happi database references, behind the standard ophyd-service stack
-(configuration_service + direct_control_service). The exerciser walks
-the full periodic-table → batch caput → IOC dynamics → readback
-pipeline against the simulated hardware, so the IOS Ni_L preset (and
-others) can be tested end-to-end without a real beamline.
+This pod brings up the simulated IOS beamline — eight realistic caproto
+IOCs plus a blackhole catch-all, in one container — serving the PVs that
+the IOS happi database references, behind the standard ophyd-service stack
+(configuration_service + direct_control_service + presets_service, plus
+the frontend dev server). The exerciser walks the full periodic-table →
+batch caput → IOC dynamics → readback pipeline against the simulated
+hardware, so the IOS Ni_L preset (and others) can be tested end-to-end
+without a real beamline.
+
+**Two flows, one rule.** The compose files here are the *standalone,
+UI-only* flow: container IOCs, no queueserver, no tiled. The *combined
+demo* is `./start-all.sh`, which brings up the queueserver-repro stack
+(queueserver, tiled, and the repro's loopback IOCs) and then these
+backend services with the `docker-compose-backend.unified.yaml` overlay —
+in that flow there is exactly ONE simulated beamline (the repro's), shared
+by UI writes and queued plans alike; the pod's own IOC containers are not
+started. Don't run both flows at once: the container IOCs and the repro
+IOCs serve identical PV names.
 
 ## Quick start
 
@@ -28,7 +40,7 @@ Common flags:
 
 ```bash
 ./integration/pods/ios/run_demo.sh --rebuild      # force --build
-./integration/pods/ios/run_demo.sh --tear-down    # exerciser then down -v
+./integration/pods/ios/run_demo.sh --tear-down    # exerciser then down (named volumes survive)
 ./integration/pods/ios/run_demo.sh --skip-exerciser  # just up the pod
 ./integration/pods/ios/run_demo.sh --logs         # tail direct-control logs after
 ```
@@ -54,19 +66,23 @@ docker compose -f integration/pods/ios/docker-compose.yaml down
                         └────────┬─────────┘
                                  │ Channel Access (UDP 5064 + TCP 5064)
                                  ▼
-              ┌───────┬──────────┬─────────┬───────┬─────────┬──────────┐
-              │ pgm   │ curramp  │ epu     │ vortex│ scaler  │ feedback │
-              │       │          │         │       │         │          │
-              │ slew  │ enum     │ echo +  │ Poisson│ preset-│ P-loop  │
-              │ +fly  │ echo     │ FLT calc│ MCA + │ time    │ converge│
-              │       │          │         │ ROI    │ count   │          │
-              └───────┴──────────┴─────────┴───────┴─────────┴──────────┘
-              caproto IOCs serving the IOS PV prefixes
+   ios_iocs container (integration/queueserver-repro/iocs, one CA port each)
+   ┌───────┬─────────┬─────────┬────────┬─────────┬──────────┬──────────┬─────────┬───────────┐
+   │ pgm   │ curramp │ epu     │ vortex │ scaler  │ feedback │ xspress3 │ motor   │ blackhole │
+   │ :5064 │ :5066   │ :5068   │ :5070  │ :5072   │ :5074    │ :5076    │ :5078   │ :5080     │
+   │ slew  │ enum    │ echo +  │ Poisson│ preset- │ P-loop   │ energy-  │ real    │ every     │
+   │ +fly  │ echo    │ FLT calc│ MCA+ROI│ time cnt│ converge │ following│ records │ other PV  │
+   └───────┴─────────┴─────────┴────────┴─────────┴──────────┴──────────┴─────────┴───────────┘
 ```
 
-Six IOCs, all from the same `integration/ioc/Dockerfile`, distinguished
-by the script-per-service `command:` override in
-`docker-compose.yaml`.
+One container, one image: `integration/queueserver-repro/iocs/Dockerfile`
+runs `run_all_iocs.sh`, which starts the eight realistic IOCs with
+`--list-pvs`, harvests the PV names they serve, and then starts the
+blackhole with that list as its exclusion set — the same sequence
+`reproduce.sh` runs on a host. That directory is the single source of the
+IOC scripts (there is no second copy under `integration/ioc/`). They share
+one process namespace because the Xspress3 sim's PGM energy follower is a
+CA client that `localguard` restricts to loopback.
 
 ## What each IOC simulates
 
@@ -78,6 +94,9 @@ by the script-per-service `command:` override in
 | `ios_vortex` | `XF:23ID2-ES{Vortex}mca1` | 2048-channel spectrum (Poisson-noise template with two simulated peaks at ch 300 and 600); 8 ROIs (R0..R7 LO/HI + summed scalars); spectrum re-rolls on PRTM write | 3 |
 | `ios_scaler` | `XF:23ID2-ES{Sclr:1}` | synApps scaler with .CNT/.TP preset-time counting; S1=10 MHz clock, S2-S4 at simulated rates; CNT auto-clears when T reaches TP | 3 |
 | `ios_feedback` | `XF:23ID2-OP{FBck}` | M1B1 PID — when Sts:FB-Sel='On', a P-only loop closes ~16% of (PID-SP − CVAL) per 100 ms tick until error ≤ deadband | 3 |
+| `ios_xspress3` | `XF:23ID2-ES{Xsp:1}:` | Xspress3 `xs3` with typed HDF5-plugin PVs (so ophyd FileStore staging succeeds) and four MCA ROIs whose totals follow the PGM energy through a simple absorption model — `XAS_scan` gets real PFY/TFY traces | 4 |
+| `ios_motor` | `XF:23ID2-BI{IOXAS:1-Ax:X}Mtr`, `{Diag:3-Ax:Y}Mtr`, `{AuMesh:1-Ax:Y}Mtr`, `{Vortex:1-Ax:X}Mtr` | Full EPICS motor records (caproto `FakeMotor` with real put-completion and a guaranteed DMOV 1→0→1 cycle): the sample bar (0–300 mm; operator presets SAMPLE 1..6 = 252..290) and the axes the edge plans move, so `mv(ioxas_x, pos)` completes | 5 |
+| `blackhole` | everything else | Catch-all that answers any PV not served above with a type inferred from its name (AreaDetector enums, asyn ports, …), so the whole profile collection opens | 4 |
 
 All prefixes match the literal PV names declared in
 `integration/happi/sites/ios/ios_devs.py` (the ophyd device-class shim
@@ -134,12 +153,15 @@ done
 # Watch the vortex spectrum + ROI sums after triggering acquisition
 
 # Tail the IOC logs
-docker compose -f integration/pods/ios/docker-compose.yaml logs -f ios_pgm
-docker compose -f integration/pods/ios/docker-compose.yaml logs -f ios_vortex
+docker compose -f integration/pods/ios/docker-compose.yaml logs -f ios_iocs
+# per-IOC logs live inside the container:
+docker compose -f integration/pods/ios/docker-compose.yaml exec ios_iocs tail -f /tmp/ios_iocs/ioc_ios_pgm.log
 ```
 
-For a different edge, the values come from
-`integration/happi/sites/ios/edge_map.json`. The exerciser hardcodes
+For a different edge, the values come from the presets seeds
+`integration/presets/scan_presets_seed.json` and
+`integration/presets/detector_presets_seed.json` (17 edges; what the
+presets service is loaded from). The exerciser hardcodes
 Ni_L; to test another edge by hand, look up its `start`/`stop`/
 `velocity`/`epu_table`/`deadband` and caput the relevant PVs.
 

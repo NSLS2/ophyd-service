@@ -167,7 +167,9 @@ A caproto pod that simulates IOS PVs would need to publish, at minimum:
 - the PGM (`XF:23ID2-OP{Mono`) with energy + 4 motor records + fly
   controls;
 - ~36 standalone motor records via `caproto.ioc_examples.fake_motor_record`
-  (one per EpicsMotor entry);
+  (one per EpicsMotor entry) — four are done in
+  `integration/queueserver-repro/iocs/ioc_ios_motor.py` (sample bar, diag3_y,
+  au_mesh, vortex_x); the rest are one line each in its `IOS_MOTORS` table;
 - scaler / current-amp / valve PVs as scalar pvproperty records;
 - the `FBck` PID record at `XF:23ID2-OP{FBck}`;
 - Xspress3 + SPECS detector cam PVs (largest surface — likely deferred).

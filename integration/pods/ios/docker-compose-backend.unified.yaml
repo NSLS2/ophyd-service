@@ -1,0 +1,39 @@
+# Overlay for start-all.sh's COMBINED demo (backend pod + queueserver-repro).
+#
+# Without it there are TWO disjoint simulated beamlines serving identical PV
+# names: the pod's container IOCs (which only direct_control can reach, over
+# the compose network) and the repro's loopback caproto IOCs (which only the
+# RE worker can reach). A value set from the UI's Apply button then lands on a
+# different simulator than the one a queued plan reads.
+#
+# This overlay puts direct_control on the HOST network pointed at the repro's
+# loopback IOCs, so the UI and the RunEngine share ONE beamline — the same
+# loopback-only stance the repro's localguard enforces. The pod's own IOC
+# containers are simply not started in this flow (start-all.sh names the
+# services to bring up); the standalone `docker-compose.yaml` /
+# `docker-compose-backend.yaml` flows keep them for UI-only use without the
+# queueserver stack.
+#
+# Used by start-all.sh as:
+#   podman-compose -f docker-compose-backend.yaml -f docker-compose-backend.unified.yaml \
+#     up -d --no-deps configuration_service direct_control_service presets_service
+#
+# The address list mirrors reproduce.sh's port plan: IOC_BASE_PORT=5064, one
+# CA port per IOC stepping by 2 (7 realistic IOCs: pgm, curramp, epu, vortex,
+# scaler, feedback, xspress3, motor), blackhole catch-all on the next slot (5080).
+# If IOC_BASE_PORT is overridden for the repro, override IOS_EPICS_CA_ADDR_LIST
+# to match.
+services:
+  direct_control_service:
+    network_mode: host
+    environment:
+      # Host network: the configuration service is reached via its published
+      # host port, not the compose-network alias.
+      DIRECT_CONTROL_CONFIGURATION_SERVICE_URL: http://localhost:8004
+      # Both spellings on purpose: the service historically honored only the
+      # DIRECT_CONTROL_-prefixed pair (fixed to respect the bare EPICS vars in
+      # PR #120); setting both works on either build.
+      EPICS_CA_ADDR_LIST: "${IOS_EPICS_CA_ADDR_LIST:-127.0.0.1:5064 127.0.0.1:5066 127.0.0.1:5068 127.0.0.1:5070 127.0.0.1:5072 127.0.0.1:5074 127.0.0.1:5076 127.0.0.1:5078 127.0.0.1:5080}"
+      EPICS_CA_AUTO_ADDR_LIST: "NO"
+      DIRECT_CONTROL_EPICS_CA_ADDR_LIST: "${IOS_EPICS_CA_ADDR_LIST:-127.0.0.1:5064 127.0.0.1:5066 127.0.0.1:5068 127.0.0.1:5070 127.0.0.1:5072 127.0.0.1:5074 127.0.0.1:5076 127.0.0.1:5078 127.0.0.1:5080}"
+      DIRECT_CONTROL_EPICS_CA_AUTO_ADDR_LIST: "NO"

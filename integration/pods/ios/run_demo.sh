@@ -59,7 +59,7 @@ done
 command -v docker >/dev/null || { echo "docker not on PATH" >&2; exit 1; }
 
 # ─── Build + up ─────────────────────────────────────────────────────────
-step "Build + up (8 services: 6 IOCs + config-service + direct-control)"
+step "Build + up (10 services: 6 IOCs + config + direct-control + presets + frontend)"
 build_flag=""
 [ "$REBUILD" = "1" ] && build_flag="--build"
 
@@ -116,5 +116,7 @@ else
     printf "\nPod left running at:\n"
     printf "  config-service : http://localhost:8004\n"
     printf "  direct-control : http://localhost:8003\n"
+    printf "  presets        : http://localhost:8005\n"
+    printf "  frontend (dev) : http://localhost:5173\n"
     printf "Tear down with: docker compose -f %s down\n" "$COMPOSE"
 fi

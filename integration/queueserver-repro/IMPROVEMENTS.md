@@ -1,12 +1,19 @@
-# IOS simulated beamline — proposed fixes and improvements
+# IOS simulated beamline — fixes and improvements (status ledger)
 
-Lessons carried over from the HEX simulated-beamline campaign
-(NSLS2/hxm_program, `simulated_beamlines/HEX/`), which hit many of the same
-problems this repro solves (and borrowed this branch's consistent-asyn-port
-fix in return). Ordered by priority; each item names the HEX reference
-implementation where one exists.
+Lessons carried over from the HEX simulated-beamline campaign (now at
+`hex-ob/hex-simulated-beamline`; originally `NSLS2/hxm_program`
+`simulated_beamlines/HEX/`), which hit many of the same problems this repro
+solves (and borrowed this branch's consistent-asyn-port fix in return).
+
+**Status (2026-08-11):** items 1 and 2 (safety) and the first three bullets of
+item 5 are **DONE** — see each section. Items 3 and 4 remain open patterns to
+adopt as the demo grows; the last bullet of 5 (idempotent re-init) is open.
 
 ## 1. Local-only guard — refuse non-loopback EPICS by construction (safety)
+
+> **DONE** — `iocs/localguard.py` + `iocs/test_localguard.py`; wired into
+> `verify_xs3_sim.py`, the xs3 PGM follower, and `reproduce.sh` (which refuses
+> to launch the RE worker on a non-loopback address list).
 
 The sim IOCs and the blackhole reuse **real IOS PV names**, and the repro's
 worker reaches them via `EPICS_CA_ADDR_LIST`. Today that address list is set
@@ -27,7 +34,17 @@ points). Port is nearly verbatim.
 
 ## 2. Audit + mark all simulated data paths
 
-The sim Xspress3 writes under `/tmp/xs3` (safe). But the IOS **profile
+> **DONE** (audit + sentinel + sim root) — every `up` stamps the sentinel
+> identity into `RE.md` (`seed_sim_md`: proposal `000000` / `pass-000000` /
+> `SIMULATED`), the `/nsls2` mimic tree and the xs3 HDF path
+> (`XS3_HDF_FILE_PATH`) live under the disposable `SIM_DATA_ROOT` with a
+> `_SIMULATED_DATA_README` marker, and `nuke` reaps it. Audit finding kept for
+> the record: no sim process writes real files; the hazards were the
+> real-looking catalog paths and unmarked RE.md identity, both countered.
+> Still open from the HEX pattern: a storage-budget warning + prune script
+> (irrelevant while nothing writes frames; revisit if real file-writing lands).
+
+The sim Xspress3 advertises paths under the sim root (safe). But the IOS **profile
 collection's plans** may build output paths from proposal/cycle metadata the
 way production does; anything that produces a real-looking
 `/nsls2/data/...`/proposal-numbered path from a sim run risks being mistaken
@@ -80,6 +97,12 @@ its target.
 
 ## 5. Small hardening items
 
+> First three bullets **DONE**: `BLACKHOLE_ASYN_PORT` (default `BHPORT`) is in
+> `blackhole_ioc.py`; `reproduce.sh smoke` runs unit + acceptance + live
+> round-trip + tiled contract checks, where a check that cannot run counts as
+> a failure; `README.md` is the front door. Last bullet (idempotent re-init
+> script) still open — becomes relevant with real vendor-IOC containers.
+
 - `blackhole_ioc.py`: make the asyn port name env-overridable
   (`BLACKHOLE_ASYN_PORT`, default `BHPORT`) — costs nothing, helps when two
   fabricated device trees must coexist.
@@ -99,6 +122,7 @@ its target.
 
 ## Suggested order
 
-1 (guard) and 2 (path audit) are safety items — do first, they're small.
-5's smoke mode pays for itself immediately during 1–2. 3 and 4 are
-patterns to adopt opportunistically as the demo grows.
+1 (guard) and 2 (path audit) were the safety items — both done, as is 5's
+smoke mode. What remains: 3 and 4 are patterns to adopt opportunistically as
+the demo grows (tracked as design decisions), plus 5's idempotent re-init
+bullet when vendor-IOC containers arrive.
