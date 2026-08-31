@@ -100,6 +100,10 @@ TILED_PORT="${TILED_PORT:-8000}"
 # Loopback by default, like everything else here; the frontend dev server (vite
 # on :5173) is a browser context, so tiled must also allow its Origin via CORS.
 TILED_HOST="${TILED_HOST:-127.0.0.1}"
+# Where THIS script reaches tiled (readiness probe, smoke checks): the bind
+# address, except the bind-all wildcard, which is not routable as a destination.
+TILED_PROBE_HOST="$TILED_HOST"
+[ "$TILED_PROBE_HOST" = "0.0.0.0" ] && TILED_PROBE_HOST="127.0.0.1"
 TILED_ALLOW_ORIGINS="${TILED_ALLOW_ORIGINS:-http://localhost:5173 http://127.0.0.1:5173}"
 REDIS_QUEUE_PORT="${REDIS_QUEUE_PORT:-60590}"
 REDIS_TLS_PORT="${REDIS_TLS_PORT:-6380}"
@@ -798,15 +802,15 @@ start_tiled() {
     # startup must fail the bring-up loudly, not print a URL that 404s.
     local up=0
     for _ in $(seq 1 15); do
-        if curl -fsS "http://127.0.0.1:${TILED_PORT}/api/v1/" >/dev/null 2>&1; then
+        if curl -fsS "http://${TILED_PROBE_HOST}:${TILED_PORT}/api/v1/" >/dev/null 2>&1; then
             up=1; break
         fi
         sleep 2
     done
     # -n: newest match — the pixi wrapper matches the same pattern but is older
     pgrep -fn "tiled serve config.*--port $TILED_PORT" > "$RUN_DIR/tiled.pid" || true
-    [ "$up" = "1" ] || die "tiled did not answer on http://127.0.0.1:${TILED_PORT}/api/v1/ — port taken or startup failure; see $RUN_DIR/tiled.log (override the port with TILED_PORT=...)"
-    ok "Tiled server  ->  http://localhost:${TILED_PORT} (log: $RUN_DIR/tiled.log)"
+    [ "$up" = "1" ] || die "tiled did not answer on http://${TILED_PROBE_HOST}:${TILED_PORT}/api/v1/ — port taken or startup failure; see $RUN_DIR/tiled.log (override the port with TILED_PORT=...)"
+    ok "Tiled server  ->  http://${TILED_PROBE_HOST}:${TILED_PORT} (log: $RUN_DIR/tiled.log)"
 }
 
 open_environment() {
@@ -841,8 +845,8 @@ verify() {
     ok "allowed devices: $devices"
     echo
     ok "HTTP API:  http://localhost:${HTTP_PORT}   (Swagger UI at /docs)"
-    if curl -fsS "http://127.0.0.1:${TILED_PORT}/api/v1/" >/dev/null 2>&1; then
-        ok "Tiled API: http://localhost:${TILED_PORT}   (data browser)"
+    if curl -fsS "http://${TILED_PROBE_HOST}:${TILED_PORT}/api/v1/" >/dev/null 2>&1; then
+        ok "Tiled API: http://${TILED_PROBE_HOST}:${TILED_PORT}   (data browser)"
     else
         note "Tiled API: NOT answering on :${TILED_PORT} — see $RUN_DIR/tiled.log"
     fi
@@ -1008,7 +1012,7 @@ PY
     # and CORS-reachable from the dev origin. Guards the frontend's only
     # service contract that has no test anywhere else.
     if pid_alive "$RUN_DIR/tiled.pid"; then
-        local tiled_base="http://127.0.0.1:${TILED_PORT}/api/v1"
+        local tiled_base="http://${TILED_PROBE_HOST}:${TILED_PORT}/api/v1"
         local first_origin="${TILED_ALLOW_ORIGINS%% *}"
         if curl -fsS "$tiled_base/" | grep -q '"api_version"' \
            && curl -fsS "$tiled_base/search/?page%5Blimit%5D=1" | grep -q '"data"' \

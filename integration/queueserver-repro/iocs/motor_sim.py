@@ -94,8 +94,15 @@ async def _motor_simulator(instance, async_lib, defaults=None, tick_rate_hz=TICK
         target_pos = (move_state["target"] if move_state["target"] is not None
                       else instance.value)
         diff = target_pos - fields.user_readback_value.value
-        total_time = abs(diff / fields.velocity.value)
-        num_steps = int(total_time // dwell)
+        # .VELO is writable; a real record clamps it into [VBAS, VMAX]. The sim
+        # treats a non-positive VELO as "snap in one observable tick" rather
+        # than dividing by zero (or ramping forever at an epsilon floor).
+        velocity = fields.velocity.value
+        if velocity > 0:
+            total_time = abs(diff / velocity)
+            num_steps = int(total_time // dwell)
+        else:
+            num_steps = 1
         if abs(diff) < 1e-9 and not have_new_position:
             if fields.stop.value != 0:
                 await fields.stop.write(0)

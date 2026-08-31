@@ -63,6 +63,7 @@ def spawn(script, port, extra_env=None):
     logf = open(os.path.join(tmpdir, script + ".log"), "w")
     p = subprocess.Popen([sys.executable, "-u", f"{IOC_DIR}/{script}", "--interfaces", "127.0.0.1"],
                          env=env, stdout=logf, stderr=subprocess.STDOUT)
+    logf.close()  # the child holds its own FD
     procs.append(p)
     return p
 
