@@ -3480,6 +3480,50 @@
         ]
       }
     },
+    "/api/http_server/restart": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Restart the co-hosted HTTP server (unified mode)",
+        "description": "Stop and start the HTTP server that is co-hosted in the RE Manager process, leaving the manager, the worker and any running plan untouched \u2014 the unified-mode equivalent of restarting a standalone httpserver service. The restart is scheduled after this response is sent, so the connection then drops and the server comes back a few seconds later. Fails when the manager runs in split-process mode. Required scope: `write:manager:control`.",
+        "operationId": "http_server_restart_handler_api_http_server_restart_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessMsgResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": [
+              "write:manager:control"
+            ]
+          },
+          {
+            "APIKeyQuery": [
+              "write:manager:control"
+            ]
+          },
+          {
+            "APIKeyAuthorizationHeader": [
+              "write:manager:control"
+            ]
+          },
+          {
+            "APIKeyCookie": [
+              "write:manager:control"
+            ]
+          }
+        ]
+      }
+    },
     "/api/test/manager/kill": {
       "post": {
         "tags": [

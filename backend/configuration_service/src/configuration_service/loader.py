@@ -109,6 +109,22 @@ def _infer_device_label(
     return DeviceLabel.DEVICE
 
 
+_REASON_MAX_CHARS = 200
+
+
+def _one_line(text: Any, limit: int = _REASON_MAX_CHARS) -> str:
+    """Collapse a free-text reason onto one line and cap its length for a log record.
+
+    The emitter's ``documentation`` can carry a long constructor ``repr``
+    (with newlines); the log should name the device and the gist, not
+    reproduce the object.
+    """
+    if not text:
+        return ""
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
 def _resolve_happi_templates(value: Any, prefix: str | None, name: str | None) -> Any:
     """
     Substitute happi's `{{prefix}}` and `{{name}}` placeholders.
@@ -355,7 +371,13 @@ class HappiProfileLoader:
 
         for name, entry in db.items():
             if not entry.get("active", True):
-                logger.debug(f"Skipping inactive device: {name}")
+                # An inactive entry is usually one the emitting side demoted on
+                # purpose (e.g. a constructor argument it could not serialize) and
+                # wrote the reason into `documentation`. Skipping it is happi's
+                # semantics; doing so silently is not ours — say which device
+                # and why, at a level operators actually see.
+                reason = _one_line(entry.get("documentation")) or "no reason recorded in the entry"
+                logger.warning("Skipping inactive happi device %r: %s", name, reason)
                 continue
 
             try:

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 import dataclasses
 import logging
 import re
@@ -33,6 +34,10 @@ SHUTDOWN_TIMEOUT_SECONDS = 10.0
 # manager continues 0MQ-only. The manager process must never die for it.
 STARTUP_RETRY_DELAY_SECONDS = 2.0
 MAX_STARTUP_ATTEMPTS = 3
+# A server that stayed up at least this long before dying counts as a fresh
+# incident: the attempt budget is for CONSECUTIVE failed starts, not for the
+# lifetime of the process (which may be months).
+STABLE_RUN_SECONDS = 30.0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -157,7 +162,7 @@ class CoHostedHttpServer:
         self._manager_zmq_connect_addr = _bind_addr_to_connect_addr(manager_zmq_bind_addr)
         self._server: Any = None  # uvicorn.Server
         self._task: Optional[asyncio.Task] = None
-        self._uvicorn_config: Any = None
+        self._build_kwargs_factory: Any = None  # () -> build_app kwargs, fresh each call
         self._state = "starting"
         self._stop_event: Optional[asyncio.Event] = None
 
@@ -189,10 +194,45 @@ class CoHostedHttpServer:
         except SystemExit as exc:
             return exc
 
+    def _build_app(self) -> Any:
+        """A FRESH FastAPI app (with a fresh in-process manager client) for one
+        uvicorn Server. The app's lifespan shutdown closes its client, so an
+        app must never be served twice: a retry or restart on the old app
+        would accept connections and then hang on a closed client."""
+        from queueserver_service.http.app import build_app
+
+        build_kwargs = self._build_kwargs_factory()
+
+        server_settings = build_kwargs.setdefault("server_settings", {})
+        zmq_conf = server_settings.setdefault("qserver_zmq_configuration", {})
+        zmq_conf.setdefault("control_address", self._manager_zmq_connect_addr)
+
+        # In-process RM dispatches into manager._dispatch_command directly.
+        # The 0MQ INFO/PUB channel is still configured so the parent class's
+        # console / system-info monitors keep working; the CONTROL REQ
+        # client is replaced by a no-op stub via _create_client override.
+        server_settings["rm_client"] = InProcessREManagerAPI(
+            manager=self._manager,
+            zmq_info_addr=zmq_conf.get("info_address"),
+            zmq_encoding=zmq_conf.get("encoding"),
+            zmq_public_key=zmq_conf.get("public_key"),
+            request_fail_exceptions=False,
+            status_expiration_period=0.4,
+            console_monitor_max_lines=2000,
+        )
+        return build_app(**build_kwargs)
+
     def _new_server(self) -> Any:
         import uvicorn
 
-        server = uvicorn.Server(self._uvicorn_config)
+        config = uvicorn.Config(
+            self._build_app(),
+            host=self._settings.host,
+            port=self._settings.port,
+            log_level="info",
+            lifespan="on",
+        )
+        server = uvicorn.Server(config)
         # The manager owns signal handling for its process. Left alone,
         # uvicorn installs its own SIGINT/SIGTERM handlers on the main
         # thread for the lifetime of serve() and re-raises captured
@@ -208,6 +248,7 @@ class CoHostedHttpServer:
         while True:
             attempts += 1
             serve_task: Optional[asyncio.Task] = None
+            started_at: Optional[float] = None
             try:
                 self._set_state("starting")
                 self._server = self._new_server()
@@ -216,12 +257,15 @@ class CoHostedHttpServer:
                     await asyncio.sleep(0.05)
                 if self._server.started:
                     self._set_state("running")
+                    started_at = time.monotonic()
                     logger.info(
                         "Co-hosted HTTP server is running on %s:%d",
                         self._settings.host,
                         self._settings.port,
                     )
                 exit_exc = await serve_task
+                if started_at is not None and time.monotonic() - started_at >= STABLE_RUN_SECONDS:
+                    attempts = 0  # it ran; whatever killed it is not a startup failure
                 if exit_exc is not None:
                     # uvicorn calls sys.exit(1) when the port cannot be
                     # bound; left uncontained it would kill the manager and
@@ -273,45 +317,17 @@ class CoHostedHttpServer:
                 await asyncio.wait_for(stop_event.wait(), STARTUP_RETRY_DELAY_SECONDS)
 
     async def start(self) -> None:
-        import uvicorn
-        from queueserver_service.http.app import build_app
         from queueserver_service.http.config import construct_build_app_kwargs, parse_configs
 
-        if self._settings.config_path:
-            hs_config = parse_configs(self._settings.config_path)
-            build_kwargs = construct_build_app_kwargs(
-                hs_config, source_filepath=self._settings.config_path
-            )
-        else:
-            build_kwargs = construct_build_app_kwargs({})
+        config_path = self._settings.config_path
+        hs_config = parse_configs(config_path) if config_path else None
 
-        server_settings = build_kwargs.setdefault("server_settings", {})
-        zmq_conf = server_settings.setdefault("qserver_zmq_configuration", {})
-        zmq_conf.setdefault("control_address", self._manager_zmq_connect_addr)
+        def build_kwargs_factory():
+            if hs_config is not None:
+                return construct_build_app_kwargs(hs_config, source_filepath=config_path)
+            return construct_build_app_kwargs({})
 
-        # In-process RM dispatches into manager._dispatch_command directly.
-        # The 0MQ INFO/PUB channel is still configured so the parent class's
-        # console / system-info monitors keep working; the CONTROL REQ
-        # client is replaced by a no-op stub via _create_client override.
-        server_settings["rm_client"] = InProcessREManagerAPI(
-            manager=self._manager,
-            zmq_info_addr=zmq_conf.get("info_address"),
-            zmq_encoding=zmq_conf.get("encoding"),
-            zmq_public_key=zmq_conf.get("public_key"),
-            request_fail_exceptions=False,
-            status_expiration_period=0.4,
-            console_monitor_max_lines=2000,
-        )
-
-        app = build_app(**build_kwargs)
-
-        self._uvicorn_config = uvicorn.Config(
-            app,
-            host=self._settings.host,
-            port=self._settings.port,
-            log_level="info",
-            lifespan="on",
-        )
+        self._build_kwargs_factory = build_kwargs_factory
         self._stop_event = asyncio.Event()
         self._task = asyncio.ensure_future(self._supervised_serve())
         logger.info(
@@ -320,6 +336,25 @@ class CoHostedHttpServer:
             self._settings.port,
             self._manager_zmq_connect_addr,
         )
+
+    async def restart(self) -> None:
+        """Stop the server (if it is up) and start it again — a fresh uvicorn
+        Server and a fresh attempt budget. The manager, the worker and any
+        running plan are untouched: this is the unified-mode counterpart of
+        restarting a standalone httpserver service."""
+        await self.stop()
+        await self.start()
+
+    def simulate_unexpected_exit(self) -> bool:
+        """Testing hook: make the running uvicorn server exit WITHOUT the stop
+        event being set, so the supervisor takes its unexpected-exit path (log,
+        retry) exactly as it would if the server had died on its own. Returns
+        False when there is no running server to kill."""
+        server = self._server
+        if server is None or not getattr(server, "started", False):
+            return False
+        server.should_exit = True
+        return True
 
     async def stop(self) -> None:
         if self._task is None:
