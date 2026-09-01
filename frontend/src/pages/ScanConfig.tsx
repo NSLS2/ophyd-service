@@ -8,12 +8,15 @@ import {
   detectorPresetToState,
   buildDetectorCaputs,
   DETECTOR_ADDRESSES,
+  type ScalarState,
+  type VortexState,
 } from '../components/DetectorSettings'
 import { ControlsPanel } from '../components/ControlsPanel'
 import { LiveSpectrumPanel } from '../components/LiveSpectrumPanel'
 import { Toast, type ToastType } from '../components/Toast'
 import { useQueueExecute, useStopScan, useAllowedPlans, isPlanAllowed, useQueueStatus } from '../api/queueserver'
 import { useResolveAddresses, usePvSetBatch, usePvSet, type PvCaput } from '../api/directControl'
+import { useIosScanSession } from '../contexts/IosScanSessionContext'
 
 interface ScanConfigProps {
   element: ElementData
@@ -22,7 +25,16 @@ interface ScanConfigProps {
 
 export default function ScanConfig({ element, onBack }: ScanConfigProps) {
   const edges = getEdgesForElement(element.symbol)
-  const [selectedEdge, setSelectedEdge] = useState(edges[0] ?? '')
+  const session = useIosScanSession()
+  const sessionEdge = session.selectedEdge
+  const selectedEdge = sessionEdge && edges.includes(sessionEdge) ? sessionEdge : (edges[0] ?? '')
+  // Keep session in sync with what the UI actually shows so route round-trips restore the same edge.
+  useEffect(() => {
+    if (session.selectedEdge !== selectedEdge) {
+      session.setSelectedEdge(selectedEdge || null)
+    }
+  }, [selectedEdge, session])
+  const setSelectedEdge = (edge: string) => session.setSelectedEdge(edge)
   const { data, isLoading, isError, error } = useFullPreset(selectedEdge)
 
   return (
@@ -88,7 +100,7 @@ export default function ScanConfig({ element, onBack }: ScanConfigProps) {
         </div>
       )}
 
-        {data && <PresetPanels key={selectedEdge} data={data} />}
+        {data && <PresetPanels key={selectedEdge} data={data} elementSymbol={element.symbol} edge={selectedEdge} />}
       </div>
     </div>
   )
@@ -111,10 +123,25 @@ const IPFY_COUNT_ADDRESS = 'vortex.mca.rois.roi4.count'
 // `EraseStart` PV; a real MCA streams ArrayData live during acquisition.
 const COUNT_INTERVAL_MS = 1000
 
-function PresetPanels({ data }: { data: EdgeFullPreset }) {
-  const [scanData, setScanData] = useState<Omit<ScanPresetEntry, 'edge_index'> | null>(data.scan)
-  const [detectorScalar, setDetectorScalar] = useState(() => detectorPresetToState(data.detector).scalar)
-  const [detectorVortex, setDetectorVortex] = useState(() => detectorPresetToState(data.detector).vortex)
+function PresetPanels({ data, elementSymbol, edge }: { data: EdgeFullPreset; elementSymbol: string; edge: string }) {
+  const session = useIosScanSession()
+  const { getDraft, setDraft } = session
+  type ScanDraft = Omit<ScanPresetEntry, 'edge_index'> | null
+  const initialScan: ScanDraft = data.scan
+  const initialDetector = detectorPresetToState(data.detector)
+  const [scanData, setScanData] = useState<ScanDraft>(
+    () => getDraft<ScanDraft>(elementSymbol, edge, 'scan') ?? initialScan,
+  )
+  const [detectorScalar, setDetectorScalar] = useState<ScalarState>(
+    () => getDraft<ScalarState>(elementSymbol, edge, 'detectorScalar') ?? initialDetector.scalar,
+  )
+  const [detectorVortex, setDetectorVortex] = useState<VortexState>(
+    () => getDraft<VortexState>(elementSymbol, edge, 'detectorVortex') ?? initialDetector.vortex,
+  )
+  // Sync every local edit back to the session store so route round-trips restore the same values.
+  useEffect(() => { setDraft(elementSymbol, edge, 'scan', scanData) }, [setDraft, elementSymbol, edge, scanData])
+  useEffect(() => { setDraft(elementSymbol, edge, 'detectorScalar', detectorScalar) }, [setDraft, elementSymbol, edge, detectorScalar])
+  useEffect(() => { setDraft(elementSymbol, edge, 'detectorVortex', detectorVortex) }, [setDraft, elementSymbol, edge, detectorVortex])
   const [scanStatus, setScanStatus] = useState<'idle' | 'running'>('idle')
   const [activeScan, setActiveScan] = useState<'pd' | 'single' | null>(null)
   const [hasObservedManagerBusy, setHasObservedManagerBusy] = useState(false)

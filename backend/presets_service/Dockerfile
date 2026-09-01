@@ -2,7 +2,10 @@ FROM python:3.11.8-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# APT::Sandbox::User=root keeps apt from dropping to uid 65534 (_apt),
+# which fails under rootless podman with a limited subuid range.
+RUN apt-get -o APT::Sandbox::User=root update \
+    && apt-get -o APT::Sandbox::User=root install -y --no-install-recommends \
         gcc \
     && rm -rf /var/lib/apt/lists/*
 

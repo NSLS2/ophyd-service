@@ -5,6 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose-backend.yaml"
 QS_REPRO_DIR="$SCRIPT_DIR/../../queueserver-repro"
 
+# /etc/profile.d/epics.sh sets EPICS_CA_ADDR_LIST=<beamline broadcast>; the sim
+# IOCs are loopback-only and localguard refuses anything else.
+unset EPICS_CA_ADDR_LIST EPICS_PVA_ADDR_LIST EPICS_CA_AUTO_ADDR_LIST EPICS_PVA_AUTO_ADDR_LIST
+
 echo "==> Starting Docker backend services (configuration, direct_control, presets, IOCs)..."
 echo "(Starting containers... you may Ctrl+C after seeing container IDs)"
 
@@ -42,12 +46,12 @@ echo ""
 echo "=========================================="
 echo "Frontend setup (.env):"
 echo "=========================================="
-echo "VITE_CONFIG_SERVICE_URL=http://localhost:8004"
-echo "VITE_DIRECT_CONTROL_SERVICE_URL=http://localhost:8003"
-echo "VITE_PRESETS_SERVICE_URL=http://localhost:8005"
-echo "VITE_QSERVER_URL=http://localhost:60610"
-echo "VITE_TILED_API_URL=http://localhost:8000/api/v1"
-echo "VITE_QSERVER_API_KEY=<paste API key from above>"
+echo "CONFIG_TARGET=http://localhost:8004"
+echo "CONTROL_TARGET=http://localhost:8003"
+echo "PRESETS_TARGET=http://localhost:8005"
+echo "QUEUESERVER_TARGET=http://localhost:60610"
+echo "TILED_TARGET=http://localhost:8000"
+echo "QSERVER_API_KEY=<paste API key from above>"
 echo ""
 echo "=========================================="
 echo "To stop all services:"

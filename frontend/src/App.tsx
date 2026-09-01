@@ -1,9 +1,9 @@
 import { lazy, Suspense } from 'react'
 import type { RouteItem } from '@blueskyproject/finch'
-import { Atom, SlidersHorizontal, Table, Database } from '@phosphor-icons/react'
+import { Atom, Table, Database } from '@phosphor-icons/react'
 import { useAuth } from './contexts/AuthContext'
 import { ClientFinchBridge } from './components/ClientFinchBridge'
-import ScanSettings from './pages/ScanSettings'
+import { IosScanSessionProvider } from './contexts/IosScanSessionContext'
 import PresetsAdmin from './pages/PresetsAdmin'
 
 // These pages import @blueskyproject/finch, which touches `window` at module
@@ -23,13 +23,6 @@ function App() {
       icon: <Atom size={28} />,
       isBackgroundTransparent: false,
       classNameContainer: 'w-full max-w-none !h-auto min-h-full p-0 overflow-visible',
-    },
-    {
-      path: '/settings',
-      label: 'Component Testing',
-      element: <ScanSettings />,
-      icon: <SlidersHorizontal size={28} />,
-      isBackgroundTransparent: false,
     },
     {
       path: '/admin/presets',
@@ -56,14 +49,13 @@ function App() {
   })
 
   return (
-    <ClientFinchBridge
-      routes={routes}
-      headerTitle="IOS Scan"
-      config={{
-        ophydApiUrl: import.meta.env.VITE_API_URL || 'http://localhost:8003/api/v1',
-      }}
-      fallback={<div className="p-4 text-gray-500">Loading interface...</div>}
-    />
+    <IosScanSessionProvider>
+      <ClientFinchBridge
+        routes={routes}
+        headerTitle="IOS Scan"
+        fallback={<div className="p-4 text-gray-500">Loading interface...</div>}
+      />
+    </IosScanSessionProvider>
   )
 }
 
