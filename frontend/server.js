@@ -432,10 +432,13 @@ if (sslConfig) {
   const { createServer } = await import('node:https');
 
   const httpsServer = createServer(sslConfig, app);
+  // Forward WS upgrades to the control proxy; http-proxy-middleware does not auto-subscribe.
+  httpsServer.on('upgrade', controlProxy.upgrade);
   httpsServer.listen(port, () => {
     console.log(`Server started at https://localhost:${port}`);
   });
 } else {
+  httpServer.on('upgrade', controlProxy.upgrade);
   httpServer.listen(port, () => {
     console.log(`Server started at http://localhost:${port}`);
   });
