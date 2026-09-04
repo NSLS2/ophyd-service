@@ -367,7 +367,9 @@ if (isProduction) {
 } else {
   // Vite server as middleware
   vite = await createViteServer({
-    server: { middlewareMode: true, hmr: { server: httpServer } },
+    server: httpServer
+      ? { middlewareMode: true, hmr: { server: httpServer } }
+      : { middlewareMode: true },
     appType: 'custom',
     base: basePath,
   });
