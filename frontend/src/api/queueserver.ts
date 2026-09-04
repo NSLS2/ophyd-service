@@ -1,16 +1,13 @@
 /**
  * API hooks for the Bluesky Queue Server.
  *
- * All requests go through the Vite proxy:
- *   /api/queueserver/* → http://localhost:60610/api/*
+ * All requests go through server.js:
+ *   /api/queueserver/* -> QUEUESERVER_TARGET/api/*
  */
 
 import { useMutation, useQuery } from '@tanstack/react-query'
 
 const BASE = '/api/queueserver'
-
-// Default API key for development — in production this would come from auth
-const API_KEY = 'd97fca2277896ea9e0a2576efae94c82'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -57,7 +54,6 @@ async function queueFetch<T>(
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `ApiKey ${API_KEY}`,
       ...options.headers,
     },
   })

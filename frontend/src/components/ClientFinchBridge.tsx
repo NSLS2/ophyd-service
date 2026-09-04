@@ -52,9 +52,14 @@ export function ClientFinchBridge({ routes, headerTitle, config, fallback }: Fin
 
   // Once Finch loads, render its provider and layout together.
   const { FinchConfigProvider, HubAppLayout } = FinchModule;
+  const origin = window.location.origin;
+  const finchConfig = config ?? {
+    ophydApiUrl: `${origin}/api/control`,
+    tiledApiUrl: `${origin}/api/tiled`,
+  };
 
   return (
-    <FinchConfigProvider config={config ?? {}}>
+    <FinchConfigProvider config={finchConfig}>
       <HubAppLayout routes={routes} headerTitle={headerTitle} />
     </FinchConfigProvider>
   );

@@ -159,11 +159,11 @@ services:
       context: ../../../frontend
       target: dev
     environment:
-      # Inside the container, localhost is the container itself — point the Vite
-      # dev-server proxy at sibling services by their compose service names.
-      VITE_PRESETS_TARGET: http://presets_service:8005
-      VITE_CONFIG_TARGET: http://configuration_service:8004
-      VITE_CONTROL_TARGET: http://direct_control_service:8003
+      # Inside the container, localhost is the container itself — point the
+      # Node BFF proxy at sibling services by their compose service names.
+      PRESETS_TARGET: http://presets_service:8005
+      CONFIG_TARGET: http://configuration_service:8004
+      CONTROL_TARGET: http://direct_control_service:8003
     ports:
       - "5173:5173"
     depends_on:

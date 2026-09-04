@@ -1,5 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
-import { useOphydPVSocket, HistogramPlot } from '@blueskyproject/finch'
+import { useState, useEffect, useRef } from 'react'
 import type { ElementData } from '../components/ElementPicker'
 import { useFullPreset, type EdgeFullPreset, type ScanPresetEntry } from '../api/presets'
 import { getEdgesForElement } from '../api/edgeMapping'
@@ -9,11 +8,15 @@ import {
   detectorPresetToState,
   buildDetectorCaputs,
   DETECTOR_ADDRESSES,
+  type ScalarState,
+  type VortexState,
 } from '../components/DetectorSettings'
 import { ControlsPanel } from '../components/ControlsPanel'
+import { LiveSpectrumPanel } from '../components/LiveSpectrumPanel'
 import { Toast, type ToastType } from '../components/Toast'
 import { useQueueExecute, useStopScan, useAllowedPlans, isPlanAllowed, useQueueStatus } from '../api/queueserver'
 import { useResolveAddresses, usePvSetBatch, usePvSet, type PvCaput } from '../api/directControl'
+import { useIosScanSession } from '../contexts/IosScanSessionContext'
 
 interface ScanConfigProps {
   element: ElementData
@@ -22,7 +25,16 @@ interface ScanConfigProps {
 
 export default function ScanConfig({ element, onBack }: ScanConfigProps) {
   const edges = getEdgesForElement(element.symbol)
-  const [selectedEdge, setSelectedEdge] = useState(edges[0] ?? '')
+  const session = useIosScanSession()
+  const sessionEdge = session.selectedEdge
+  const selectedEdge = sessionEdge && edges.includes(sessionEdge) ? sessionEdge : (edges[0] ?? '')
+  // Keep session in sync with what the UI actually shows so route round-trips restore the same edge.
+  useEffect(() => {
+    if (session.selectedEdge !== selectedEdge) {
+      session.setSelectedEdge(selectedEdge || null)
+    }
+  }, [selectedEdge, session])
+  const setSelectedEdge = (edge: string) => session.setSelectedEdge(edge)
   const { data, isLoading, isError, error } = useFullPreset(selectedEdge)
 
   return (
@@ -88,7 +100,7 @@ export default function ScanConfig({ element, onBack }: ScanConfigProps) {
         </div>
       )}
 
-        {data && <PresetPanels data={data} />}
+        {data && <PresetPanels key={selectedEdge} data={data} elementSymbol={element.symbol} edge={selectedEdge} />}
       </div>
     </div>
   )
@@ -111,10 +123,25 @@ const IPFY_COUNT_ADDRESS = 'vortex.mca.rois.roi4.count'
 // `EraseStart` PV; a real MCA streams ArrayData live during acquisition.
 const COUNT_INTERVAL_MS = 1000
 
-function PresetPanels({ data }: { data: EdgeFullPreset }) {
-  const [scanData, setScanData] = useState<Omit<ScanPresetEntry, 'edge_index'> | null>(data.scan)
-  const [detectorScalar, setDetectorScalar] = useState(() => detectorPresetToState(data.detector).scalar)
-  const [detectorVortex, setDetectorVortex] = useState(() => detectorPresetToState(data.detector).vortex)
+function PresetPanels({ data, elementSymbol, edge }: { data: EdgeFullPreset; elementSymbol: string; edge: string }) {
+  const session = useIosScanSession()
+  const { getDraft, setDraft } = session
+  type ScanDraft = Omit<ScanPresetEntry, 'edge_index'> | null
+  const initialScan: ScanDraft = data.scan
+  const initialDetector = detectorPresetToState(data.detector)
+  const [scanData, setScanData] = useState<ScanDraft>(
+    () => getDraft<ScanDraft>(elementSymbol, edge, 'scan') ?? initialScan,
+  )
+  const [detectorScalar, setDetectorScalar] = useState<ScalarState>(
+    () => getDraft<ScalarState>(elementSymbol, edge, 'detectorScalar') ?? initialDetector.scalar,
+  )
+  const [detectorVortex, setDetectorVortex] = useState<VortexState>(
+    () => getDraft<VortexState>(elementSymbol, edge, 'detectorVortex') ?? initialDetector.vortex,
+  )
+  // Sync every local edit back to the session store so route round-trips restore the same values.
+  useEffect(() => { setDraft(elementSymbol, edge, 'scan', scanData) }, [setDraft, elementSymbol, edge, scanData])
+  useEffect(() => { setDraft(elementSymbol, edge, 'detectorScalar', detectorScalar) }, [setDraft, elementSymbol, edge, detectorScalar])
+  useEffect(() => { setDraft(elementSymbol, edge, 'detectorVortex', detectorVortex) }, [setDraft, elementSymbol, edge, detectorVortex])
   const [scanStatus, setScanStatus] = useState<'idle' | 'running'>('idle')
   const [activeScan, setActiveScan] = useState<'pd' | 'single' | null>(null)
   const [hasObservedManagerBusy, setHasObservedManagerBusy] = useState(false)
@@ -144,12 +171,6 @@ function PresetPanels({ data }: { data: EdgeFullPreset }) {
   const ipfyCountPv = pvMap?.[IPFY_COUNT_ADDRESS]
   const prtmPv = pvMap?.[DETECTOR_ADDRESSES.vortexTime]
 
-  const socketPvs = useMemo(
-    () => [spectrumPv, pfyCountPv, ipfyCountPv].filter((p): p is string => Boolean(p)),
-    [spectrumPv, pfyCountPv, ipfyCountPv],
-  )
-  const { devices } = useOphydPVSocket(socketPvs)
-
   const [isCounting, setIsCounting] = useState(false)
   const pvSet = usePvSet()
 
@@ -169,18 +190,6 @@ function PresetPanels({ data }: { data: EdgeFullPreset }) {
     return () => clearInterval(id)
   }, [isCounting])
 
-  // While counting, drive the PFY/IPFY count fields from the live ROI sums.
-  const pfyLive = pfyCountPv ? devices[pfyCountPv]?.value : undefined
-  const ipfyLive = ipfyCountPv ? devices[ipfyCountPv]?.value : undefined
-  useEffect(() => {
-    if (!isCounting) return
-    setDetectorVortex((prev) => ({
-      ...prev,
-      ...(typeof pfyLive === 'number' ? { pfyCounts: pfyLive } : {}),
-      ...(typeof ipfyLive === 'number' ? { ipfyCounts: ipfyLive } : {}),
-    }))
-  }, [isCounting, pfyLive, ipfyLive])
-
   const handleCount = () => {
     if (!isCounting && !prtmPv) {
       showToast('Vortex trigger PV not resolved yet — try again in a moment', 'warning')
@@ -188,11 +197,6 @@ function PresetPanels({ data }: { data: EdgeFullPreset }) {
     }
     setIsCounting((c) => !c)
   }
-
-  // The MCA spectrum arrives from the WebSocket as a JSON array of channel
-  // counts; the socket value type is scalar, so narrow it here.
-  const spectrumValue = spectrumPv ? (devices[spectrumPv]?.value as unknown) : undefined
-  const spectrumArray = Array.isArray(spectrumValue) ? (spectrumValue as number[]) : null
 
   const showToast = (message: string, type: ToastType) => {
     setToast({ message, type })
@@ -368,16 +372,13 @@ function PresetPanels({ data }: { data: EdgeFullPreset }) {
       </div>
 
       <div className="grid grid-cols-[minmax(0,1fr)_minmax(14rem,18rem)] gap-4 items-stretch max-lg:grid-cols-1">
-        <section className="flex min-w-0 min-h-[clamp(18rem,32vh,24rem)] flex-col bg-white border border-panel-border rounded-xl overflow-hidden shadow-[0_1px_3px_rgba(16,92,120,0.08)]" aria-label="Live Spectrum">
-          <div className="bg-brand-teal text-white text-center px-4 py-[0.66rem] text-lg font-bold tracking-[0.02em]">Live Spectrum (Vortex MCA)</div>
-          <div className="flex min-h-0 flex-1 px-4 pt-3 pb-4">
-            <HistogramPlot
-              arrayData={spectrumArray}
-              title="Vortex MCA Spectrum"
-              className="min-h-[14rem] flex-1"
-            />
-          </div>
-        </section>
+        <LiveSpectrumPanel
+          spectrumPv={spectrumPv}
+          pfyCountPv={pfyCountPv}
+          ipfyCountPv={ipfyCountPv}
+          isCounting={isCounting}
+          setDetectorVortex={setDetectorVortex}
+        />
         <ControlsPanel onPdScan={handlePdScan} onSingleScan={handleSingleScan} onStop={handleStop} isRunning={scanStatus === 'running' || isManagerBusy} activeScan={activeScan} />
       </div>
 

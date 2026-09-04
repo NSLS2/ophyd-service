@@ -3,12 +3,19 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { createServer as createHttpServer } from 'node:http';
 import express from 'express';
 import correlator from 'express-correlation-id';
 import { createServer as createViteServer } from 'vite';
 
 // Service configuration    
 const isProduction = process.env.NODE_ENV === 'production';
+
+// Fail fast if the dev-auth bypass env vars are present in production.
+if (isProduction && (process.env.DEV_AUTH_UPN || process.env.DEV_AUTH_ROLES)) {
+  throw new Error('DEV_AUTH_* must not be set when NODE_ENV=production');
+}
+
 const basePath = process.env.BASE || '/';
 const certPath = process.env.SSL_CERT_PATH || '';
 const keyPath = process.env.SSL_KEY_PATH || '';
@@ -104,6 +111,24 @@ const isAdminPath = (url) => {
 };
 
 const deriveAuthDecision = (req) => {
+  // Dev-only bypass: without an auth proxy in front, synthesize an identity from
+  // DEV_AUTH_* env vars so the app is usable locally. Ignored in production.
+  if (!isProduction && process.env.DEV_AUTH_UPN) {
+    const upn = normalizeUpn(process.env.DEV_AUTH_UPN);
+    const recognizedRoles = getRecognizedRoles(parseRoles(process.env.DEV_AUTH_ROLES || ''));
+    if (upn && recognizedRoles.length > 0) {
+      return {
+        scopes: rolesToScopes(recognizedRoles),
+        user: {
+          upn,
+          name: normalizeHeaderValue(process.env.DEV_AUTH_NAME || '', MAX_NAME_HEADER_LENGTH) || upn,
+          givenName: normalizeOptionalHeaderValue(process.env.DEV_AUTH_GIVEN_NAME || ''),
+          familyName: normalizeOptionalHeaderValue(process.env.DEV_AUTH_FAMILY_NAME || ''),
+        },
+      };
+    }
+  }
+
   const upn = normalizeUpn(getHeader(req, 'access-token-upn'));
   const name = normalizeHeaderValue(getHeader(req, 'access-token-name'), MAX_NAME_HEADER_LENGTH) || upn;
   const recognizedRoles = getRecognizedRoles(parseRoles(getHeader(req, 'access-token-roles')));
@@ -210,6 +235,7 @@ if (isProduction) {
 
 // Create http server
 const app = express();
+const httpServer = sslConfig ? undefined : createHttpServer(app);
 
 // Middleware: Depends on environment
 /** @type {import('vite').ViteDevServer | undefined} */
@@ -222,26 +248,73 @@ app.use('/auth', (_req, res) => {
   res.status(404).json({ detail: 'Not Found' });
 });
 
-// API proxy — forward backend requests in both dev and production.
-// Mirrors the proxy config in vite.config.ts (which only applies to
-// the standalone Vite dev server, not middleware mode).
+// API proxy — forward backend requests in both dev and production. This is
+// the only proxy exercised by `npm run dev` / `npm run preview` (Vite runs in
+// middleware mode and ignores `server.proxy` from vite.config.ts, which is
+// therefore just a dev-only escape hatch for the raw `vite` CLI).
+//
+// Express strips the mount prefix before the proxy sees the path. Most backend
+// services expose `/api/v1/*`; queueserver exposes `/api/*`.
+//
+// Finch's ophyd WebSocket (`useOphydPVSocket` et al.) upgrades on
+// `/api/control/*-socket`, so `/api/control` uses `ws: true` and its upgrade
+// handler is wired onto the Node HTTP(S) server further down.
 const { createProxyMiddleware } = await import('http-proxy-middleware');
 
-const PRESETS_TARGET = process.env.PRESETS_TARGET || 'http://localhost:8005';
-const CONFIG_TARGET  = process.env.CONFIG_TARGET  || 'http://localhost:8004';
-const CONTROL_TARGET = process.env.CONTROL_TARGET || 'http://localhost:8003';
+const PRESETS_TARGET     = process.env.PRESETS_TARGET     || 'http://localhost:8005';
+const CONFIG_TARGET      = process.env.CONFIG_TARGET      || 'http://localhost:8004';
+const CONTROL_TARGET     = process.env.CONTROL_TARGET     || 'http://localhost:8003';
+const TILED_TARGET       = process.env.TILED_TARGET       || 'http://localhost:8000';
+const QUEUESERVER_TARGET = process.env.QUEUESERVER_TARGET || 'http://localhost:60610';
+const TILED_API_KEY      = process.env.TILED_API_KEY      || '';
+const QSERVER_API_KEY    = process.env.QSERVER_API_KEY    || '';
+
+const rewriteTiledPath = (path) => {
+  const rewritten = `/api/v1${path}`.replace(/sort=-(?=&|$)/, 'sort=-time');
+  if (!TILED_API_KEY) return rewritten;
+
+  const url = new URL(rewritten, RELATIVE_URL_PARSE_BASE);
+  url.searchParams.set('api_key', TILED_API_KEY);
+  return `${url.pathname}${url.search}`;
+};
+
+const rewriteControlPath = (path) => (
+  path.startsWith('/api/control')
+    ? path.replace(/^\/api\/control/, '/api/v1')
+    : `/api/v1${path}`
+);
 
 app.use('/api/presets', requireAdminWrite, createProxyMiddleware({
   target: PRESETS_TARGET, changeOrigin: true,
-  pathRewrite: (path) => '/api/v1' + path,
+  pathRewrite: (path) => `/api/v1${path}`,
 }));
 app.use('/api/config', createProxyMiddleware({
   target: CONFIG_TARGET, changeOrigin: true,
-  pathRewrite: (path) => '/api/v1' + path,
+  pathRewrite: (path) => `/api/v1${path}`,
 }));
-app.use('/api/control', createProxyMiddleware({
-  target: CONTROL_TARGET, changeOrigin: true,
-  pathRewrite: (path) => '/api/v1' + path,
+const controlProxy = createProxyMiddleware({
+  target: CONTROL_TARGET, changeOrigin: true, ws: true,
+  // Mounted at root so pathFilter sees the full URL for both HTTP and the
+  // auto-subscribed WS upgrade handler; otherwise Express strips '/api/control'
+  // from req.url for HTTP and pathFilter never matches, dropping requests into
+  // the SSR catch-all.
+  pathFilter: '/api/control',
+  pathRewrite: rewriteControlPath,
+});
+app.use(controlProxy);
+// Finch's TiledLookup emits `sort=-` (no field) — rewrite to `sort=-time`.
+app.use('/api/tiled', createProxyMiddleware({
+  target: TILED_TARGET, changeOrigin: true,
+  pathRewrite: rewriteTiledPath,
+}));
+app.use('/api/queueserver', createProxyMiddleware({
+  target: QUEUESERVER_TARGET, changeOrigin: true,
+  pathRewrite: (path) => `/api${path}`,
+  on: {
+    proxyReq: (proxyReq) => {
+      if (QSERVER_API_KEY) proxyReq.setHeader('Authorization', `ApiKey ${QSERVER_API_KEY}`);
+    },
+  },
 }));
 
 if (isProduction) {
@@ -254,7 +327,9 @@ if (isProduction) {
 } else {
   // Vite server as middleware
   vite = await createViteServer({
-    server: { middlewareMode: true },
+    server: httpServer
+      ? { middlewareMode: true, hmr: { server: httpServer } }
+      : { middlewareMode: true },
     appType: 'custom',
     base: basePath,
   });
@@ -284,7 +359,8 @@ app.use(async (req, res) => {
         .replace(`<!--app-html-->`, rendered.html ?? '')
         .replace(`<!--auth-state-->`, createAuthStateScript(authState));
       
-      res.status(getDocumentStatusCode(authState, url)).set({ 'Content-Type': 'text/html' }).send(html);
+      const status = getDocumentStatusCode(authState, url);
+      res.status(status).set({ 'Content-Type': 'text/html' }).send(html);
     } else {
       // Development: Use Vite's SSR module loading with HMR
       template = await fs.readFile('./index.html', 'utf-8');
@@ -299,7 +375,12 @@ app.use(async (req, res) => {
         .replace(`<!--app-html-->`, rendered.html ?? '')
         .replace(`<!--auth-state-->`, createAuthStateScript(authState));
       
-      res.status(getDocumentStatusCode(authState, url)).set({ 'Content-Type': 'text/html' }).send(html);
+      const status = getDocumentStatusCode(authState, url);
+      const authSummary = authState.authenticated
+        ? `${authState.user.upn} [${authState.scopes.join(',')}]`
+        : 'anonymous';
+      console.log(`[ssr] ${req.method} ${url} -> ${status} (auth: ${authSummary})`);
+      res.status(status).set({ 'Content-Type': 'text/html' }).send(html);
     }
   } catch (e) {
     vite?.ssrFixStacktrace(e);
@@ -312,11 +393,15 @@ app.use(async (req, res) => {
 if (sslConfig) {
   const { createServer } = await import('node:https');
 
-  createServer(sslConfig, app).listen(port, () => {
+  const httpsServer = createServer(sslConfig, app);
+  // Forward WS upgrades to the control proxy; http-proxy-middleware does not auto-subscribe.
+  httpsServer.on('upgrade', controlProxy.upgrade);
+  httpsServer.listen(port, () => {
     console.log(`Server started at https://localhost:${port}`);
   });
 } else {
-  app.listen(port, () => {
+  httpServer.on('upgrade', controlProxy.upgrade);
+  httpServer.listen(port, () => {
     console.log(`Server started at http://localhost:${port}`);
   });
 }

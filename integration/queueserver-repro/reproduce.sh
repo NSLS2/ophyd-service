@@ -725,6 +725,7 @@ start_services() {
                 || die "localguard refused the RE worker EPICS address list: '$epics_list'"
         fi
         setsid env \
+            PYTHONNOUSERSITE=1 \
             MPLBACKEND=Agg \
             EPICS_CA_AUTO_ADDR_LIST="$epics_auto" \
             EPICS_CA_ADDR_LIST="$epics_list" \
@@ -750,6 +751,7 @@ start_services() {
         ok "HTTP server already running"
     else
         setsid env \
+            PYTHONNOUSERSITE=1 \
             QSERVER_HTTP_SERVER_CONFIG="$CONFIG_DIR/httpserver-config.yml" \
             QSERVER_HTTP_SERVER_SINGLE_USER_API_KEY="$HTTP_API_KEY" \
             pixi run --manifest-path "$PROFILE_DIR/pixi.toml" -e qs \
@@ -770,6 +772,7 @@ start_tiled() {
     else
         # Start tiled serve using the server config (not the profile)
         setsid env \
+            PYTHONNOUSERSITE=1 \
             pixi run --manifest-path "$PROFILE_DIR/pixi.toml" -e qs \
             tiled serve config "$CONFIG_DIR/tiled/server-config.yml" \
                 --host 0.0.0.0 --port "$TILED_PORT" \

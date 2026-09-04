@@ -1,14 +1,22 @@
-import { TiledLookup } from '@blueskyproject/finch'
+import { useEffect, useState, type ComponentType } from 'react'
+import { loadFinch } from '../components/finchLoader'
 
-/**
- * TiledViewer page - displays scan data from the Tiled server using Finch's
- * TiledLookup component. This allows users to browse PD scan results and
- * other bluesky runs stored in the MongoDB catalog.
- */
+// Finch touches `window` at module load, so its components must be resolved
+// at runtime on the client — never as a top-level import (crashes SSR).
 export default function TiledViewer() {
+  const [TiledLookup, setTiledLookup] = useState<ComponentType<{ backgroundClassName?: string }> | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    loadFinch()
+      .then((finch) => { if (!cancelled) setTiledLookup(() => finch.TiledLookup) })
+      .catch((error) => { console.error('Failed to load Finch', error) })
+    return () => { cancelled = true }
+  }, [])
+
   return (
     <div className="flex flex-col w-full h-full min-h-[600px]">
-      <TiledLookup backgroundClassName="text-slate-700" />
+      {TiledLookup ? <TiledLookup backgroundClassName="text-slate-700" /> : null}
     </div>
   )
 }

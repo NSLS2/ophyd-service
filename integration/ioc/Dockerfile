@@ -3,7 +3,10 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # procps provides pgrep for the healthcheck in docker-compose.yml.
-RUN apt-get update && apt-get install -y --no-install-recommends procps \
+# APT::Sandbox::User=root keeps apt from dropping to uid 65534 (_apt),
+# which fails under rootless podman with a limited subuid range.
+RUN apt-get -o APT::Sandbox::User=root update \
+    && apt-get -o APT::Sandbox::User=root install -y --no-install-recommends procps \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir caproto numpy

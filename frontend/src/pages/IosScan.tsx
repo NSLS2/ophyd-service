@@ -1,23 +1,23 @@
-import { useState } from 'react'
-import { ElementPicker, type ElementData } from '../components/ElementPicker'
+import { ElementPicker } from '../components/ElementPicker'
 import { hasPresets } from '../api/edgeMapping'
 import ScanConfig from './ScanConfig'
+import { useIosScanSession } from '../contexts/IosScanSessionContext'
 
 export default function IosScan() {
-  const [selectedElement, setSelectedElement] = useState<ElementData | null>(null)
+  const session = useIosScanSession()
 
-  if (selectedElement) {
+  if (session.selectedElement) {
     return (
       <ScanConfig
-        element={selectedElement}
-        onBack={() => setSelectedElement(null)}
+        element={session.selectedElement}
+        onBack={() => session.clear()}
       />
     )
   }
 
   return (
     <ElementPicker
-      onSelect={setSelectedElement}
+      onSelect={(el) => session.setSelectedElement(el)}
       highlightSymbols={hasPresets}
     />
   )

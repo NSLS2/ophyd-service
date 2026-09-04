@@ -13,7 +13,7 @@ const DECADE_OPTIONS = [
   '100 nA/V', '1 uA/V', '10 uA/V', '100 uA/V', '1 mA/V',
 ]
 
-interface ScalarState {
+export interface ScalarState {
   dwellTime: number
   pd: number
   pdGain: string
@@ -26,7 +26,7 @@ interface ScalarState {
   sampleDecade: string
 }
 
-interface VortexState {
+export interface VortexState {
   vortexTime: number
   pfyStart: number
   pfySize: number
