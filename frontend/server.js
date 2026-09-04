@@ -268,32 +268,6 @@ const TILED_TARGET       = process.env.TILED_TARGET       || 'http://localhost:8
 const QUEUESERVER_TARGET = process.env.QUEUESERVER_TARGET || 'http://localhost:60610';
 const TILED_API_KEY      = process.env.TILED_API_KEY      || '';
 const QSERVER_API_KEY    = process.env.QSERVER_API_KEY    || '';
-const PROXY_DEBUG        = process.env.PROXY_DEBUG === '1';
-
-const toAbsoluteProxyUrl = (target, proxyReq) => {
-  const proxyPath = proxyReq.path || '';
-  try {
-    return new URL(proxyPath, target).toString();
-  } catch {
-    return `${target}${proxyPath}`;
-  }
-};
-
-const logProxyHop = (label, target, req, proxyReq) => {
-  if (!PROXY_DEBUG) return;
-  const upstream = toAbsoluteProxyUrl(target, proxyReq);
-  console.log(
-    `[proxy:${label}] ${req.method} in="${req.originalUrl}" mountPath="${req.url}" out="${proxyReq.path}" upstream="${upstream}"`,
-  );
-};
-
-const logProxyUpgrade = (label, target, req, proxyReq) => {
-  if (!PROXY_DEBUG) return;
-  const upstream = toAbsoluteProxyUrl(target, proxyReq);
-  console.log(
-    `[proxy-ws:${label}] in="${req.url || ''}" out="${proxyReq.path}" upstream="${upstream}"`,
-  );
-};
 
 const rewriteTiledPath = (path) => {
   const rewritten = `/api/v1${path}`.replace(/sort=-(?=&|$)/, 'sort=-time');
@@ -313,16 +287,10 @@ const rewriteControlPath = (path) => (
 app.use('/api/presets', requireAdminWrite, createProxyMiddleware({
   target: PRESETS_TARGET, changeOrigin: true,
   pathRewrite: (path) => `/api/v1${path}`,
-  on: {
-    proxyReq: (proxyReq, req) => logProxyHop('presets', PRESETS_TARGET, req, proxyReq),
-  },
 }));
 app.use('/api/config', createProxyMiddleware({
   target: CONFIG_TARGET, changeOrigin: true,
   pathRewrite: (path) => `/api/v1${path}`,
-  on: {
-    proxyReq: (proxyReq, req) => logProxyHop('config', CONFIG_TARGET, req, proxyReq),
-  },
 }));
 const controlProxy = createProxyMiddleware({
   target: CONTROL_TARGET, changeOrigin: true, ws: true,
@@ -332,26 +300,18 @@ const controlProxy = createProxyMiddleware({
   // the SSR catch-all.
   pathFilter: '/api/control',
   pathRewrite: rewriteControlPath,
-  on: {
-    proxyReq: (proxyReq, req) => logProxyHop('control', CONTROL_TARGET, req, proxyReq),
-    proxyReqWs: (proxyReq, req) => logProxyUpgrade('control', CONTROL_TARGET, req, proxyReq),
-  },
 });
 app.use(controlProxy);
 // Finch's TiledLookup emits `sort=-` (no field) — rewrite to `sort=-time`.
 app.use('/api/tiled', createProxyMiddleware({
   target: TILED_TARGET, changeOrigin: true,
   pathRewrite: rewriteTiledPath,
-  on: {
-    proxyReq: (proxyReq, req) => logProxyHop('tiled', TILED_TARGET, req, proxyReq),
-  },
 }));
 app.use('/api/queueserver', createProxyMiddleware({
   target: QUEUESERVER_TARGET, changeOrigin: true,
   pathRewrite: (path) => `/api${path}`,
   on: {
-    proxyReq: (proxyReq, req) => {
-      logProxyHop('queueserver', QUEUESERVER_TARGET, req, proxyReq);
+    proxyReq: (proxyReq) => {
       if (QSERVER_API_KEY) proxyReq.setHeader('Authorization', `ApiKey ${QSERVER_API_KEY}`);
     },
   },
