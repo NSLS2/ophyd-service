@@ -10,10 +10,6 @@ ENV USER="$username"
 ENV UID="$uid"
 ENV GID="$gid"
 
-RUN apt-get update && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
-
 # Create the non-root group and user; home lives at /srv/$USER
 RUN set -eux && \
     groupadd -g "${GID:-$UID}" "$USER" && \
@@ -33,7 +29,7 @@ RUN npm ci
 
 EXPOSE 5173
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:5173 || exit 1
+  CMD node -e "fetch('http://localhost:5173').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["npm", "run", "dev"]
 
 # --- Build stage ---
@@ -58,11 +54,12 @@ WORKDIR "/srv/$USER/frontend"
 COPY --from=build --chown="$USER:$USER" "/srv/$USER/frontend/node_modules" ./node_modules
 COPY --from=build --chown="$USER:$USER" "/srv/$USER/frontend/dist" ./dist
 COPY --from=build --chown="$USER:$USER" "/srv/$USER/frontend/server.js" ./
+COPY --from=build --chown="$USER:$USER" "/srv/$USER/frontend/server" ./server
 COPY --from=build --chown="$USER:$USER" "/srv/$USER/frontend/package.json" ./
 
 EXPOSE 443
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD curl -fk https://localhost:443 || exit 1
+  CMD NODE_TLS_REJECT_UNAUTHORIZED=0 node -e "fetch('https://localhost:443').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 ENV NODE_ENV=production
 CMD ["node", "server.js"]
