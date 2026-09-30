@@ -13,7 +13,13 @@ echo "==> Starting Docker backend services (configuration, direct_control, prese
 echo "(Starting containers... you may Ctrl+C after seeing container IDs)"
 
 # Use --no-deps to avoid waiting for health checks
-podman-compose -f "$COMPOSE_FILE" up -d --no-deps || true
+if ! podman-compose -f "$COMPOSE_FILE" up -d --no-deps; then
+    echo ""
+    echo "ERROR: Docker backend services did not start."
+    echo "Check Podman storage with: podman system df"
+    echo "If Podman reports missing overlay/diff paths under /var/tmp, reset or repair the rootless Podman storage before retrying."
+    exit 1
+fi
 
 echo ""
 echo "==> Starting queueserver on host (via reproduce.sh)..."
