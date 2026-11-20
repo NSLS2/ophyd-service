@@ -1,0 +1,41 @@
+{
+  "_about": "Where the happi database of sites/ios and the IOS profile collection disagree, the profile collection wins: it is what runs at the beamline and the simulated IOCs (ios-profile-collection, sim/) serve what its classes ask for. Found with ios-profile-collection sim/check_happi.py. Every entry says why. make_happi_db.py applies this file; do not edit the generated files by hand.",
+  "replace_text": [
+    {
+      "file": "ios_devs.py",
+      "old": "TOTAL_POINTS_ITERATION_RBV",
+      "new": "TOTAL_POINTS_ITERTION_RBV",
+      "reason": "The profile's SpecsDetectorCam requests TOTAL_POINTS_ITERTION_RBV (sic) and the simulated IOC serves that spelling; the happi port had corrected the spelling."
+    }
+  ],
+  "add_devices": {
+    "dm1_gv2_close": {
+      "device_class": "ophyd.signal.EpicsSignal",
+      "prefix": "XF:23ID2-VA{DM1-GV:2}Cmd:Cls-Cmd",
+      "reason": "startup/11-valves.py defines it and the plans close the valve with it; sites/ios lacks it."
+    },
+    "dm1_gv2_open": {
+      "device_class": "ophyd.signal.EpicsSignal",
+      "prefix": "XF:23ID2-VA{DM1-GV:2}Cmd:Opn-Cmd",
+      "reason": "startup/11-valves.py; sites/ios lacks it."
+    },
+    "bt_gv1_close": {
+      "device_class": "ophyd.signal.EpicsSignal",
+      "prefix": "XF:23ID2-VA{BT-GV:1}Cmd:Cls-Cmd",
+      "reason": "startup/11-valves.py defines it and the plans close the valve with it; sites/ios lacks it."
+    },
+    "bt_gv1_open": {
+      "device_class": "ophyd.signal.EpicsSignal",
+      "prefix": "XF:23ID2-VA{BT-GV:1}Cmd:Opn-Cmd",
+      "reason": "startup/11-valves.py; sites/ios lacks it."
+    },
+    "kb_vert": {
+      "device_class": "ophyd.EpicsMotor",
+      "prefix": "XF:23ID2-OP{KB:base-Ax:Y_prime}Mtr",
+      "reason": "startup/10-optics.py defines it; sites/ios lacks it."
+    }
+  },
+  "ignored_profile_names": {
+    "channel": "A loop variable of startup/22-xspress3.py, not a device."
+  }
+}
