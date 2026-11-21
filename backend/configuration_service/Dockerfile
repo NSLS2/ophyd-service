@@ -14,6 +14,10 @@ COPY src ./src/
 COPY scripts ./scripts/
 
 RUN pip install --no-cache-dir -e .
+# Site packages that a device class of a profile imports (for example "nslsii==0.11.8" for the IOS
+# Xspress3 class). Empty by default: the community image has none.
+ARG EXTRA_PIP_PACKAGES=""
+RUN if [ -n "$EXTRA_PIP_PACKAGES" ]; then pip install --no-cache-dir $EXTRA_PIP_PACKAGES; fi
 
 RUN useradd -m -u 1000 config && chown -R config:config /app
 USER config
