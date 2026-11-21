@@ -6,6 +6,12 @@
       "old": "TOTAL_POINTS_ITERATION_RBV",
       "new": "TOTAL_POINTS_ITERTION_RBV",
       "reason": "The profile's SpecsDetectorCam requests TOTAL_POINTS_ITERTION_RBV (sic) and the simulated IOC serves that spelling; the happi port had corrected the spelling."
+    },
+    {
+      "file": "ios_devs.py",
+      "old": "except ImportError:\n    Xspress3IOS = None\n",
+      "new": "except ImportError as _import_error:\n    Xspress3IOS = None\n    import logging as _logging\n\n    _logging.getLogger(__name__).warning(\n        \"Xspress3IOS cannot be built, so no xs3 address resolves: %s: %s\",\n        type(_import_error).__name__,\n        _import_error,\n    )\n",
+      "reason": "A missing package of nslsii (for example six) made the class None without a word, and every Xspress3 address then failed with a message that does not name the cause. The reason is logged once when the module is imported."
     }
   ],
   "add_devices": {

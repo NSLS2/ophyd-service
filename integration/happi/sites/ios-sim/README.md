@@ -49,5 +49,9 @@ PYTHONPATH=/profile                 # so that ios_devs is importable
 ```
 
 `ios_devs.Xspress3IOS` is built with `nslsii`. The community image does not have it: build the
-configuration service with `--build-arg EXTRA_PIP_PACKAGES=nslsii==0.11.8` (without it the `xs3`
-entry cannot load).
+configuration service with
+`--build-arg EXTRA_PIP_PACKAGES="nslsii==0.11.8 six==1.17.0 doct==1.1.0 pytz==2026.6 pims==0.7"`
+(without it the `xs3` entry cannot load). `nslsii` imports `databroker.assets.handlers`, which
+needs `six`, `doct`, `pytz` and `pims`, and `databroker` does not declare them: with one missing
+the class is `None`, the log of the configuration service says why (`Xspress3IOS cannot be built`)
+and every `xs3.*` address is answered with `import_failed`.

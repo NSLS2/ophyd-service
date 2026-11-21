@@ -525,5 +525,12 @@ try:
             ),
         },
     )
-except ImportError:
+except ImportError as _import_error:
     Xspress3IOS = None
+    import logging as _logging
+
+    _logging.getLogger(__name__).warning(
+        "Xspress3IOS cannot be built, so no xs3 address resolves: %s: %s",
+        type(_import_error).__name__,
+        _import_error,
+    )
